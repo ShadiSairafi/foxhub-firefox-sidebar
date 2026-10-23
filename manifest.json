@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "FoxHub: Gmail, Social & Media Sidebar",
   "short_name": "FoxHub",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Fast local multi-account Gmail, social, and media sidebar for Firefox.",
   "author": "FoxHub",
   "icons": {
