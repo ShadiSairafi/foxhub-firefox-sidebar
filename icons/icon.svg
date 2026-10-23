@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" fill="none">
+  <defs>
+    <linearGradient id="foxEar" x1="20" y1="14" x2="108" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF7A33"/>
+      <stop offset="100%" stop-color="#D94E1F"/>
+    </linearGradient>
+    <linearGradient id="foxFace" x1="24" y1="28" x2="104" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFB685"/>
+      <stop offset="100%" stop-color="#F48454"/>
+    </linearGradient>
+    <linearGradient id="foxCheek" x1="32" y1="64" x2="96" y2="114" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFF3EA"/>
+      <stop offset="100%" stop-color="#FFD8BE"/>
+    </linearGradient>
+  </defs>
+  <path d="M22 62 L28 18 C28.8 13.5 34.5 12 37.8 15.2 L58 35 Z" fill="url(#foxEar)" stroke="#6B1D24" stroke-width="4.5" stroke-linejoin="round"/>
+  <path d="M106 62 L100 18 C99.2 13.5 93.5 12 90.2 15.2 L70 35 Z" fill="url(#foxEar)" stroke="#6B1D24" stroke-width="4.5" stroke-linejoin="round"/>
+  <path d="M18 58 C18 42 36 32 64 32 C92 32 110 42 110 58 C110 82 88 104 64 114 C40 104 18 82 18 58 Z" fill="url(#foxFace)" stroke="#6B1D24" stroke-width="4.5" stroke-linejoin="round"/>
+  <path d="M23 64 L64 90 L105 64 C101 85 83 103 64 113 C45 103 27 85 23 64 Z" fill="url(#foxCheek)" stroke="#6B1D24" stroke-width="4.2" stroke-linejoin="round"/>
+  <polygon points="57,96 71,96 64,105" fill="#6B1D24"/>
+</svg>

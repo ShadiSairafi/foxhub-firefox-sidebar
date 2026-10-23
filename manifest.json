@@ -1,0 +1,84 @@
+{
+  "manifest_version": 2,
+  "name": "FoxHub: Gmail, Social & Media Sidebar",
+  "short_name": "FoxHub",
+  "version": "2.5.0",
+  "description": "Fast local multi-account Gmail, social, and media sidebar for Firefox.",
+  "author": "FoxHub",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon-128.png"
+  },
+  "browser_action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "FoxHub",
+    "default_popup": "src/popup/popup.html"
+  },
+  "sidebar_action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "FoxHub",
+    "default_panel": "src/popup/popup.html?sidebar=1",
+    "open_at_install": true
+  },
+  "background": {
+    "page": "src/background/background.html",
+    "persistent": true
+  },
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
+      "js": [
+        "src/shared/media-frame-optimizer.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "permissions": [
+    "<all_urls>",
+    "*://mail.google.com/*",
+    "*://accounts.google.com/*",
+    "https://www.googleapis.com/*",
+    "cookies",
+    "storage",
+    "notifications",
+    "alarms",
+    "tabs",
+    "identity",
+    "webRequest",
+    "webRequestBlocking"
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "pocketmail-local@workspace.local",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  }
+}

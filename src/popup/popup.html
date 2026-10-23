@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FoxHub</title>
+  <!-- Zero-RAM DNS Prefetch Hints (Full TLS Preconnect fires on-demand when hovering a sidebar icon!) -->
+  <link rel="dns-prefetch" href="https://www.instagram.com">
+  <link rel="dns-prefetch" href="https://web.whatsapp.com">
+  <link rel="dns-prefetch" href="https://discord.com">
+  <link rel="dns-prefetch" href="https://newassets.hcaptcha.com">
+  <link rel="dns-prefetch" href="https://open.spotify.com">
+  <link rel="dns-prefetch" href="https://www.youtube.com">
+  <link rel="dns-prefetch" href="https://www.tiktok.com">
+  <link rel="dns-prefetch" href="https://x.com">
+  <link rel="dns-prefetch" href="https://www.reddit.com">
+  <link rel="dns-prefetch" href="https://gemini.google.com">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- Dynamic Selectable Background Wallpaper Layer -->
+  <div id="pm-wallpaper-layer" class="pm-wallpaper-layer" aria-hidden="true"></div>
+  <!-- Ambient Atmosphere Layer (Sunbeams / Bokeh / Grain) -->
+  <div id="pm-ambient-layer" class="pm-ambient-layer" aria-hidden="true"></div>
+
+  <div class="pm-workspace-shell">
+    <!-- OPERA-STYLE LEFT MEDIA & SOCIAL SIDEBAR RAIL -->
+    <aside id="pm-opera-rail" class="pm-opera-rail" aria-label="FoxHub Sidebar">
+      <button id="rail-btn-mail" class="pm-rail-item active" title="FoxHub Mail Inbox">
+        <span id="rail-mail-icon" class="pm-rail-icon-wrap"></span>
+        <span id="rail-mail-badge" class="pm-rail-unread-badge hidden">0</span>
+      </button>
+      <button id="rail-btn-open-sidebar" class="pm-rail-item pm-rail-item-sidebar" title="Open in Firefox Left Sidebar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><path d="M13 9l3 3-3 3"/></svg>
+      </button>
+      <div class="pm-rail-sep"></div>
+      <div id="pm-rail-apps-list" class="pm-rail-apps-list">
+        <!-- Dynamically populated with Instagram, WhatsApp, Discord, Telegram, Spotify, YouTube, TikTok, X, Messenger, Reddit, etc. -->
+      </div>
+      <div class="pm-rail-sep"></div>
+      <button id="rail-btn-manage-apps" class="pm-rail-item" title="Add or Customize Sidebar Apps (+)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+    </aside>
+
+    <div class="pm-app">
+      <!-- Top Header -->
+      <header class="pm-header">
+        <div class="pm-brand">
+          <img src="../../icons/icon-128.png" alt="FoxHub" class="pm-brand-logo">
+          <div class="pm-brand-text">
+            <div class="pm-brand-title-row">
+              <h1 class="pm-brand-title">FoxHub</h1>
+              <span class="pm-local-badge" title="100% Local & Private: Your emails stay on your computer and never touch any external developer server.">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Local
+              </span>
+            </div>
+            <p class="pm-brand-subtitle" id="pm-status-subtitle">Checking your inboxes…</p>
+          </div>
+        </div>
+
+        <div class="pm-header-actions">
+          <button id="btn-open-sidebar" class="pm-icon-btn pm-icon-btn-accent" title="Open Opera-Style Left Sidebar in Firefox">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+          </button>
+          <button id="btn-compose" class="pm-icon-btn" title="Compose Email">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </button>
+          <button id="btn-backgrounds" class="pm-icon-btn pm-icon-btn-accent" title="Customize Themes, Backgrounds, Glassmorphism & Cards">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+          </button>
+          <button id="btn-toggle-wide" class="pm-icon-btn" title="Resize Width (Toggle Standard / Wide / Extra-Wide)">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+          </button>
+          <button id="btn-popout-window" class="pm-icon-btn" title="Pop Out into Freely Resizable Desktop Window">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M14 9l3 3-3 3"/></svg>
+          </button>
+          <button id="btn-dnd" class="pm-icon-btn" title="Do Not Disturb (Mute notifications for 1 hour)">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+          <button id="btn-refresh" class="pm-icon-btn" title="Sync All Accounts Now">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+          <button id="btn-settings" class="pm-icon-btn" title="Open Full Settings & Customizer">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
+      </header>
+
+    <!-- Multi-Account Switcher Bar -->
+    <nav class="pm-accounts-bar" id="pm-accounts-bar" aria-label="Email Accounts">
+      <!-- Dynamically populated -->
+    </nav>
+
+    <!-- Demo Banner (Shown only when previewing sample accounts before signing in) -->
+    <div id="pm-demo-banner" class="pm-demo-banner hidden">
+      <div class="pm-demo-banner-text">
+        <strong>Preview Mode:</strong> Showing sample emails so you can test themes, voice reading &amp; actions.
+      </div>
+      <button id="btn-demo-signin" class="pm-btn-xs pm-btn-primary">Sign In with Google</button>
+    </div>
+
+    <!-- Search & Filter Toolbar -->
+    <div class="pm-toolbar">
+      <div class="pm-search-wrap">
+        <svg class="pm-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" id="pm-search-input" class="pm-search-input" placeholder="Search…" autocomplete="off">
+      </div>
+
+      <div class="pm-filter-pills">
+        <button class="pm-filter-chip active" data-filter="unread">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          <span>Unread</span>
+        </button>
+        <button class="pm-filter-chip" data-filter="all">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span>All</span>
+        </button>
+        <button class="pm-filter-chip" data-filter="starred">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <span>Starred</span>
+        </button>
+        <button class="pm-filter-chip" data-filter="codes" title="Filter emails containing 2FA / OTP verification codes">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span>Codes</span>
+        </button>
+        <button class="pm-filter-chip" data-filter="snoozed" id="chip-snoozed">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span id="chip-snoozed-label">Snoozed</span>
+        </button>
+      </div>
+
+      <button id="btn-mark-all-read" class="pm-text-btn" title="Mark visible emails as read">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        <span>Read All</span>
+      </button>
+    </div>
+
+    <!-- Active Voice (TTS) Player Banner -->
+    <div id="pm-tts-bar" class="pm-tts-bar hidden">
+      <div class="pm-tts-wave">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div class="pm-tts-info" id="pm-tts-label">Reading email aloud…</div>
+      <button id="btn-tts-stop" class="pm-btn-xs">Stop</button>
+    </div>
+
+    <!-- Main Email List Container -->
+    <main id="pm-email-list" class="pm-email-list">
+      <!-- Populated dynamically -->
+    </main>
+
+    <!-- Bottom Status Footer -->
+    <footer class="pm-footer">
+      <button id="btn-open-gmail" class="pm-footer-link">
+        <span>Open Gmail in Tab</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+      </button>
+      <div class="pm-footer-right">
+        <button id="btn-footer-add-account" class="pm-footer-link">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span>Add Another Email</span>
+        </button>
+      </div>
+    </footer>
+
+    <!-- ===================================================================== -->
+    <!-- SLIDE-OVER 1: FULL EMAIL READER VIEW                                  -->
+    <!-- ===================================================================== -->
+    <section id="pm-reader-drawer" class="pm-drawer hidden" aria-hidden="true">
+      <div class="pm-drawer-header">
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button id="btn-reader-back" class="pm-back-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Back
+          </button>
+          <button id="btn-reader-prev" class="pm-icon-btn" title="Previous Email (K / ↑)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <button id="btn-reader-next" class="pm-icon-btn" title="Next Email (J / ↓)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+
+        <div class="pm-reader-actions">
+          <button id="btn-reader-star" class="pm-icon-btn" title="Star / Unstar (S)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </button>
+          <button id="btn-reader-listen" class="pm-icon-btn" title="Listen / Stop Reading Aloud">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+          </button>
+          <button id="btn-reader-mark-read" class="pm-icon-btn" title="Mark as Read & Close (R)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </button>
+          <button id="btn-reader-snooze" class="pm-icon-btn" title="Snooze Email">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </button>
+          <button id="btn-reader-archive" class="pm-icon-btn" title="Archive (E)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+          </button>
+          <button id="btn-reader-delete" class="pm-icon-btn pm-icon-btn-danger" title="Delete (Move to Trash)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+          <button id="btn-reader-wide" class="pm-icon-btn" title="Expand Popup Width to Fit Wide Emails (W)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+          </button>
+          <button id="btn-reader-open-web" class="pm-icon-btn" title="Open Conversation in Gmail">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Optional Snooze Duration Bar inside Reader -->
+      <div id="pm-reader-snooze-bar" class="pm-reader-snooze-bar hidden">
+        <span>Snooze until:</span>
+        <button class="pm-btn-xs pm-btn-secondary" data-snooze-mins="60">1 Hour</button>
+        <button class="pm-btn-xs pm-btn-secondary" data-snooze-mins="180">3 Hours</button>
+        <button class="pm-btn-xs pm-btn-secondary" data-snooze-mins="480">Tonight</button>
+        <button class="pm-btn-xs pm-btn-secondary" data-snooze-mins="1080">Tomorrow</button>
+      </div>
+
+      <div class="pm-reader-scroll">
+        <div class="pm-reader-meta">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+            <div class="pm-reader-account-pill" id="reader-account-pill" style="margin-bottom:0;"></div>
+            <div style="display:flex;align-items:center;gap:5px;">
+              <button id="btn-reader-copy-otp" class="pm-otp-badge hidden" title="Click to copy verification code"></button>
+              <button id="btn-reader-unsubscribe" class="pm-unsub-badge hidden" title="1-Click Unsubscribe from this mailing list">Unsubscribe</button>
+            </div>
+          </div>
+          <h2 class="pm-reader-subject" id="reader-subject"></h2>
+          <div class="pm-reader-sender-row">
+            <div id="reader-avatar-wrap"></div>
+            <div class="pm-reader-sender-details">
+              <div class="pm-reader-sender-name" id="reader-sender-name"></div>
+              <div class="pm-reader-sender-email" id="reader-sender-email"></div>
+            </div>
+            <div class="pm-reader-date" id="reader-date"></div>
+          </div>
+        </div>
+
+        <!-- Reader Fit, Zoom & Utility Bar -->
+        <div class="pm-reader-utility-bar">
+          <div class="pm-zoom-controls">
+            <button id="btn-reader-autofit" class="pm-util-pill active" title="Automatically scale wide HTML emails to fit inside reader">Auto-Fit Width</button>
+            <button id="btn-zoom-out" class="pm-util-pill" title="Zoom Out">−</button>
+            <span id="lbl-zoom-level" class="pm-zoom-label">Fit</span>
+            <button id="btn-zoom-in" class="pm-util-pill" title="Zoom In">+</button>
+          </div>
+          <div class="pm-zoom-controls">
+            <button id="btn-reader-copy-text" class="pm-util-pill" title="Copy email text to clipboard">Copy Text</button>
+            <button id="btn-reader-translate" class="pm-util-pill" title="Translate this email in Google Translate">Translate</button>
+          </div>
+        </div>
+
+        <div id="reader-body-viewport" class="pm-reader-body-viewport">
+          <article class="pm-reader-body" id="reader-body">
+            Loading email content locally…
+          </article>
+        </div>
+
+        <!-- Quick Reply Box inside Reader -->
+        <div class="pm-quick-reply-card">
+          <div class="pm-quick-reply-top">
+            <label class="pm-quick-reply-label" for="reader-reply-input" style="margin-bottom:0;">Quick Reply</label>
+            <div class="pm-canned-chips">
+              <button type="button" class="pm-canned-chip" data-reply-text="Got it, thank you!">Got it, thanks!</button>
+              <button type="button" class="pm-canned-chip" data-reply-text="Sounds great, let's do it!">Sounds great!</button>
+              <button type="button" class="pm-canned-chip" data-reply-text="I'll review this and get back to you shortly.">Will review soon</button>
+            </div>
+          </div>
+          <textarea id="reader-reply-input" class="pm-textarea" rows="3" placeholder="Write a warm reply… (Ctrl+Enter to send directly)"></textarea>
+          <div class="pm-quick-reply-actions">
+            <span class="pm-quick-reply-hint">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              100% Local — Sends directly from your account
+            </span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button id="btn-reader-reply-tab" class="pm-btn pm-btn-secondary" title="Open in full Gmail Compose tab">
+                <span>Gmail Tab</span>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+              </button>
+              <button id="btn-reader-send-reply" class="pm-btn pm-btn-primary">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                <span id="lbl-reader-send-reply">Send Reply</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- SLIDE-OVER 2: FULL VISUAL CUSTOMIZER STUDIO (Themes, Cards, Tabs, BG) -->
+    <!-- ===================================================================== -->
+    <section id="pm-theme-drawer" class="pm-drawer hidden" aria-hidden="true">
+      <div class="pm-drawer-header">
+        <button id="btn-theme-back" class="pm-back-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          Done
+        </button>
+        <h2 class="pm-drawer-title">Visual Customizer Studio</h2>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button id="btn-studio-peek" class="pm-text-btn" title="Hold or click to peek at your full inbox underneath">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span>Peek</span>
+          </button>
+          <button id="btn-open-full-studio" class="pm-text-btn" title="Open Full Screen Studio">Full View</button>
+        </div>
+      </div>
+
+      <!-- Mini Studio Sub-Tabs -->
+      <div class="pm-studio-tabs">
+        <button class="pm-studio-tab active" data-studio-tab="st-backgrounds">Backgrounds</button>
+        <button class="pm-studio-tab" data-studio-tab="st-themes">Palettes (14)</button>
+        <button class="pm-studio-tab" data-studio-tab="st-cards">Email Cards</button>
+        <button class="pm-studio-tab" data-studio-tab="st-tabs">Tabs &amp; FX</button>
+      </div>
+
+      <div class="pm-drawer-content">
+        <!-- STUDIO PANEL 1: BACKGROUNDS -->
+        <div id="st-backgrounds" class="pm-studio-panel active">
+          <div class="pm-control-card">
+            <div class="pm-slider-row">
+              <div class="pm-slider-label-row">
+                <span>Background Visibility</span>
+                <strong id="lbl-bg-opacity">95%</strong>
+              </div>
+              <input type="range" id="rng-bg-opacity" min="0.1" max="1" step="0.05" value="0.95">
+            </div>
+            <div class="pm-slider-row" style="margin-top:8px;">
+              <div class="pm-slider-label-row">
+                <span>Background Soft-Focus Blur</span>
+                <strong id="lbl-bg-blur">0px</strong>
+              </div>
+              <input type="range" id="rng-bg-blur" min="0" max="14" step="1" value="0">
+            </div>
+          </div>
+
+          <h3 class="pm-section-heading">16 Scenic Illustrated Wallpapers</h3>
+          <div id="pm-wallpaper-grid" class="pm-wallpaper-grid"></div>
+
+          <h3 class="pm-section-heading">Custom Gradient Background Maker</h3>
+          <div class="pm-control-card">
+            <div class="pm-inline-controls">
+              <label class="pm-color-pick-wrap">
+                <span>Color 1</span>
+                <input type="color" id="clr-grad-1" value="#FAD6A5">
+              </label>
+              <label class="pm-color-pick-wrap">
+                <span>Color 2</span>
+                <input type="color" id="clr-grad-2" value="#E8A598">
+              </label>
+              <button id="btn-apply-gradient" class="pm-btn-xs pm-btn-primary">Apply Gradient</button>
+            </div>
+          </div>
+
+          <h3 class="pm-section-heading">Custom Photo / Image Wallpaper</h3>
+          <div class="pm-control-card">
+            <div class="pm-inline-controls">
+              <label class="pm-btn pm-btn-secondary pm-upload-label" style="flex:1;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                <span>Upload Photo…</span>
+                <input type="file" id="input-custom-bg" accept="image/*" hidden>
+              </label>
+              <button id="btn-clear-custom-bg" class="pm-btn pm-btn-secondary">Reset</button>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+              <input type="url" id="input-custom-bg-url" class="pm-input" placeholder="Or paste any image URL (https://…)">
+              <button id="btn-apply-bg-url" class="pm-btn pm-btn-primary">Use</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- STUDIO PANEL 2: 14 COLOR PALETTES -->
+        <div id="st-themes" class="pm-studio-panel hidden">
+          <p class="pm-section-desc">14 warm, organic, non-cyberpunk color themes.</p>
+          <div id="pm-theme-grid" class="pm-theme-grid"></div>
+        </div>
+
+        <!-- STUDIO PANEL 3: EMAIL CARDS & GLASSMORPHISM -->
+        <div id="st-cards" class="pm-studio-panel hidden">
+          <h3 class="pm-section-heading">Email Card Material Style</h3>
+          <div class="pm-option-grid" id="opt-card-style-grid">
+            <button class="pm-opt-pill" data-card-style="glassmorphism">Crystal Glassmorphism</button>
+            <button class="pm-opt-pill" data-card-style="tinted-glass">Tinted Color Glass</button>
+            <button class="pm-opt-pill" data-card-style="warm-paper">Artisanal Paper</button>
+            <button class="pm-opt-pill" data-card-style="floating-minimal">Borderless Floating</button>
+            <button class="pm-opt-pill" data-card-style="outlined-editorial">Editorial Outlined</button>
+            <button class="pm-opt-pill" data-card-style="soft-neumorphic">Soft Cushion</button>
+          </div>
+
+          <div class="pm-control-card" style="margin-top:10px;">
+            <div class="pm-slider-row">
+              <div class="pm-slider-label-row">
+                <span>Card Glass Opacity (See Background Through Cards)</span>
+                <strong id="lbl-card-opacity">62%</strong>
+              </div>
+              <input type="range" id="rng-card-opacity" min="0.25" max="0.96" step="0.03" value="0.62">
+            </div>
+
+            <div class="pm-slider-row" style="margin-top:10px;">
+              <div class="pm-slider-label-row">
+                <span>Card Frosted Glass Blur</span>
+                <strong id="lbl-card-blur">16px</strong>
+              </div>
+              <input type="range" id="rng-card-blur" min="0" max="28" step="2" value="16">
+            </div>
+
+            <div class="pm-slider-row" style="margin-top:10px;">
+              <div class="pm-slider-label-row">
+                <span>Card Corner Roundness</span>
+                <strong id="lbl-card-radius">15px</strong>
+              </div>
+              <input type="range" id="rng-card-radius" min="6" max="24" step="1" value="15">
+            </div>
+          </div>
+
+          <h3 class="pm-section-heading">Card Action Buttons Mode</h3>
+          <div class="pm-option-grid" id="opt-card-actions-grid">
+            <button class="pm-opt-pill" data-card-actions="always">Always Show</button>
+            <button class="pm-opt-pill" data-card-actions="hover">Reveal on Hover (Clean)</button>
+            <button class="pm-opt-pill" data-card-actions="compact-icons">Sleek Icons Only</button>
+          </div>
+
+          <h3 class="pm-section-heading">Card Density &amp; Avatar Shape</h3>
+          <div class="pm-option-grid" id="opt-card-density-grid">
+            <button class="pm-opt-pill" data-card-density="compact">Compact Rows</button>
+            <button class="pm-opt-pill" data-card-density="cozy">Cozy Default</button>
+            <button class="pm-opt-pill" data-card-density="spacious">Spacious Magazine</button>
+          </div>
+
+          <div class="pm-option-grid" id="opt-avatar-shape-grid" style="margin-top:8px;">
+            <button class="pm-opt-pill" data-avatar-shape="squircle">Squircle Icon</button>
+            <button class="pm-opt-pill" data-avatar-shape="circle">Round Circle</button>
+            <button class="pm-opt-pill" data-avatar-shape="pill">Soft Capsule</button>
+          </div>
+
+          <h3 class="pm-section-heading">Colored Account Left Spine</h3>
+          <div class="pm-option-grid" id="opt-left-accent-grid">
+            <button class="pm-opt-pill" data-left-accent-opt="on">Show Colored Spine</button>
+            <button class="pm-opt-pill" data-left-accent-opt="off">Hidden (Clean Edge)</button>
+          </div>
+        </div>
+
+        <!-- STUDIO PANEL 4: TABS, TYPOGRAPHY & ATMOSPHERE -->
+        <div id="st-tabs" class="pm-studio-panel hidden">
+          <h3 class="pm-section-heading">Account Switcher Tab Style</h3>
+          <div class="pm-option-grid" id="opt-tab-style-grid">
+            <button class="pm-opt-pill" data-tab-style="glass-pills">Frosted Glass Pills</button>
+            <button class="pm-opt-pill" data-tab-style="segmented-bar">Segmented Bar</button>
+            <button class="pm-opt-pill" data-tab-style="underline-tabs">Editorial Underline</button>
+            <button class="pm-opt-pill" data-tab-style="tinted-chips">Tinted Color Chips</button>
+          </div>
+
+          <h3 class="pm-section-heading">Unread Counter Mode</h3>
+          <div class="pm-option-grid" id="opt-badge-mode-grid">
+            <button class="pm-opt-pill" data-badge-mode="feed">Recent Feed Count (Clean)</button>
+            <button class="pm-opt-pill" data-badge-mode="total">Total All-Time Unread</button>
+          </div>
+
+          <h3 class="pm-section-heading">Ambient Atmosphere Effect</h3>
+          <div class="pm-option-grid" id="opt-ambient-grid">
+            <button class="pm-opt-pill" data-ambient="sunbeams">Warm Sunbeams</button>
+            <button class="pm-opt-pill" data-ambient="soft-bokeh">Dreamy Bokeh Glow</button>
+            <button class="pm-opt-pill" data-ambient="paper-grain">Fine Paper Texture</button>
+            <button class="pm-opt-pill" data-ambient="none">None (Clean)</button>
+          </div>
+
+          <h3 class="pm-section-heading">Typography Style</h3>
+          <div class="pm-option-grid" id="opt-font-grid">
+            <button class="pm-opt-pill" data-font="editorial">Editorial Mix</button>
+            <button class="pm-opt-pill" data-font="modern-sans">Modern Sans</button>
+            <button class="pm-opt-pill" data-font="literary-serif">Bookish Serif</button>
+            <button class="pm-opt-pill" data-font="rounded-cozy">Rounded Cozy</button>
+          </div>
+
+          <h3 class="pm-section-heading">Popup Window Width (Resize)</h3>
+          <div class="pm-control-card">
+            <div class="pm-slider-row">
+              <div class="pm-slider-label-row">
+                <span>Popup Width (Fit Wide Emails)</span>
+                <strong id="lbl-popup-width">520px</strong>
+              </div>
+              <input type="range" id="rng-popup-width" min="400" max="780" step="20" value="520">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STICKY LIVE COMBINATION PREVIEW DOCK AT BOTTOM OF STUDIO -->
+      <div id="pm-studio-preview-dock" class="pm-studio-preview-dock">
+        <div class="pm-preview-dock-header">
+          <div class="pm-preview-dock-title">
+            <span class="pm-preview-live-dot"></span>
+            <span>Live Combination Preview</span>
+            <span id="lbl-preview-combo" class="pm-preview-combo-tag"></span>
+          </div>
+          <button id="btn-toggle-preview-dock" class="pm-preview-toggle-btn" title="Collapse or expand live preview">
+            <span id="lbl-toggle-preview">Minimize</span>
+          </button>
+        </div>
+        <div id="pm-preview-stage" class="pm-preview-stage">
+          <div id="pm-preview-wallpaper" class="pm-preview-wallpaper" aria-hidden="true"></div>
+          <div id="pm-preview-ambient" class="pm-preview-ambient" aria-hidden="true"></div>
+          <div id="pm-preview-content" class="pm-preview-content">
+            <!-- Dynamically rendered live tabs + email card preview -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- SLIDE-OVER 3: ADD GOOGLE ACCOUNT / MULTI-ACCOUNT MANAGER              -->
+    <!-- ===================================================================== -->
+    <section id="pm-account-drawer" class="pm-drawer hidden" aria-hidden="true">
+      <div class="pm-drawer-header">
+        <button id="btn-account-back" class="pm-back-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          Back
+        </button>
+        <h2 class="pm-drawer-title">Manage &amp; Add Accounts</h2>
+        <div style="width:48px"></div>
+      </div>
+
+      <div class="pm-drawer-content">
+        <div class="pm-add-account-hero">
+          <div class="pm-add-account-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+          </div>
+          <h3>Sign in to another Google Account</h3>
+          <p>Log into any personal, work, or school Gmail account. PocketMail will automatically detect and monitor all your signed-in accounts locally.</p>
+          <button id="btn-google-login-popup" class="pm-btn pm-btn-primary pm-btn-full">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+            <span>Sign in with Google Account</span>
+          </button>
+          <button id="btn-rescan-sessions" class="pm-btn pm-btn-secondary pm-btn-full" style="margin-top:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span>Rescan Signed-In Browser Accounts (u/0 – u/5)</span>
+          </button>
+        </div>
+
+        <h3 class="pm-section-heading">Connected Inboxes</h3>
+        <div id="pm-connected-accounts-list" class="pm-connected-accounts-list"></div>
+
+        <div class="pm-oauth-card">
+          <h4>Optional: Connect via Local OAuth 2.0</h4>
+          <p>Want to sign into a separate account using your own Google Cloud OAuth Client ID via <code>browser.identity</code>?</p>
+          <div class="pm-oauth-row">
+            <input type="text" id="input-oauth-client-id" class="pm-input" placeholder="Your Google OAuth Client ID (.apps.googleusercontent.com)">
+            <button id="btn-oauth-connect" class="pm-btn pm-btn-secondary">OAuth Login</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- SLIDE-OVER 4: IN-APP LOCAL COMPOSE EMAIL                              -->
+    <!-- ===================================================================== -->
+    <section id="pm-compose-drawer" class="pm-drawer hidden" aria-hidden="true">
+      <div class="pm-drawer-header">
+        <button id="btn-compose-back" class="pm-back-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          Cancel
+        </button>
+        <h2 class="pm-drawer-title">Compose Message</h2>
+        <div class="pm-compose-mode-pills">
+          <button type="button" id="btn-compose-mode-native" class="pm-util-pill active" title="100% Local Instant Compose Form">Local</button>
+          <button type="button" id="btn-compose-mode-embed" class="pm-util-pill" title="Embedded Live Gmail Composer (Supports Attachments &amp; Formatting)">Gmail UI</button>
+        </div>
+      </div>
+
+      <!-- MODE A: 100% Local Native Compose Form (Fills Full Height!) -->
+      <div id="pm-compose-native-pane" class="pm-drawer-content pm-compose-flex-content">
+        <div class="pm-form-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <label for="compose-from" style="margin-bottom:0;">From Account</label>
+            <span class="pm-local-badge" style="font-size:10px;padding:1px 6px;">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              100% Direct &amp; Local
+            </span>
+          </div>
+          <select id="compose-from" class="pm-select"></select>
+        </div>
+
+        <div class="pm-form-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+            <label for="compose-to" style="margin-bottom:0;">To</label>
+            <button type="button" id="btn-toggle-cc-bcc" class="pm-text-btn" style="padding:1px 6px;font-size:10.5px;">+ CC / BCC</button>
+          </div>
+          <input type="text" id="compose-to" class="pm-input" placeholder="recipient@example.com (comma-separated for multiple)">
+        </div>
+
+        <div id="compose-cc-bcc-row" class="pm-compose-cc-row hidden">
+          <div class="pm-form-group" style="flex:1;margin-bottom:0;">
+            <label for="compose-cc">CC</label>
+            <input type="text" id="compose-cc" class="pm-input" placeholder="cc@example.com">
+          </div>
+          <div class="pm-form-group" style="flex:1;margin-bottom:0;">
+            <label for="compose-bcc">BCC</label>
+            <input type="text" id="compose-bcc" class="pm-input" placeholder="bcc@example.com">
+          </div>
+        </div>
+
+        <div class="pm-form-group">
+          <label for="compose-subject">Subject</label>
+          <input type="text" id="compose-subject" class="pm-input" placeholder="Warm greetings…">
+        </div>
+
+        <div class="pm-form-group pm-compose-body-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;margin-bottom:5px;">
+            <label for="compose-body" style="margin-bottom:0;">Message</label>
+            <div class="pm-canned-chips">
+              <button type="button" class="pm-canned-chip" data-compose-template="checkin">Quick Check-In</button>
+              <button type="button" class="pm-canned-chip" data-compose-template="thanks">Thank You</button>
+              <button type="button" class="pm-canned-chip" data-compose-template="followup">Follow-Up</button>
+              <button type="button" class="pm-canned-chip" data-compose-template="clear">Clear</button>
+            </div>
+          </div>
+          <textarea id="compose-body" class="pm-textarea pm-compose-textarea" rows="8" placeholder="Write your message here… (Press Ctrl+Enter to send directly)"></textarea>
+        </div>
+
+        <div class="pm-compose-footer-bar">
+          <button type="button" id="btn-compose-open-tab" class="pm-btn pm-btn-secondary" title="Open in full Gmail tab if you need large attachments">
+            <span>Open in Tab</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+          </button>
+          <button type="button" id="btn-compose-send" class="pm-btn pm-btn-primary" style="flex:1;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            <span id="lbl-compose-send">Send Email Now</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- MODE B: Embedded Live Gmail Composer Frame right inside PocketMail Drawer -->
+      <div id="pm-compose-embed-pane" class="pm-compose-embed-pane hidden">
+        <iframe id="pm-compose-gmail-frame" class="pm-compose-gmail-frame" title="Embedded Gmail Composer"></iframe>
+      </div>
+    </section>
+
+      <!-- ===================================================================== -->
+      <!-- SLIDE-OVER 5: OPERA-STYLE EMBEDDED MEDIA & SOCIAL WORKSPACE           -->
+      <!-- ===================================================================== -->
+      <section id="pm-media-workspace" class="pm-drawer pm-media-workspace autohide-top-bar hidden" aria-hidden="true">
+        <!-- Top-Edge Hover Sensor Strip (Active when Auto-Hide Top Bar is enabled) -->
+        <div id="pm-media-top-hover-zone" class="pm-media-top-hover-zone" title="Hover top edge to reveal Shortcuts, Theme Palette &amp; Fit Controls">
+          <span class="pm-media-top-hover-pill"></span>
+        </div>
+
+        <div class="pm-media-header">
+          <div class="pm-media-header-left">
+            <span id="media-active-icon" class="pm-media-active-icon"></span>
+            <strong id="media-active-title" class="pm-media-active-title">Instagram</strong>
+            <button id="btn-media-back" class="pm-media-mini-btn" title="Back">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <button id="btn-media-reload" class="pm-media-mini-btn" title="Reload">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+          </div>
+
+          <div id="media-subview-pills" class="pm-media-subpills">
+            <!-- Dynamically populated (e.g. DMs | Reels | Feed | Explore) -->
+          </div>
+
+          <div class="pm-media-header-right">
+            <button id="btn-media-autohide-top" class="pm-media-mini-btn" title="Pin Top Bar Always Visible / Auto-Hide on Hover">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+            </button>
+            <button id="btn-media-theme" class="pm-media-mini-btn" title="Cycle Social App Theme (Native / Match Palette / Warm Eye-Care / Midnight / Rose)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+            </button>
+            <button id="btn-media-zoom-out" class="pm-media-mini-btn" title="Zoom Out to Fit More Content">−</button>
+            <button id="btn-media-zoom-fit" class="pm-media-mini-btn" title="Auto-Fit Page Width / Reset Zoom">Fit</button>
+            <button id="btn-media-zoom-in" class="pm-media-mini-btn" title="Zoom In">+</button>
+            <button id="btn-media-float-win" class="pm-media-mini-btn" title="Pop Out into Floating Side Window">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="11" y="7" width="7" height="7" rx="1"/></svg>
+            </button>
+            <button id="btn-media-open-tab" class="pm-media-mini-btn" title="Open in Full Browser Tab">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+            </button>
+            <button id="btn-media-close-app" class="pm-media-mini-btn pm-media-mini-btn-danger" title="Close &amp; Unload App from Memory">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- First-Time Onboarding Hint Coachmark for Auto-Hidden Top Bar -->
+        <div id="pm-topbar-onboarding-hint" class="pm-topbar-onboarding-hint hidden" role="status">
+          <div class="pm-topbar-hint-arrow">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </div>
+          <div class="pm-topbar-hint-text">
+            <strong>Top Bar Auto-Hides for Full Space!</strong>
+            <span>Hover the top edge anytime for Shortcuts, Theme Palette &amp; Fit — or click the Pin icon to keep it visible.</span>
+          </div>
+          <button type="button" id="btn-dismiss-topbar-hint" class="pm-topbar-hint-btn">Got it</button>
+        </div>
+
+        <div class="pm-media-frame-wrap">
+          <!-- Animated Brand Loading Overlay (Prevents White Screen Flash!) -->
+          <div id="pm-media-loader" class="pm-media-loader">
+            <div class="pm-media-loader-card">
+              <div class="pm-media-loader-ring-wrap">
+                <div class="pm-media-loader-ring"></div>
+                <div id="pm-media-loader-icon" class="pm-media-loader-icon"></div>
+              </div>
+              <div id="pm-media-loader-title" class="pm-media-loader-title">Loading Instagram…</div>
+              <div class="pm-media-loader-sub">Connecting your local Firefox session</div>
+              <div class="pm-media-loader-bar"><div class="pm-media-loader-bar-fill"></div></div>
+            </div>
+          </div>
+
+          <!-- Keep-Alive Multi-Frame Pool (0ms Instant App Switching + Background Audio!) -->
+          <div id="pm-media-frame-pool" class="pm-media-frame-pool"></div>
+
+          <!-- Floating Restore Pill when Bottom Navigation Bar is Hidden -->
+          <button id="btn-show-bottom-nav" class="pm-show-bottom-nav-pill hidden" title="Show Bottom Navigation Bar">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+            <span>Nav</span>
+          </button>
+        </div>
+
+        <!-- Hideable Bottom Icon Navigation Bar (For TikTok, Instagram, Reddit, X, YouTube, etc.) -->
+        <nav id="pm-media-bottom-bar" class="pm-media-bottom-bar" aria-label="App Bottom Navigation">
+          <div id="media-bottom-nav-items" class="pm-media-bottom-nav-items">
+            <!-- Dynamically populated with SVG icons + labels -->
+          </div>
+          <button id="btn-hide-bottom-nav" class="pm-hide-bottom-nav-btn" title="Hide Bottom Navigation Bar">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </nav>
+      </section>
+
+      <!-- ===================================================================== -->
+      <!-- SLIDE-OVER 6: ADD & CUSTOMIZE OPERA SIDEBAR MEDIA APPS                -->
+      <!-- ===================================================================== -->
+      <section id="pm-media-apps-drawer" class="pm-drawer hidden" aria-hidden="true">
+        <div class="pm-drawer-header">
+          <button id="btn-media-apps-back" class="pm-back-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Done
+          </button>
+          <h2 class="pm-drawer-title">Sidebar Media &amp; Social Hub</h2>
+          <button id="btn-open-firefox-sidebar-top" class="pm-text-btn">Open Left Sidebar</button>
+        </div>
+
+        <div class="pm-drawer-content">
+          <div class="pm-control-card">
+            <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--text-primary);">When I Click a Sidebar Media Icon:</div>
+            <div class="pm-option-grid" id="opt-sidebar-mode-grid">
+              <button class="pm-opt-pill" data-sidebar-mode="auto">Smart Auto (Recommended)</button>
+              <button class="pm-opt-pill" data-sidebar-mode="sidebar">Open in Firefox Left Sidebar</button>
+              <button class="pm-opt-pill" data-sidebar-mode="embedded">Split View Inside Popup</button>
+              <button class="pm-opt-pill" data-sidebar-mode="window">Floating Side Window</button>
+            </div>
+          </div>
+
+          <div class="pm-control-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+              <span style="font-size:12px;font-weight:700;color:var(--text-primary);">Top Shortcuts &amp; Controls Bar Mode:</span>
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;">
+                <input type="checkbox" id="chk-social-notify-sounds" checked>
+                <span>Message Chime Sounds</span>
+              </label>
+            </div>
+            <div class="pm-option-grid" id="opt-topbar-mode-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px;">
+              <button class="pm-opt-pill" data-topbar-mode="hover" title="Hide top bar and slide down smoothly when hovering the top edge">Show on Hover</button>
+              <button class="pm-opt-pill" data-topbar-mode="pinned" title="Keep top bar always visible">Always Pinned</button>
+              <button class="pm-opt-pill" data-topbar-mode="disabled" title="Completely remove the top bar and hover zone">Completely Off</button>
+            </div>
+            <div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:6px;">Social Media App Color Theme:</div>
+            <div class="pm-option-grid" id="opt-social-theme-grid">
+              <button class="pm-opt-pill" data-social-theme="native">Native Default</button>
+              <button class="pm-opt-pill" data-social-theme="match-theme">Match My Palette</button>
+              <button class="pm-opt-pill" data-social-theme="warm-glass">Cozy Warm Eye-Care</button>
+              <button class="pm-opt-pill" data-social-theme="midnight-oled">Midnight Indigo</button>
+              <button class="pm-opt-pill" data-social-theme="rose-twilight">Rose Twilight</button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;">
+            <h3 class="pm-section-heading">Pinned Apps &amp; Per-App Message Sounds</h3>
+            <span style="font-size:10.5px;color:var(--text-muted);">Drag &amp; drop to reorder</span>
+          </div>
+          <div id="pm-media-apps-toggle-grid" class="pm-media-apps-toggle-grid">
+            <!-- Dynamically populated -->
+          </div>
+
+          <h3 class="pm-section-heading">Add Any Custom Website / Media App</h3>
+          <div class="pm-control-card">
+            <div style="display:flex;gap:6px;margin-bottom:8px;">
+              <input type="text" id="input-custom-app-name" class="pm-input" placeholder="App Name (e.g. SoundCloud, Threads)" style="flex:1;">
+              <input type="color" id="input-custom-app-color" value="#D96B43" style="width:38px;height:34px;border:none;background:none;cursor:pointer;">
+            </div>
+            <div style="display:flex;gap:6px;">
+              <input type="url" id="input-custom-app-url" class="pm-input" placeholder="https://…" style="flex:1;">
+              <button id="btn-add-custom-app" class="pm-btn pm-btn-primary">Add to Sidebar</button>
+            </div>
+            <div id="pm-custom-apps-list" style="margin-top:8px;display:flex;flex-direction:column;gap:5px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Drag-to-Resize Corner Grips -->
+      <div id="pm-resize-left" class="pm-resize-grip pm-resize-grip-left" title="Drag corner to resize popup width/height"></div>
+      <div id="pm-resize-right" class="pm-resize-grip pm-resize-grip-right" title="Drag corner to resize popup width/height"></div>
+
+      <!-- Toast Notification Pill -->
+      <div id="pm-toast" class="pm-toast hidden"></div>
+    </div>
+  </div>
+
+  <script src="../shared/themes.js"></script>
+  <script src="../shared/sender-icons.js"></script>
+  <script src="../shared/media-apps.js"></script>
+  <script src="../shared/sound-engine.js"></script>
+  <script src="../shared/gmail-client.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

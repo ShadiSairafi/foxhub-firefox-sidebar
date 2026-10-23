@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FoxHub: Settings &amp; Theme Studio</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div id="pm-wallpaper-layer" class="pm-wallpaper-layer" aria-hidden="true"></div>
+
+  <div class="opt-layout">
+    <!-- Left Sidebar Navigation -->
+    <aside class="opt-sidebar">
+      <div class="opt-brand">
+        <img src="../../icons/icon-128.png" alt="FoxHub" class="opt-brand-logo">
+        <div>
+          <h1 class="opt-brand-title">FoxHub</h1>
+          <span class="opt-brand-badge">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            100% Local &amp; Private
+          </span>
+        </div>
+      </div>
+
+      <nav class="opt-nav">
+        <button class="opt-nav-btn active" data-tab="tab-accounts">
+          <svg class="opt-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>Accounts &amp; Login</span>
+        </button>
+        <button class="opt-nav-btn" data-tab="tab-backgrounds">
+          <svg class="opt-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+          <span>Backgrounds &amp; Themes</span>
+        </button>
+        <button class="opt-nav-btn" data-tab="tab-notifications">
+          <svg class="opt-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span>Notifications &amp; Voice</span>
+        </button>
+        <button class="opt-nav-btn" data-tab="tab-privacy">
+          <svg class="opt-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span>General &amp; Local Privacy</span>
+        </button>
+      </nav>
+
+      <div class="opt-sidebar-footer">
+        <p>Your emails stay strictly on your device. Zero developer servers, zero analytics, zero paywalls.</p>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="opt-main">
+      <!-- ================================================================= -->
+      <!-- TAB 1: ACCOUNTS & MULTI-LOGIN                                     -->
+      <!-- ================================================================= -->
+      <section id="tab-accounts" class="opt-tab-panel active">
+        <header class="opt-panel-header">
+          <div>
+            <h2>Accounts &amp; Multi-Account Login</h2>
+            <p>Connect and customize multiple Gmail accounts. Switch between unified or individual inboxes anytime.</p>
+          </div>
+          <div class="opt-header-btns">
+            <button id="opt-btn-rescan" class="opt-btn opt-btn-secondary">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              <span>Rescan Browser Accounts</span>
+            </button>
+            <button id="opt-btn-google-login" class="opt-btn opt-btn-primary">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+              <span>Sign in with Google Account</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="opt-card opt-hero-card">
+          <div>
+            <h3>How Multi-Account Detection Works Locally</h3>
+            <p>FoxHub automatically detects every Google account signed into Firefox (<code>u/0</code>, <code>u/1</code>, <code>u/2</code>, etc.) or connected via Local OAuth. Click <strong>"Sign in with Google Account"</strong> to log into another Gmail address in a popup window, and FoxHub will add it automatically as soon as you sign in.</p>
+          </div>
+        </div>
+
+        <h3 class="opt-subheading">Connected Inboxes &amp; Per-Account Labels</h3>
+        <div id="opt-accounts-list" class="opt-accounts-list">
+          <!-- Populated dynamically -->
+        </div>
+
+        <div class="opt-card" style="margin-top:20px;">
+          <div class="opt-row-between">
+            <div>
+              <h4>Sample Preview Inbox (Demo Mode)</h4>
+              <p class="opt-muted">Show sample emails when no Gmail account is logged in so you can test themes, sounds, and voice reading.</p>
+            </div>
+            <select id="opt-demo-mode" class="opt-select" style="width:210px;">
+              <option value="auto">Auto (Only if 0 accounts signed in)</option>
+              <option value="on">Always Show Sample Accounts</option>
+              <option value="off">Disabled (Real accounts only)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="opt-card" style="margin-top:16px;">
+          <h4>Advanced: Connect Independent Account via Local Google OAuth 2.0</h4>
+          <p class="opt-muted" style="margin-bottom:10px;">If you want to authenticate a Gmail account without adding it to your normal browser session, paste your own Google Cloud OAuth Client ID below and click Connect. Tokens are stored strictly in your local browser storage.</p>
+          <div class="opt-inline-form">
+            <input type="text" id="opt-oauth-client-id" class="opt-input" placeholder="123456789-abcdef.apps.googleusercontent.com">
+            <button id="opt-btn-oauth-connect" class="opt-btn opt-btn-secondary">Launch Google OAuth</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- TAB 2: BACKGROUNDS & THEMES STUDIO                                -->
+      <!-- ================================================================= -->
+      <section id="tab-backgrounds" class="opt-tab-panel">
+        <header class="opt-panel-header">
+          <div>
+            <h2>Backgrounds &amp; Theme Studio</h2>
+            <p>Hand-crafted warm paper palettes, glassmorphism, and organic illustrated backgrounds. Strictly zero cold sci-fi or cyberpunk neon.</p>
+          </div>
+        </header>
+
+        <!-- LIVE INTERACTIVE COMBINATION PREVIEW IN FULL STUDIO -->
+        <div class="opt-live-preview-box">
+          <div class="opt-live-preview-header">
+            <span class="opt-live-dot"></span>
+            <strong>Live Combination Preview</strong>
+            <span id="opt-preview-summary" class="opt-muted" style="margin-left:6px;"></span>
+          </div>
+          <div class="opt-live-preview-stage">
+            <div id="opt-preview-wallpaper" class="opt-preview-wallpaper"></div>
+            <div id="opt-preview-content" class="opt-preview-content"></div>
+          </div>
+        </div>
+
+        <h3 class="opt-subheading">1. Choose Your Color Palette</h3>
+        <div id="opt-theme-grid" class="opt-theme-grid">
+          <!-- Populated dynamically -->
+        </div>
+
+        <h3 class="opt-subheading">2. Choose Your Background Artwork</h3>
+        <div id="opt-wallpaper-grid" class="opt-wallpaper-grid">
+          <!-- Populated dynamically -->
+        </div>
+
+        <div class="opt-card" style="margin-top:20px;">
+          <h3>3. Custom Photo Wallpaper &amp; Surface Controls</h3>
+          <p class="opt-muted" style="margin-bottom:14px;">Upload any cozy photo, painting, or wallpaper from your computer. Stored 100% locally.</p>
+
+          <div class="opt-inline-form" style="margin-bottom:16px;">
+            <label class="opt-btn opt-btn-primary" style="cursor:pointer;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              <span>Upload Custom Background Image…</span>
+              <input type="file" id="opt-input-custom-bg" accept="image/*" hidden>
+            </label>
+            <button id="opt-btn-reset-bg" class="opt-btn opt-btn-secondary">Reset to Theme Default</button>
+          </div>
+
+          <div class="opt-sliders-grid">
+            <div class="opt-slider-box">
+              <div class="opt-row-between">
+                <label for="opt-wallpaper-opacity">Background Artwork Visibility</label>
+                <span id="opt-wallpaper-opacity-val">95%</span>
+              </div>
+              <input type="range" id="opt-wallpaper-opacity" min="0.1" max="1" step="0.05" value="0.95">
+            </div>
+
+            <div class="opt-slider-box">
+              <div class="opt-row-between">
+                <label for="opt-card-opacity">Email Card Glass Opacity</label>
+                <span id="opt-card-opacity-val">62%</span>
+              </div>
+              <input type="range" id="opt-card-opacity" min="0.25" max="0.96" step="0.03" value="0.62">
+            </div>
+
+            <div class="opt-slider-box">
+              <div class="opt-row-between">
+                <label for="opt-card-blur">Email Card Frosted Blur</label>
+                <span id="opt-card-blur-val">16px</span>
+              </div>
+              <input type="range" id="opt-card-blur" min="0" max="28" step="2" value="16">
+            </div>
+
+            <div class="opt-slider-box">
+              <div class="opt-row-between">
+                <label for="opt-card-radius">Email Card Corner Radius</label>
+                <span id="opt-card-radius-val">15px</span>
+              </div>
+              <input type="range" id="opt-card-radius" min="6" max="24" step="1" value="15">
+            </div>
+          </div>
+
+          <div class="opt-sliders-grid" style="margin-top:16px;">
+            <div>
+              <label for="opt-card-style" style="display:block;font-weight:600;margin-bottom:6px;">Email Card Material Style</label>
+              <select id="opt-card-style" class="opt-select">
+                <option value="glassmorphism">Crystal Glassmorphism (Frosted)</option>
+                <option value="tinted-glass">Tinted Color Glass</option>
+                <option value="warm-paper">Artisanal Warm Paper</option>
+                <option value="floating-minimal">Borderless Floating</option>
+                <option value="outlined-editorial">Editorial Outlined</option>
+                <option value="soft-neumorphic">Soft Cushion Neumorphic</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="opt-tab-style" style="display:block;font-weight:600;margin-bottom:6px;">Account Switcher Tab Style</label>
+              <select id="opt-tab-style" class="opt-select">
+                <option value="glass-pills">Frosted Glass Pills</option>
+                <option value="segmented-bar">Segmented Bar</option>
+                <option value="underline-tabs">Editorial Underline Tabs</option>
+                <option value="tinted-chips">Tinted Color Chips</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="opt-card-density" style="display:block;font-weight:600;margin-bottom:6px;">Email Card Density</label>
+              <select id="opt-card-density" class="opt-select">
+                <option value="compact">Compact Rows</option>
+                <option value="cozy">Cozy Default</option>
+                <option value="spacious">Spacious Magazine</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="opt-ambient-effect" style="display:block;font-weight:600;margin-bottom:6px;">Ambient Atmosphere Effect</label>
+              <select id="opt-ambient-effect" class="opt-select">
+                <option value="sunbeams">Warm Sunbeams</option>
+                <option value="soft-bokeh">Dreamy Bokeh Glow</option>
+                <option value="paper-grain">Fine Paper Texture</option>
+                <option value="none">None (Clean)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- TAB 3: NOTIFICATIONS, SOUNDS & VOICE (TTS)                        -->
+      <!-- ================================================================= -->
+      <section id="tab-notifications" class="opt-tab-panel">
+        <header class="opt-panel-header">
+          <div>
+            <h2>Notifications, Chimes &amp; Voice Reader</h2>
+            <p>Customize how FoxHub alerts you and reads your emails aloud.</p>
+          </div>
+          <button id="opt-btn-test-notif" class="opt-btn opt-btn-primary">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span>Test Notification &amp; Sound</span>
+          </button>
+        </header>
+
+        <div class="opt-card">
+          <div class="opt-row-between" style="margin-bottom:16px;">
+            <div>
+              <h4>Desktop Popup Notifications</h4>
+              <p class="opt-muted">Show a native Firefox notification when new unread mail arrives.</p>
+            </div>
+            <input type="checkbox" id="opt-desktop-notif" class="opt-toggle">
+          </div>
+
+          <div class="opt-row-between">
+            <div>
+              <h4>Speak New Emails Aloud Automatically</h4>
+              <p class="opt-muted">Automatically announce sender and subject when a new email arrives.</p>
+            </div>
+            <input type="checkbox" id="opt-voice-notif" class="opt-toggle">
+          </div>
+        </div>
+
+        <div class="opt-card" style="margin-top:16px;">
+          <h3>Notification Sound Chime</h3>
+          <p class="opt-muted" style="margin-bottom:14px;">Synthesized locally using warm acoustic intervals, or upload your own audio file.</p>
+
+          <div id="opt-sound-grid" class="opt-sound-grid">
+            <!-- Populated dynamically -->
+          </div>
+
+          <div class="opt-inline-form" style="margin-top:14px;">
+            <label class="opt-btn opt-btn-secondary" style="cursor:pointer;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              <span>Upload Custom Sound File (.mp3 / .wav / .ogg)</span>
+              <input type="file" id="opt-input-custom-audio" accept="audio/*" hidden>
+            </label>
+            <div style="flex:1; max-width:260px;">
+              <div class="opt-row-between">
+                <label for="opt-sound-volume">Chime Volume</label>
+                <span id="opt-sound-volume-val">75%</span>
+              </div>
+              <input type="range" id="opt-sound-volume" min="0" max="1" step="0.05" value="0.75" style="width:100%;">
+            </div>
+          </div>
+        </div>
+
+        <div class="opt-card" style="margin-top:16px;">
+          <h3>Text-to-Speech (Listen to Email) Voice</h3>
+          <p class="opt-muted" style="margin-bottom:14px;">Choose the voice and reading speed used when you click "Listen" on any email.</p>
+
+          <div class="opt-sliders-grid">
+            <div>
+              <label for="opt-tts-voice" style="display:block;font-weight:600;margin-bottom:6px;">Voice</label>
+              <select id="opt-tts-voice" class="opt-select"></select>
+            </div>
+            <div>
+              <div class="opt-row-between" style="margin-bottom:6px;">
+                <label for="opt-tts-rate" style="font-weight:600;">Reading Speed</label>
+                <span id="opt-tts-rate-val">1.0x</span>
+              </div>
+              <input type="range" id="opt-tts-rate" min="0.75" max="1.5" step="0.05" value="1.0" style="width:100%;">
+            </div>
+          </div>
+
+          <button id="opt-btn-test-tts" class="opt-btn opt-btn-secondary" style="margin-top:12px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+            <span>Test Voice Reading Sample</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- TAB 4: GENERAL & LOCAL PRIVACY AUDIT                              -->
+      <!-- ================================================================= -->
+      <section id="tab-privacy" class="opt-tab-panel">
+        <header class="opt-panel-header">
+          <div>
+            <h2>General &amp; 100% Local Privacy Guarantee</h2>
+            <p>Everything stays between your Firefox browser and your Gmail account.</p>
+          </div>
+        </header>
+
+        <div class="opt-card">
+          <div class="opt-row-between" style="margin-bottom:16px;">
+            <div>
+              <h4>Background Check Interval</h4>
+              <p class="opt-muted">How frequently FoxHub checks your accounts for unread emails.</p>
+            </div>
+            <select id="opt-poll-interval" class="opt-select" style="width:200px;">
+              <option value="15">Every 15 seconds</option>
+              <option value="30">Every 30 seconds</option>
+              <option value="60">Every 1 minute</option>
+              <option value="180">Every 3 minutes</option>
+              <option value="300">Every 5 minutes</option>
+            </select>
+          </div>
+
+          <div class="opt-row-between">
+            <div>
+              <h4>Maximum Multi-Login Session Slots to Scan</h4>
+              <p class="opt-muted">Number of Google session slots (<code>u/0</code> through <code>u/N</code>) scanned automatically.</p>
+            </div>
+            <select id="opt-max-slots" class="opt-select" style="width:200px;">
+              <option value="3">Up to 3 accounts (u/0 to u/2)</option>
+              <option value="5">Up to 5 accounts (u/0 to u/4)</option>
+              <option value="8">Up to 8 accounts (u/0 to u/7)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="opt-card opt-privacy-card" style="margin-top:16px;">
+          <h3 style="display:flex;align-items:center;gap:8px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>Local-First Privacy Architecture</span>
+          </h3>
+          <ul class="opt-privacy-list">
+            <li><strong>Zero External Servers:</strong> FoxHub has no backend server, no developer database, and no analytics scripts.</li>
+            <li><strong>Direct Browser-to-Gmail Connection:</strong> All requests go directly from your Firefox browser to <code>mail.google.com</code> or <code>googleapis.com</code>.</li>
+            <li><strong>100% Local Storage:</strong> Your preferences, custom backgrounds, and snoozed reminders live exclusively in your local <code>browser.storage.local</code> container.</li>
+          </ul>
+          <div class="opt-inline-form" style="margin-top:14px;">
+            <button id="opt-btn-clear-cache" class="opt-btn opt-btn-secondary">Reset Local Read/Snooze Cache</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="opt-toast" class="opt-toast hidden"></div>
+
+  <script src="../shared/themes.js"></script>
+  <script src="../shared/sender-icons.js"></script>
+  <script src="../shared/sound-engine.js"></script>
+  <script src="../shared/gmail-client.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

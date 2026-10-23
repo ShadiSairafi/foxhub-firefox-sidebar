@@ -1,0 +1,24 @@
+# Personal / sensitive files (never commit)
+*.txt
+*Backup*
+*backup*
+*.key
+*.pem
+.env*
+
+# Temporary build backups and legacy packages
+*.old
+*.tmp
+pocketmail-firefox.zip
+pocketmail-firefox.xpi
+pockethub-firefox.zip
+pockethub-firefox.xpi
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+node_modules/
+__pycache__/
