@@ -55,7 +55,7 @@ Install directly from the packaged [`foxhub-firefox.zip`](foxhub-firefox.zip) ar
 ├── demo/                   # Demo video (.mp4) and preview (.gif)
 ├── manifest.json           # Firefox WebExtension manifest
 ├── PRIVACY.md              # Local-first privacy policy
-└── LICENSE                 # MIT License
+└── LICENSE                 # Mozilla Public License 2.0 (MPL-2.0)
 ```
 
 ## Feedback & Feature Requests
@@ -64,4 +64,4 @@ If you have any feedback, run into a bug, or want to see a specific app or featu
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Released under the [Mozilla Public License 2.0 (MPL-2.0)](LICENSE).
