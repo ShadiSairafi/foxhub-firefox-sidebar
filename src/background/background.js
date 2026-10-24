@@ -967,15 +967,18 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
   if (!appId || !targetUrl || !document.body) return;
   if (!isAppAllowedForPersistence(appId)) return;
 
-  cleanupMsePlayer(appId);
   const existing = bgAudioPool.get(appId);
   if (existing) {
+    if (Date.now() - (existing.startedAt || 0) < 1500) {
+      return;
+    }
     try {
       existing.frame.remove();
       existing.frame.src = 'about:blank';
     } catch (_) {}
     bgAudioPool.delete(appId);
   }
+  cleanupMsePlayer(appId);
 
   const iframe = document.createElement('iframe');
   iframe.name = `pm-bg-audio-${appId}`;
@@ -987,7 +990,13 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
     'position:fixed;left:-9999px;top:-9999px;width:420px;height:680px;opacity:0;pointer-events:none;border:none;';
   iframe.src = targetUrl;
   document.body.appendChild(iframe);
-  bgAudioPool.set(appId, { frame: iframe, url: targetUrl, title, autoplayBlocked: false });
+  bgAudioPool.set(appId, {
+    frame: iframe,
+    url: targetUrl,
+    title,
+    autoplayBlocked: false,
+    startedAt: Date.now()
+  });
 
   try {
     browser.browserAction.setBadgeText({ text: '▶' });
@@ -1034,8 +1043,10 @@ if (browser.runtime && browser.runtime.onConnect) {
     port.onMessage.addListener((msg) => {
       if (!msg || typeof msg !== 'object') return;
       if (msg.type === 'UPDATE_PERSISTENT_SESSION') {
-        if (msg.activeAppId !== undefined) {
+        if (msg.activeAppId && isAppAllowedForPersistence(msg.activeAppId)) {
           currentSettings.persistentLastActiveAppId = msg.activeAppId;
+        } else if (msg.activeAppId === 'pocketmail' && msg.explicitMailClick && bgAudioPool.size === 0) {
+          currentSettings.persistentLastActiveAppId = 'pocketmail';
         }
         if (msg.appId && msg.url && !msg.url.includes('pm_boot=1')) {
           if (!currentSettings.persistentSavedAppUrls) {
@@ -1048,7 +1059,7 @@ if (browser.runtime && browser.runtime.onConnect) {
         if (msg.appId && msg.playback) {
           const prev = liveMediaPlaybackState.get(msg.appId);
           const inTakeoverGrace =
-            prev && prev.handedOffAt && Date.now() - prev.handedOffAt < 8000 && prev.isPlaying;
+            prev && prev.handedOffAt && Date.now() - prev.handedOffAt < 15000 && prev.isPlaying;
           liveMediaPlaybackState.set(msg.appId, {
             ...msg.playback,
             isPlaying: Boolean(msg.playback.isPlaying || inTakeoverGrace),
@@ -1326,8 +1337,10 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       })();
 
     case 'UPDATE_PERSISTENT_SESSION': {
-      if (msg.activeAppId !== undefined) {
+      if (msg.activeAppId && isAppAllowedForPersistence(msg.activeAppId)) {
         currentSettings.persistentLastActiveAppId = msg.activeAppId;
+      } else if (msg.activeAppId === 'pocketmail' && msg.explicitMailClick && bgAudioPool.size === 0) {
+        currentSettings.persistentLastActiveAppId = 'pocketmail';
       }
       if (msg.appId && msg.url && !msg.url.includes('pm_boot=1')) {
         if (!currentSettings.persistentSavedAppUrls) {
@@ -1340,7 +1353,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       if (msg.appId && msg.playback) {
         const prev = liveMediaPlaybackState.get(msg.appId);
         const inTakeoverGrace =
-          prev && prev.handedOffAt && Date.now() - prev.handedOffAt < 8000 && prev.isPlaying;
+          prev && prev.handedOffAt && Date.now() - prev.handedOffAt < 15000 && prev.isPlaying;
         liveMediaPlaybackState.set(msg.appId, {
           ...msg.playback,
           isPlaying: Boolean(msg.playback.isPlaying || inTakeoverGrace),
@@ -1365,8 +1378,10 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         return Promise.resolve({ ok: true });
       }
 
-      if (msg.activeAppId) {
+      if (msg.activeAppId && isAppAllowedForPersistence(msg.activeAppId)) {
         currentSettings.persistentLastActiveAppId = msg.activeAppId;
+      } else if (Array.isArray(msg.playingApps) && msg.playingApps.length > 0 && msg.playingApps[0].appId) {
+        currentSettings.persistentLastActiveAppId = msg.playingApps[0].appId;
       }
       if (msg.savedUrls && typeof msg.savedUrls === 'object') {
         if (!currentSettings.persistentSavedAppUrls) currentSettings.persistentSavedAppUrls = {};

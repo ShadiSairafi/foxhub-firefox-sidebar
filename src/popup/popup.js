@@ -3317,8 +3317,10 @@
             ? data.flatFrameName.replace('pm-media-frame-', '')
             : '');
         if (appId) {
+          const isTakeoverOrMse =
+            sidebarMsePlayers.has(appId) || pendingSidebarAudioTakeoverSet.has(appId);
           const pb = {
-            isPlaying: Boolean(data.isPlaying),
+            isPlaying: Boolean(data.isPlaying || isTakeoverOrMse),
             currentTime: Number(data.currentTime) || 0,
             resumeUrl: data.resumeUrl || sourceEntry?.currentUrl || '',
             title: data.title || '',
@@ -3981,6 +3983,7 @@
     // When the user closes the sidebar (×), save persistent app URLs and hand off active music/audio to Background Audio Keep-Alive!
     if (IS_SIDEBAR_VIEW) {
       window.addEventListener('pagehide', () => {
+        const activeMseIds = new Set(sidebarMsePlayers.keys());
         sidebarMsePlayers.forEach((_, id) => cleanupSidebarMsePlayer(id));
         if (!sidebarInitCompleted) return;
         const mode = appSettings.persistenceMode || 'eco';
@@ -3995,11 +3998,15 @@
           if (bestUrl && !bestUrl.includes('pm_boot=1')) {
             savedUrls[id] = bestUrl;
           }
-          if (pb && pb.isPlaying && Date.now() - pb.updatedAt < 12000 && bestUrl) {
+          const wasPlayingOrTakeover =
+            (pb && pb.isPlaying && Date.now() - pb.updatedAt < 12000) ||
+            activeMseIds.has(id) ||
+            pendingSidebarAudioTakeoverSet.has(id);
+          if (wasPlayingOrTakeover && bestUrl) {
             playingApps.push({
               appId: id,
               url: bestUrl,
-              title: pb.title || ''
+              title: pb?.title || ''
             });
           }
         });
@@ -4060,7 +4067,15 @@
 
       const params = new URLSearchParams(window.location.search || '');
       const initialAppId = params.get('app');
-      const lastActiveId = appSettings.persistentLastActiveAppId;
+      const firstBgPlayingId =
+        pendingSidebarAudioTakeoverSet.size > 0 ? Array.from(pendingSidebarAudioTakeoverSet)[0] : '';
+      const rawLastActiveId = appSettings.persistentLastActiveAppId;
+      const lastActiveId =
+        rawLastActiveId && rawLastActiveId !== 'pocketmail' && isAppPersistent(rawLastActiveId)
+          ? rawLastActiveId
+          : firstBgPlayingId && isAppPersistent(firstBgPlayingId)
+            ? firstBgPlayingId
+            : rawLastActiveId;
       if (IS_SIDEBAR_VIEW && !initialAppId && lastActiveId && lastActiveId !== 'pocketmail' && isAppPersistent(lastActiveId)) {
         activeRailAppId = lastActiveId;
       }
@@ -4084,6 +4099,21 @@
             openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
           }
         }
+        // Also warm any background-playing persistent app in the hidden keep-alive pool if the user reopened onto a different app
+        pendingSidebarAudioTakeoverSet.forEach((bgId) => {
+          if (bgId && bgId !== activeRailAppId && isAppPersistent(bgId)) {
+            const bgApp = window.PocketMailMediaApps.getAppById(bgId, appSettings);
+            const bgUrl = hibernatedAppUrls.get(bgId);
+            if (bgApp && bgUrl) {
+              const bgEntry = getOrCreateMediaFrame(bgApp);
+              if (!bgEntry.hasNavigated) {
+                bgEntry.hasNavigated = true;
+                bgEntry.currentUrl = bgUrl;
+                bgEntry.frame.src = bgUrl;
+              }
+            }
+          }
+        });
       }
     }
   }

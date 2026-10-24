@@ -472,19 +472,24 @@
           display: none !important;
         }
 
-        /* Prevent clicking a contact's avatar in the Instagram DM list from opening their Story instead of their DM chat! */
+        /* Prevent clicking a contact's avatar in the Instagram DM list from opening their Story instead of their DM chat!
+           Instagram's IGDStoryRingOffMsys.react listens to onPointerEnter on div:has(> canvas) inside each div[role="button"] DM row
+           and mounts a floating body > button[style*="position: fixed"][style*="border-radius: 50%"] portal over the avatar. */
+        html[data-pm-ig-view="dm-inbox"] div[role="button"] div:has(> canvas),
+        html[data-pm-ig-view="dm-inbox"] div[role="button"] div:has(> canvas) *,
+        html[data-pm-ig-view="dm-inbox"] div[role="button"] canvas,
         html[data-pm-ig-view="dm-inbox"] [role="listitem"] div:has(> canvas),
         html[data-pm-ig-view="dm-inbox"] [role="listitem"] div:has(> canvas) *,
-        html[data-pm-ig-view="dm-inbox"] [role="listitem"] [role="button"] [role="button"]:has(img),
-        html[data-pm-ig-view="dm-inbox"] [role="listitem"] [role="button"] [role="button"]:has(img) *,
-        html[data-pm-ig-view="dm-inbox"] [role="listitem"] canvas,
-        html[data-pm-ig-view="dm-inbox"] [role="listitem"] img,
+        html[data-pm-ig-view="dm-thread"] div[role="button"] div:has(> canvas),
+        html[data-pm-ig-view="dm-thread"] div[role="button"] div:has(> canvas) *,
+        html[data-pm-ig-view="dm-thread"] div[role="button"] canvas,
         html[data-pm-ig-view="dm-thread"] [role="listitem"] div:has(> canvas),
-        html[data-pm-ig-view="dm-thread"] [role="listitem"] div:has(> canvas) *,
-        html[data-pm-ig-view="dm-thread"] [role="listitem"] [role="button"] [role="button"]:has(img),
-        html[data-pm-ig-view="dm-thread"] [role="listitem"] [role="button"] [role="button"]:has(img) *,
-        html[data-pm-ig-view="dm-thread"] [role="listitem"] canvas,
-        html[data-pm-ig-view="dm-thread"] [role="listitem"] img {
+        html[data-pm-ig-view="dm-thread"] [role="listitem"] div:has(> canvas) * {
+          pointer-events: none !important;
+        }
+        html[data-pm-ig-view="dm-inbox"] body > button[style*="position: fixed"][style*="border-radius"],
+        html[data-pm-ig-view="dm-thread"] body > button[style*="position: fixed"][style*="border-radius"] {
+          display: none !important;
           pointer-events: none !important;
         }
 
@@ -2363,6 +2368,67 @@
     obs.observe(document, { childList: true });
   }
 
+  function setupInstagramDmStoryRingGuard() {
+    if (!host.includes('instagram.com')) return;
+
+    const isDmRoute = () => (window.location.pathname || '').startsWith('/direct');
+
+    const blockStoryHover = (e) => {
+      if (!isDmRoute()) return;
+      const t = e.target;
+      if (!t || !t.closest) return;
+      const rowBtn = t.closest('div[role="button"][tabindex="0"], [role="listitem"]');
+      if (!rowBtn) return;
+      const storyWrap = t.closest('div:has(> canvas)');
+      if (storyWrap && rowBtn.contains(storyWrap)) {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+      }
+    };
+
+    const interceptStoryPortalClick = (e) => {
+      if (!isDmRoute()) return;
+      const t = e.target;
+      if (!t || !t.closest) return;
+      // 1. Catch any floating body > button[style*="position: fixed"] Story Portal spawned by IGDStoryRingOffMsys.react
+      const portalBtn = t.closest('body > button[style*="position: fixed"]');
+      if (portalBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        portalBtn.style.display = 'none';
+        portalBtn.style.pointerEvents = 'none';
+        if (e.type === 'click' && typeof e.clientX === 'number') {
+          const underEl = document.elementFromPoint(e.clientX, e.clientY);
+          const dmRow = underEl && underEl.closest ? underEl.closest('div[role="button"][tabindex="0"]') : null;
+          if (dmRow) dmRow.click();
+        }
+        return;
+      }
+      // 2. Catch any direct click on a canvas or story ring inside a DM row and forward it to the outer DM row button
+      const rowBtn = t.closest('div[role="button"][tabindex="0"]');
+      if (rowBtn) {
+        const storyWrap = t.closest('div:has(> canvas)');
+        if (storyWrap && rowBtn.contains(storyWrap) && t !== rowBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          if (e.type === 'click') {
+            rowBtn.click();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('pointerover', blockStoryHover, true);
+    window.addEventListener('pointerenter', blockStoryHover, true);
+    window.addEventListener('mouseover', blockStoryHover, true);
+    window.addEventListener('pointerdown', interceptStoryPortalClick, true);
+    window.addEventListener('mousedown', interceptStoryPortalClick, true);
+    window.addEventListener('click', interceptStoryPortalClick, true);
+  }
+
+  setupInstagramDmStoryRingGuard();
   setupSpotifyLoginHelper();
   setupYouTubeFullscreenAndPipHelper();
 
@@ -2610,6 +2676,7 @@
   let activeMseRecorder = null;
   let activeMseMediaEl = null;
   let sidebarAutoResumeRequested = false;
+  let lastSpotifyAutoResumeClickAt = 0;
 
   function stopLocalMseAudioBridge() {
     if (!bgAudioMseBridgeStarted) return;
@@ -2787,10 +2854,9 @@
             if (aria.includes('pause')) {
               sidebarAutoResumeRequested = false;
               notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
-            } else if (curAutoplayPolicy === 'allowed') {
+            } else if (Date.now() - lastSpotifyAutoResumeClickAt > 2000) {
+              lastSpotifyAutoResumeClickAt = Date.now();
               spToggle.click();
-              sidebarAutoResumeRequested = false;
-              notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
             }
           }
         } else if (mediaEl && mediaEl.readyState >= 2) {
