@@ -759,6 +759,28 @@
 
           <div class="pm-control-card">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+              <span style="font-size:12px;font-weight:700;color:var(--text-primary);">Persistent App Memory &amp; Background Audio:</span>
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Keep Spotify &amp; YouTube audio playing even after closing the sidebar for full screen space">
+                <input type="checkbox" id="chk-keep-audio-closed" checked>
+                <span>Play Audio When Closed</span>
+              </label>
+            </div>
+            <div class="pm-option-grid" id="opt-persistence-mode-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:8px;">
+              <button class="pm-opt-pill" data-persistence-mode="eco" title="Frees all app RAM when closing the sidebar and resets to Mail Inbox">Eco (RAM Saver)</button>
+              <button class="pm-opt-pill" data-persistence-mode="selected" title="Keep only your chosen apps (e.g. Spotify, YouTube, Discord) persistent across close/reopen">Selected Apps</button>
+              <button class="pm-opt-pill" data-persistence-mode="all" title="Keep all opened apps persistent and restore exact state on reopen">All Apps</button>
+            </div>
+            <div id="pm-persistence-resource-note" style="font-size:10.8px;line-height:1.4;color:var(--text-secondary);background:rgba(128,128,128,0.09);border-radius:8px;padding:7px 9px;margin-bottom:6px;">
+              <strong>⚡ Resource Impact (Eco Mode):</strong> Uses <strong>0 MB extra RAM</strong> and zero CPU/GPU when closed. Closing the sidebar unloads apps and resets to Mail.
+            </div>
+            <div id="pm-persistent-apps-picker-wrap" class="hidden" style="margin-top:6px;">
+              <div style="font-size:11px;font-weight:600;color:var(--text-primary);margin-bottom:5px;">Choose Apps to Keep Persistent &amp; Playing When Closed:</div>
+              <div id="pm-persistent-apps-picker" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+            </div>
+          </div>
+
+          <div class="pm-control-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
               <span style="font-size:12px;font-weight:700;color:var(--text-primary);">Top Shortcuts &amp; Controls Bar Mode:</span>
               <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;">
                 <input type="checkbox" id="chk-social-notify-sounds" checked>

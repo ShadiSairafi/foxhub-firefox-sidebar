@@ -1641,13 +1641,51 @@
     targetFrame?.classList.remove('is-loading');
   }
 
+  const framePlaybackStates = new Map(); // appId -> { isPlaying, currentTime, resumeUrl, title, updatedAt }
+
+  function isAppPersistent(appId) {
+    if (!appId || appId === 'pocketmail') return false;
+    const mode = appSettings.persistenceMode || 'eco';
+    if (mode === 'all') return true;
+    if (mode === 'selected') {
+      const list = Array.isArray(appSettings.persistentAppIds)
+        ? appSettings.persistentAppIds
+        : ['spotify', 'youtube', 'discord'];
+      return list.includes(appId);
+    }
+    return false;
+  }
+
+  function syncPersistentSessionToBackground(appId, url, playback = null) {
+    if ((appSettings.persistenceMode || 'eco') === 'eco') return;
+    browser.runtime
+      .sendMessage({
+        type: 'UPDATE_PERSISTENT_SESSION',
+        activeAppId: activeRailAppId,
+        appId: appId || undefined,
+        url: url || undefined,
+        playback: playback || undefined
+      })
+      .catch(() => {});
+  }
+
   function enforceMediaPoolMemoryCap(protectedAppId) {
-    while (mediaFramePool.size >= MAX_KEEPALIVE_FRAMES) {
+    const mode = appSettings.persistenceMode || 'eco';
+    const selectedCount = Array.isArray(appSettings.persistentAppIds) ? appSettings.persistentAppIds.length : 3;
+    const effectiveCap =
+      mode === 'all'
+        ? 12
+        : mode === 'selected'
+        ? Math.max(MAX_KEEPALIVE_FRAMES, selectedCount + 2)
+        : MAX_KEEPALIVE_FRAMES;
+
+    while (mediaFramePool.size >= effectiveCap) {
       let oldestId = null;
       let oldestScore = Infinity;
 
       mediaFramePool.forEach((entry, id) => {
         if (id === protectedAppId || id === activeRailAppId) return;
+        if (isAppPersistent(id)) return;
         const audioBonus = id === 'spotify' || id === 'youtube' ? 180000 : 0;
         const score = (entry.lastUsedAt || 0) + audioBonus;
         if (score < oldestScore) {
@@ -1905,6 +1943,7 @@
 
     switchActiveMediaFrame(app.id);
     renderOperaRail();
+    syncPersistentSessionToBackground(app.id, targetUrl);
 
     const iconEl = document.getElementById('media-active-icon');
     const titleEl = document.getElementById('media-active-title');
@@ -2067,6 +2106,72 @@
     const chkSocialSounds = document.getElementById('chk-social-notify-sounds');
     if (chkSocialSounds) {
       chkSocialSounds.checked = appSettings.socialAppNotifySounds !== false;
+    }
+
+    // Persistent App Memory & Background Audio Controls
+    const pMode = appSettings.persistenceMode || 'eco';
+    document.querySelectorAll('[data-persistence-mode]').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-persistence-mode') === pMode);
+    });
+
+    const chkKeepAudio = document.getElementById('chk-keep-audio-closed');
+    if (chkKeepAudio) {
+      chkKeepAudio.checked = appSettings.keepAudioPlayingWhenClosed !== false;
+      chkKeepAudio.disabled = pMode === 'eco';
+    }
+
+    const resNoteEl = document.getElementById('pm-persistence-resource-note');
+    if (resNoteEl) {
+      resNoteEl.replaceChildren();
+      const strongEl = document.createElement('strong');
+      const descSpan = document.createElement('span');
+      if (pMode === 'eco') {
+        strongEl.textContent = '⚡ Resource Impact (Eco Mode): ';
+        descSpan.textContent =
+          'Uses 0 MB extra RAM and zero CPU/GPU when closed. Closing the sidebar unloads apps and resets to Mail Inbox.';
+      } else if (pMode === 'selected') {
+        strongEl.textContent = '🎵 Resource Impact (Selected Apps): ';
+        descSpan.textContent =
+          'Keeps only your chosen apps below in persistent memory & background audio when closed so music keeps playing while you work in full screen, and restores your exact page on reopen. Uses extra RAM (~150–300 MB per active app) and moderate CPU/GPU.';
+      } else {
+        strongEl.textContent = '🚀 Resource Impact (All Apps Persistent): ';
+        descSpan.textContent =
+          'Keeps all opened apps in persistent memory & background audio across sidebar close/reopen. Highest RAM, CPU, and GPU usage.';
+      }
+      resNoteEl.appendChild(strongEl);
+      resNoteEl.appendChild(descSpan);
+    }
+
+    const pickerWrap = document.getElementById('pm-persistent-apps-picker-wrap');
+    const pickerEl = document.getElementById('pm-persistent-apps-picker');
+    if (pickerWrap && pickerEl) {
+      pickerWrap.classList.toggle('hidden', pMode !== 'selected');
+      pickerEl.replaceChildren();
+      const pickedIds = Array.isArray(appSettings.persistentAppIds)
+        ? appSettings.persistentAppIds
+        : ['spotify', 'youtube', 'discord'];
+      const allApps = [
+        ...(mediaApi.getOrderedBuiltInApps ? mediaApi.getOrderedBuiltInApps(appSettings) : mediaApi.BUILTIN_MEDIA_APPS),
+        ...(Array.isArray(appSettings.customMediaApps) ? appSettings.customMediaApps : [])
+      ];
+      allApps.forEach((app) => {
+        const isPicked = pickedIds.includes(app.id);
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = `pm-opt-pill ${isPicked ? 'active' : ''}`;
+        chip.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-size:11px;';
+        chip.appendChild(mediaApi.createAppSvgIcon(app.id, 12));
+        const lbl = document.createElement('span');
+        lbl.textContent = `${app.name}${isPicked ? ' ✓' : ''}`;
+        chip.appendChild(lbl);
+        chip.addEventListener('click', async () => {
+          const nextPicked = isPicked ? pickedIds.filter((id) => id !== app.id) : [...pickedIds, app.id];
+          await saveSettingsPatch({ persistentAppIds: nextPicked });
+          renderMediaAppsManager();
+          showToast(isPicked ? `Removed ${app.name} from persistent memory` : `${app.name} set to persistent memory!`);
+        });
+        pickerEl.appendChild(chip);
+      });
     }
 
     syncMediaTopBarAutoHideState();
@@ -2576,6 +2681,7 @@
       hideMediaWorkspaceKeepAlive();
       mediaAppsDrawer?.classList.add('hidden');
       renderOperaRail();
+      syncPersistentSessionToBackground('pocketmail', '');
     });
 
     const openFirefoxLeftSidebar = () => {
@@ -2639,6 +2745,35 @@
       const enabled = Boolean(e.target.checked);
       await saveSettingsPatch({ socialAppNotifySounds: enabled });
       showToast(enabled ? 'Social app message sounds enabled' : 'Social app message sounds muted');
+    });
+
+    document.querySelectorAll('[data-persistence-mode]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const pMode = btn.getAttribute('data-persistence-mode') || 'eco';
+        const patch = { persistenceMode: pMode };
+        if (pMode !== 'eco') {
+          patch.persistentLastActiveAppId = activeRailAppId;
+        }
+        await saveSettingsPatch(patch);
+        renderMediaAppsManager();
+        showToast(
+          pMode === 'eco'
+            ? 'Eco Mode enabled — RAM freed when sidebar closes'
+            : pMode === 'selected'
+            ? 'Selected Apps Persistent Memory enabled!'
+            : 'All Apps Persistent Memory enabled!'
+        );
+      });
+    });
+
+    document.getElementById('chk-keep-audio-closed')?.addEventListener('change', async (e) => {
+      const enabled = Boolean(e.target.checked);
+      await saveSettingsPatch({ keepAudioPlayingWhenClosed: enabled });
+      showToast(
+        enabled
+          ? 'Background audio keep-alive enabled when sidebar closes'
+          : 'Background audio will pause when sidebar closes'
+      );
     });
 
     document.querySelectorAll('[data-topbar-mode]').forEach((btn) => {
@@ -3050,6 +3185,7 @@
           }
           sourceEntry.currentUrl = data.url;
           sourceEntry.lastNavAt = Date.now();
+          syncPersistentSessionToBackground(sourceEntry.appId, data.url);
         }
         if (!sourceEntry || sourceEntry.appId === activeRailAppId) {
           activeMediaUrl = data.url;
@@ -3065,6 +3201,28 @@
               }
             });
             if (app) renderMediaBottomBar(app);
+          }
+        }
+      } else if (data.type === 'PM_FRAME_PLAYBACK_STATE') {
+        const appId =
+          sourceEntry?.appId ||
+          (typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')
+            ? data.flatFrameName.replace('pm-media-frame-', '')
+            : '');
+        if (appId) {
+          const pb = {
+            isPlaying: Boolean(data.isPlaying),
+            currentTime: Number(data.currentTime) || 0,
+            resumeUrl: data.resumeUrl || sourceEntry?.currentUrl || '',
+            title: data.title || '',
+            updatedAt: Date.now()
+          };
+          framePlaybackStates.set(appId, pb);
+          if (pb.resumeUrl && sourceEntry) {
+            sourceEntry.currentUrl = pb.resumeUrl;
+          }
+          if (pb.isPlaying || isAppPersistent(appId)) {
+            syncPersistentSessionToBackground(appId, pb.resumeUrl, pb);
           }
         }
       } else if (data.type === 'PM_FRAME_ZOOM_UPDATED' && typeof data.zoom === 'number') {
@@ -3712,6 +3870,41 @@
         renderAll();
       }
     });
+
+    // When the user closes the sidebar (×), save persistent app URLs and hand off active music/audio to Background Audio Keep-Alive!
+    if (IS_SIDEBAR_VIEW) {
+      window.addEventListener('pagehide', () => {
+        const mode = appSettings.persistenceMode || 'eco';
+        if (mode === 'eco') return;
+
+        const savedUrls = {};
+        const playingApps = [];
+        mediaFramePool.forEach((entry, id) => {
+          if (!isAppPersistent(id)) return;
+          const pb = framePlaybackStates.get(id);
+          const bestUrl = pb?.resumeUrl || entry.currentUrl || entry.restoredUrl || '';
+          if (bestUrl && !bestUrl.includes('pm_boot=1')) {
+            savedUrls[id] = bestUrl;
+          }
+          if (pb && pb.isPlaying && Date.now() - pb.updatedAt < 12000 && bestUrl) {
+            playingApps.push({
+              appId: id,
+              url: bestUrl,
+              title: pb.title || ''
+            });
+          }
+        });
+
+        browser.runtime
+          .sendMessage({
+            type: 'SIDEBAR_CLOSED_HANDOFF',
+            activeAppId: activeRailAppId,
+            savedUrls,
+            playingApps
+          })
+          .catch(() => {});
+      });
+    }
   }
 
   async function init() {
@@ -3721,6 +3914,25 @@
       appState = res.state || appState;
       appSettings = res.settings || appSettings;
       snoozedMap = res.snoozed || {};
+
+      // If Sidebar is opening, stop any background audio handoff frames so the sidebar takes over cleanly without double audio
+      if (IS_SIDEBAR_VIEW) {
+        try {
+          const handoffRes = await browser.runtime.sendMessage({ type: 'STOP_BG_AUDIO_HANDOFF' });
+          if (handoffRes && handoffRes.settings) {
+            appSettings = handoffRes.settings;
+          }
+        } catch (_) {}
+      }
+
+      // Pre-seed hibernatedAppUrls for all persistent apps so clicking them or auto-restoring resumes their exact saved URL/timestamp!
+      const savedMap = appSettings.persistentSavedAppUrls || {};
+      Object.entries(savedMap).forEach(([id, savedUrl]) => {
+        if (savedUrl && isAppPersistent(id)) {
+          hibernatedAppUrls.set(id, savedUrl);
+        }
+      });
+
       renderAll();
 
       const params = new URLSearchParams(window.location.search || '');
@@ -3728,7 +3940,19 @@
       if (initialAppId && window.PocketMailMediaApps) {
         const app = window.PocketMailMediaApps.getAppById(initialAppId, appSettings);
         if (app) {
-          openMediaWorkspace(app);
+          openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
+          return;
+        }
+      }
+
+      // If Persistent App Memory ('selected' or 'all') is enabled in Sidebar, restore the last active persistent app automatically!
+      if (IS_SIDEBAR_VIEW && window.PocketMailMediaApps) {
+        const lastActiveId = appSettings.persistentLastActiveAppId;
+        if (lastActiveId && lastActiveId !== 'pocketmail' && isAppPersistent(lastActiveId)) {
+          const app = window.PocketMailMediaApps.getAppById(lastActiveId, appSettings);
+          if (app) {
+            openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
+          }
         }
       }
     }

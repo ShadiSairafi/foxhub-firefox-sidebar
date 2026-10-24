@@ -709,8 +709,7 @@
           #Desktop_PanelContainer_Id,
           .Root__right-sidebar,
           #main-view + div:not(:has([data-testid="now-playing-bar"])),
-          aside[aria-label="Now playing view"],
-          aside[aria-label*="Now playing" i] {
+          aside[aria-label="Now playing view" i]:not([data-testid="now-playing-bar"]) {
             display: none !important;
             width: 0 !important;
             min-width: 0 !important;
@@ -824,23 +823,90 @@
             box-sizing: border-box !important;
           }
 
-          [data-testid="now-playing-bar"],
           div:has(> [data-testid="now-playing-bar"]),
-          footer[data-testid="now-playing-bar"],
           .Root__now-playing-bar,
           .now-playing-bar-container {
+            grid-column: 1 / -1 !important;
             width: 100vw !important;
             max-width: 100vw !important;
             min-width: 0 !important;
-            padding: 4px 8px !important;
+            height: auto !important;
+            min-height: 82px !important;
+            z-index: 90 !important;
+            background: #000000 !important;
+            border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+          }
+          [data-testid="now-playing-bar"],
+          aside[data-testid="now-playing-bar"],
+          footer[data-testid="now-playing-bar"] {
+            display: flex !important;
+            width: 100% !important;
+            max-width: 100vw !important;
+            min-width: 0 !important;
+            height: auto !important;
+            min-height: 78px !important;
+            padding: 3px 8px 5px 8px !important;
             box-sizing: border-box !important;
             z-index: 90 !important;
           }
           [data-testid="now-playing-bar"] > div,
           footer[data-testid="now-playing-bar"] > div {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            justify-content: space-between !important;
             min-width: 0 !important;
             width: 100% !important;
-            gap: 4px !important;
+            height: auto !important;
+            gap: 2px 6px !important;
+          }
+          /* Row 1 (Full 100% Width): Player Controls (Shuffle, Prev, Play/Pause, Next, Repeat) + Full-Width Progress Seek Bar */
+          [data-testid="now-playing-bar"] > div > div:nth-child(2) {
+            order: 1 !important;
+            flex: 1 1 100% !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+          }
+          [data-testid="player-controls"] {
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            gap: 1px !important;
+          }
+          [data-testid="general-controls"] {
+            margin-bottom: 1px !important;
+          }
+          /* Row 2 Left: Current Track Cover + Song Title + Artist */
+          [data-testid="now-playing-bar"] > div > div:nth-child(1) {
+            order: 2 !important;
+            flex: 1 1 48% !important;
+            width: auto !important;
+            min-width: 0 !important;
+            max-width: 62% !important;
+            max-height: 30px !important;
+            overflow: hidden !important;
+          }
+          [data-testid="now-playing-widget"] img,
+          [data-testid="cover-art-image"] {
+            width: 26px !important;
+            height: 26px !important;
+            min-width: 26px !important;
+            border-radius: 4px !important;
+          }
+          /* Row 2 Right: Compact Volume Bar & Queue (padded on right so ^ Nav pill never overlaps) */
+          [data-testid="now-playing-bar"] > div > div:nth-child(3) {
+            order: 3 !important;
+            flex: 0 1 auto !important;
+            width: auto !important;
+            min-width: 0 !important;
+            max-height: 28px !important;
+            padding-right: 52px !important;
+          }
+          [data-testid="now-playing-bar"] [data-testid="fullscreen-mode-button"],
+          [data-testid="now-playing-bar"] [data-testid="pip-toggle-button"],
+          [data-testid="now-playing-bar"] button[aria-label*="Now playing view" i] {
+            display: none !important;
           }
         }
       `;
@@ -2498,6 +2564,79 @@
       handleRouteOrStateCheck();
     }
   }, 260);
+
+  // Live Playback & Timestamp Reporter + Background Audio Keep-Alive Auto-Resume
+  let bgAudioAutoResumed = false;
+  function reportLivePlaybackState() {
+    try {
+      let isPlaying = false;
+      let currentTime = 0;
+      let resumeUrl = window.location.href;
+
+      const mediaEl = document.querySelector('video.html5-main-video, video, audio');
+      if (mediaEl) {
+        currentTime = Math.floor(mediaEl.currentTime || 0);
+        if (!mediaEl.paused && !mediaEl.ended) {
+          isPlaying = true;
+        }
+      }
+
+      if (host.includes('spotify.com')) {
+        const spPlayBtn = document.querySelector('[data-testid="control-button-playpause"]');
+        if (spPlayBtn && !spPlayBtn.disabled) {
+          const aria = (spPlayBtn.getAttribute('aria-label') || '').toLowerCase();
+          if (aria.includes('pause')) {
+            isPlaying = true;
+          }
+        }
+      } else if (host.includes('youtube.com') && window.location.pathname.startsWith('/watch') && currentTime > 2) {
+        try {
+          const u = new URL(window.location.href);
+          u.searchParams.set('t', `${currentTime}s`);
+          resumeUrl = u.href;
+        } catch (_) {}
+      }
+
+      notifyParent('PM_FRAME_PLAYBACK_STATE', {
+        isPlaying,
+        currentTime,
+        resumeUrl,
+        title: document.title || ''
+      });
+
+      // If running inside Background Audio Keep-Alive Engine (when sidebar is closed), auto-resume playback once ready!
+      if (!bgAudioAutoResumed && typeof window.name === 'string' && window.name.startsWith('pm-bg-audio-')) {
+        if (host.includes('spotify.com')) {
+          const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+          const actionPlay = document.querySelector(
+            '[data-testid="action-bar-row"] [data-testid="play-button"], [data-testid="play-button"]'
+          );
+          if (spToggle && !spToggle.disabled) {
+            const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+            if (aria.includes('pause')) {
+              bgAudioAutoResumed = true;
+            } else {
+              spToggle.click();
+              bgAudioAutoResumed = true;
+            }
+          } else if (actionPlay) {
+            actionPlay.click();
+            bgAudioAutoResumed = true;
+          }
+        } else if (mediaEl) {
+          if (!mediaEl.paused) {
+            bgAudioAutoResumed = true;
+          } else {
+            mediaEl.play().then(() => {
+              bgAudioAutoResumed = true;
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  setInterval(reportLivePlaybackState, 1800);
 
   // Low-frequency fallback DOM state check — skips heavy DOM inspection whenever media (<video>/<audio>) is playing
   setInterval(() => {

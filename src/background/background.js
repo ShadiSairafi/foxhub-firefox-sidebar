@@ -35,6 +35,11 @@ const DEFAULT_SETTINGS = {
   autoHideMediaTopBar: true,    // Default ON: Auto-hide top shortcuts bar and reveal smoothly on hover
   hasSeenTopBarHint: false,     // Shows first-time onboarding hint explaining top-edge hover bar
   topBarAutoHideMigratedV1: true,
+  persistenceMode: 'eco',       // 'eco' (reset & free RAM) | 'selected' (custom picked apps) | 'all' (all apps persistent)
+  persistentAppIds: ['spotify', 'youtube', 'discord'], // Apps kept persistent in 'selected' mode
+  persistentLastActiveAppId: 'pocketmail',
+  persistentSavedAppUrls: {},   // { spotify: 'https://...', youtube: 'https://...', ... }
+  keepAudioPlayingWhenClosed: true,
   customWallpaperData: '',
   customWallpaperUrl: '',
   gradientColor1: '#FAD6A5',
@@ -912,6 +917,82 @@ function restartPollingTimer() {
 /**
  * Message Listener for Popup & Options UI
  */
+const liveMediaPlaybackState = new Map(); // appId -> { isPlaying, currentTime, resumeUrl, title, updatedAt }
+const bgAudioPool = new Map(); // appId -> { frame, url, title }
+
+function isAppAllowedForPersistence(appId) {
+  if (!appId || appId === 'pocketmail') return false;
+  const mode = currentSettings.persistenceMode || 'eco';
+  if (mode === 'all') return true;
+  if (mode === 'selected') {
+    const list = Array.isArray(currentSettings.persistentAppIds)
+      ? currentSettings.persistentAppIds
+      : ['spotify', 'youtube', 'discord'];
+    return list.includes(appId);
+  }
+  return false;
+}
+
+function stopBackgroundAudioFrames() {
+  if (bgAudioPool.size === 0) return;
+  bgAudioPool.forEach((entry) => {
+    try {
+      entry.frame.remove();
+      entry.frame.src = 'about:blank';
+    } catch (_) {}
+  });
+  bgAudioPool.clear();
+  updateToolbarBadge();
+}
+
+function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
+  if (!appId || !targetUrl || !document.body) return;
+  if (!isAppAllowedForPersistence(appId)) return;
+
+  const existing = bgAudioPool.get(appId);
+  if (existing) {
+    try {
+      existing.frame.remove();
+      existing.frame.src = 'about:blank';
+    } catch (_) {}
+    bgAudioPool.delete(appId);
+  }
+
+  const iframe = document.createElement('iframe');
+  iframe.name = `pm-bg-audio-${appId}`;
+  iframe.setAttribute(
+    'allow',
+    'autoplay; clipboard-write; encrypted-media; picture-in-picture; fullscreen *'
+  );
+  iframe.style.cssText =
+    'position:fixed;left:-9999px;top:-9999px;width:420px;height:680px;opacity:0;pointer-events:none;border:none;';
+  iframe.src = targetUrl;
+  document.body.appendChild(iframe);
+  bgAudioPool.set(appId, { frame: iframe, url: targetUrl, title });
+
+  try {
+    browser.browserAction.setBadgeText({ text: '▶' });
+    browser.browserAction.setBadgeBackgroundColor({ color: '#1DB954' });
+  } catch (_) {}
+}
+
+window.addEventListener('message', (e) => {
+  const data = e.data;
+  if (!data || data.source !== 'pocketmail-media-frame') return;
+  if (data.type === 'PM_FRAME_PLAYBACK_STATE' && typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-bg-audio-')) {
+    const appId = data.flatFrameName.replace('pm-bg-audio-', '');
+    if (data.resumeUrl && appId) {
+      if (!currentSettings.persistentSavedAppUrls) currentSettings.persistentSavedAppUrls = {};
+      currentSettings.persistentSavedAppUrls[appId] = data.resumeUrl;
+      const bgEntry = bgAudioPool.get(appId);
+      if (bgEntry) {
+        bgEntry.url = data.resumeUrl;
+        if (data.title) bgEntry.title = data.title;
+      }
+    }
+  }
+});
+
 browser.runtime.onMessage.addListener((msg, sender) => {
   switch (msg.type) {
     case 'GET_STATE':
@@ -1092,6 +1173,98 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         }
         return { ok: true, windowId: win?.id };
       })();
+
+    case 'UPDATE_PERSISTENT_SESSION': {
+      if (msg.activeAppId !== undefined) {
+        currentSettings.persistentLastActiveAppId = msg.activeAppId;
+      }
+      if (msg.appId && msg.url && !msg.url.includes('pm_boot=1')) {
+        if (!currentSettings.persistentSavedAppUrls) {
+          currentSettings.persistentSavedAppUrls = {};
+        }
+        if (isAppAllowedForPersistence(msg.appId)) {
+          currentSettings.persistentSavedAppUrls[msg.appId] = msg.url;
+        }
+      }
+      if (msg.appId && msg.playback) {
+        liveMediaPlaybackState.set(msg.appId, {
+          ...msg.playback,
+          updatedAt: Date.now()
+        });
+        if (msg.playback.resumeUrl && isAppAllowedForPersistence(msg.appId)) {
+          if (!currentSettings.persistentSavedAppUrls) {
+            currentSettings.persistentSavedAppUrls = {};
+          }
+          currentSettings.persistentSavedAppUrls[msg.appId] = msg.playback.resumeUrl;
+        }
+      }
+      browser.storage.local.set({ settings: currentSettings }).catch(() => {});
+      return Promise.resolve({ ok: true });
+    }
+
+    case 'SIDEBAR_CLOSED_HANDOFF': {
+      const mode = currentSettings.persistenceMode || 'eco';
+      if (mode === 'eco') {
+        stopBackgroundAudioFrames();
+        return Promise.resolve({ ok: true });
+      }
+
+      if (msg.activeAppId) {
+        currentSettings.persistentLastActiveAppId = msg.activeAppId;
+      }
+      if (msg.savedUrls && typeof msg.savedUrls === 'object') {
+        if (!currentSettings.persistentSavedAppUrls) currentSettings.persistentSavedAppUrls = {};
+        Object.entries(msg.savedUrls).forEach(([id, u]) => {
+          if (u && isAppAllowedForPersistence(id)) {
+            currentSettings.persistentSavedAppUrls[id] = u;
+          }
+        });
+      }
+      browser.storage.local.set({ settings: currentSettings }).catch(() => {});
+
+      // If any persistent app was actively playing audio/music when the sidebar closed, hand off to Background Audio Keep-Alive!
+      if (currentSettings.keepAudioPlayingWhenClosed !== false) {
+        const candidates = Array.isArray(msg.playingApps) ? msg.playingApps : [];
+        if (candidates.length > 0) {
+          candidates.forEach((c) => {
+            if (c && c.appId && c.url && isAppAllowedForPersistence(c.appId)) {
+              startBackgroundAudioKeepAlive(c.appId, c.url, c.title || '');
+            }
+          });
+        } else {
+          liveMediaPlaybackState.forEach((st, id) => {
+            if (st.isPlaying && Date.now() - st.updatedAt < 12000 && isAppAllowedForPersistence(id)) {
+              const targetUrl = st.resumeUrl || currentSettings.persistentSavedAppUrls?.[id];
+              if (targetUrl) {
+                startBackgroundAudioKeepAlive(id, targetUrl, st.title || '');
+              }
+            }
+          });
+        }
+      }
+      return Promise.resolve({ ok: true });
+    }
+
+    case 'STOP_BG_AUDIO_HANDOFF': {
+      const activeBgApps = [];
+      bgAudioPool.forEach((val, id) => {
+        activeBgApps.push({ appId: id, url: val.url, title: val.title });
+      });
+      stopBackgroundAudioFrames();
+      return Promise.resolve({
+        ok: true,
+        activeBgApps,
+        settings: currentSettings
+      });
+    }
+
+    case 'GET_BG_AUDIO_STATUS': {
+      const activeBgApps = [];
+      bgAudioPool.forEach((val, id) => {
+        activeBgApps.push({ appId: id, url: val.url, title: val.title });
+      });
+      return Promise.resolve({ ok: true, activeBgApps });
+    }
 
     default:
       return Promise.resolve({ ok: false });
