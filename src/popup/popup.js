@@ -1642,6 +1642,9 @@
   }
 
   const framePlaybackStates = new Map(); // appId -> { isPlaying, currentTime, resumeUrl, title, updatedAt }
+  const pendingSidebarAudioTakeoverSet = new Set();
+  let sidebarLifecyclePort = null;
+  let lastDetectedAutoplayPolicy = 'allowed';
 
   function isAppPersistent(appId) {
     if (!appId || appId === 'pocketmail') return false;
@@ -1658,15 +1661,19 @@
 
   function syncPersistentSessionToBackground(appId, url, playback = null) {
     if ((appSettings.persistenceMode || 'eco') === 'eco') return;
-    browser.runtime
-      .sendMessage({
-        type: 'UPDATE_PERSISTENT_SESSION',
-        activeAppId: activeRailAppId,
-        appId: appId || undefined,
-        url: url || undefined,
-        playback: playback || undefined
-      })
-      .catch(() => {});
+    const payload = {
+      type: 'UPDATE_PERSISTENT_SESSION',
+      activeAppId: activeRailAppId,
+      appId: appId || undefined,
+      url: url || undefined,
+      playback: playback || undefined
+    };
+    if (sidebarLifecyclePort) {
+      try {
+        sidebarLifecyclePort.postMessage(payload);
+      } catch (_) {}
+    }
+    browser.runtime.sendMessage(payload).catch(() => {});
   }
 
   function enforceMediaPoolMemoryCap(protectedAppId) {
@@ -2172,6 +2179,19 @@
         });
         pickerEl.appendChild(chip);
       });
+    }
+
+    const spAutoplayTipEl = document.getElementById('pm-spotify-bg-autoplay-tip');
+    if (spAutoplayTipEl) {
+      const pickedIdsForTip = Array.isArray(appSettings.persistentAppIds)
+        ? appSettings.persistentAppIds
+        : ['spotify', 'youtube', 'discord'];
+      const isSpotifyPersistent = pMode === 'all' || (pMode === 'selected' && pickedIdsForTip.includes('spotify'));
+      const showSpTip =
+        pMode !== 'eco' &&
+        appSettings.keepAudioPlayingWhenClosed !== false &&
+        isSpotifyPersistent;
+      spAutoplayTipEl.classList.toggle('hidden', !showSpTip);
     }
 
     syncMediaTopBarAutoHideState();
@@ -3090,6 +3110,14 @@
           } else {
             sourceEntry.frame.classList.remove('is-loading');
           }
+          if (pendingSidebarAudioTakeoverSet.has(sourceEntry.appId)) {
+            try {
+              sourceEntry.frame.contentWindow?.postMessage(
+                { target: 'pocketmail-media-frame', cmd: 'AUTO_RESUME_PLAYBACK' },
+                '*'
+              );
+            } catch (_) {}
+          }
         } else {
           hideMediaBrandLoader();
         }
@@ -3102,10 +3130,28 @@
           } else {
             sourceEntry.frame.classList.remove('is-loading');
           }
+          if (pendingSidebarAudioTakeoverSet.has(sourceEntry.appId)) {
+            try {
+              sourceEntry.frame.contentWindow?.postMessage(
+                { target: 'pocketmail-media-frame', cmd: 'AUTO_RESUME_PLAYBACK' },
+                '*'
+              );
+            } catch (_) {}
+          }
         } else {
           hideMediaBrandLoader();
         }
         broadcastSocialAppTheme();
+      } else if (data.type === 'PM_SIDEBAR_TOOK_OVER_AUDIO') {
+        const appId =
+          sourceEntry?.appId ||
+          (typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')
+            ? data.flatFrameName.replace('pm-media-frame-', '')
+            : '');
+        if (appId) {
+          pendingSidebarAudioTakeoverSet.delete(appId);
+        }
+        browser.runtime.sendMessage({ type: 'STOP_BG_AUDIO_HANDOFF' }).catch(() => {});
       } else if (data.type === 'PM_FRAME_UNREAD_UPDATE') {
         let appId = sourceEntry?.appId || '';
         if (!appId && typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')) {
@@ -3204,6 +3250,9 @@
           }
         }
       } else if (data.type === 'PM_FRAME_PLAYBACK_STATE') {
+        if (typeof data.initialAutoplayPolicy === 'string') {
+          lastDetectedAutoplayPolicy = data.initialAutoplayPolicy;
+        }
         const appId =
           sourceEntry?.appId ||
           (typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')
@@ -3915,12 +3964,28 @@
       appSettings = res.settings || appSettings;
       snoozedMap = res.snoozed || {};
 
-      // If Sidebar is opening, stop any background audio handoff frames so the sidebar takes over cleanly without double audio
+      // If Sidebar is opening, connect the lifecycle port (for 0ms close handoff) and stop any background audio frames so the sidebar takes over cleanly!
       if (IS_SIDEBAR_VIEW) {
+        try {
+          if (browser.runtime && typeof browser.runtime.connect === 'function') {
+            sidebarLifecyclePort = browser.runtime.connect({ name: 'foxhub-sidebar-lifecycle' });
+          }
+        } catch (_) {}
+
         try {
           const handoffRes = await browser.runtime.sendMessage({ type: 'STOP_BG_AUDIO_HANDOFF' });
           if (handoffRes && handoffRes.settings) {
             appSettings = handoffRes.settings;
+          }
+          if (handoffRes && Array.isArray(handoffRes.activeBgApps)) {
+            handoffRes.activeBgApps.forEach((bgApp) => {
+              if (bgApp && bgApp.appId) {
+                pendingSidebarAudioTakeoverSet.add(bgApp.appId);
+                if (bgApp.url) {
+                  hibernatedAppUrls.set(bgApp.appId, bgApp.url);
+                }
+              }
+            });
           }
         } catch (_) {}
       }

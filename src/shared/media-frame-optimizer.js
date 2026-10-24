@@ -28,6 +28,21 @@
   // Never run in normal browser tabs or deeply nested ad/analytics/CAPTCHA sub-iframes
   if (!isDirectChildIframe && !isPocketMailSidebarTop && !isGoogleAccountWidgetIframe) return;
 
+  const isBgAudioFrame = typeof window.name === 'string' && window.name.startsWith('pm-bg-audio-');
+  const initialAutoplayPolicy =
+    typeof navigator.getAutoplayPolicy === 'function' ? navigator.getAutoplayPolicy('mediaelement') : 'allowed';
+
+  // Ensure background audio keep-alive frames report visibilityState='visible' so YouTube & Spotify never defer player boot
+  if (isBgAudioFrame && window.wrappedJSObject && typeof exportFunction === 'function') {
+    try {
+      const pageWin = window.wrappedJSObject;
+      const getVisible = exportFunction(() => 'visible', pageWin);
+      const getFalse = exportFunction(() => false, pageWin);
+      Object.defineProperty(pageWin.Document.prototype, 'visibilityState', { get: getVisible, configurable: true });
+      Object.defineProperty(pageWin.Document.prototype, 'hidden', { get: getFalse, configurable: true });
+    } catch (_) {}
+  }
+
   let currentZoom = 1.0;
 
   // Never touch CAPTCHA or anti-bot verification frames (ensures hCaptcha/Cloudflare/reCAPTCHA load with zero delay!)
@@ -1042,6 +1057,14 @@
             padding: 0 8px !important;
             margin: 0 !important;
             box-sizing: border-box !important;
+          }
+          /* Disable YouTube Ambient Mode (#cinematics) 30fps canvas blur loop in sidebar to save 3-5% CPU while gaming! */
+          #cinematics,
+          ytd-watch-flexy #cinematics,
+          ytd-watch-flexy #cinematics canvas {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
           }
         }
       `;
@@ -2567,6 +2590,51 @@
 
   // Live Playback & Timestamp Reporter + Background Audio Keep-Alive Auto-Resume
   let bgAudioAutoResumed = false;
+  let bgAudioMseBridgeStarted = false;
+  let sidebarAutoResumeRequested = false;
+
+  function startLocalMseAudioBridge(mediaEl) {
+    if (bgAudioMseBridgeStarted || !mediaEl) return;
+    bgAudioMseBridgeStarted = true;
+    (async () => {
+      try {
+        mediaEl.muted = false;
+        mediaEl.volume = 0;
+        await mediaEl.play();
+        const stream = mediaEl.mozCaptureStream
+          ? mediaEl.mozCaptureStream()
+          : mediaEl.captureStream
+          ? mediaEl.captureStream()
+          : null;
+        if (stream && stream.getAudioTracks().length > 0) {
+          const audioOnlyStream = new MediaStream(stream.getAudioTracks());
+          const rec = new MediaRecorder(audioOnlyStream, { mimeType: 'audio/webm;codecs=opus' });
+          rec.ondataavailable = async (ev) => {
+            if (ev.data && ev.data.size > 0) {
+              try {
+                const buf = await ev.data.arrayBuffer();
+                realTopWin.postMessage(
+                  {
+                    source: 'pocketmail-media-frame',
+                    type: 'PM_BG_AUDIO_CHUNK',
+                    flatFrameName: window.name || '',
+                    chunk: buf
+                  },
+                  '*',
+                  [buf]
+                );
+              } catch (_) {}
+            }
+          };
+          rec.start(140);
+          bgAudioAutoResumed = true;
+        }
+      } catch (_) {
+        bgAudioMseBridgeStarted = false;
+      }
+    })();
+  }
+
   function reportLivePlaybackState() {
     try {
       let isPlaying = false;
@@ -2589,54 +2657,133 @@
             isPlaying = true;
           }
         }
-      } else if (host.includes('youtube.com') && window.location.pathname.startsWith('/watch') && currentTime > 2) {
-        try {
-          const u = new URL(window.location.href);
-          u.searchParams.set('t', `${currentTime}s`);
-          resumeUrl = u.href;
-        } catch (_) {}
+      } else if (host.includes('youtube.com')) {
+        const cinematicsEl = document.getElementById('cinematics');
+        if (cinematicsEl && cinematicsEl.firstChild) {
+          cinematicsEl.textContent = '';
+        }
+        if (window.location.pathname.startsWith('/watch') && currentTime > 2) {
+          try {
+            const u = new URL(window.location.href);
+            u.searchParams.set('t', `${currentTime}s`);
+            resumeUrl = u.href;
+          } catch (_) {}
+        }
       }
+
+      const curAutoplayPolicy =
+        typeof navigator.getAutoplayPolicy === 'function' ? navigator.getAutoplayPolicy('mediaelement') : 'allowed';
 
       notifyParent('PM_FRAME_PLAYBACK_STATE', {
         isPlaying,
         currentTime,
         resumeUrl,
-        title: document.title || ''
+        title: document.title || '',
+        initialAutoplayPolicy,
+        autoplayBlocked: Boolean(isBgAudioFrame && host.includes('spotify.com') && curAutoplayPolicy !== 'allowed')
       });
 
-      // If running inside Background Audio Keep-Alive Engine (when sidebar is closed), auto-resume playback once ready!
-      if (!bgAudioAutoResumed && typeof window.name === 'string' && window.name.startsWith('pm-bg-audio-')) {
+      // 1. If running inside Background Audio Keep-Alive Engine (when sidebar is closed), auto-resume playback once ready!
+      if (!bgAudioAutoResumed && isBgAudioFrame) {
         if (host.includes('spotify.com')) {
+          // Wait specifically until Spotify's bottom Now Playing bar button is initialized and not disabled (~3.5s)
           const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-          const actionPlay = document.querySelector(
-            '[data-testid="action-bar-row"] [data-testid="play-button"], [data-testid="play-button"]'
-          );
           if (spToggle && !spToggle.disabled) {
             const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
             if (aria.includes('pause')) {
               bgAudioAutoResumed = true;
             } else {
               spToggle.click();
-              bgAudioAutoResumed = true;
             }
-          } else if (actionPlay) {
-            actionPlay.click();
-            bgAudioAutoResumed = true;
           }
-        } else if (mediaEl) {
-          if (!mediaEl.paused) {
-            bgAudioAutoResumed = true;
-          } else {
-            mediaEl.play().then(() => {
+        } else if (mediaEl && mediaEl.readyState >= 2) {
+          if (curAutoplayPolicy === 'allowed') {
+            if (!mediaEl.paused && !mediaEl.muted && mediaEl.volume > 0) {
               bgAudioAutoResumed = true;
-            }).catch(() => {});
+            } else {
+              mediaEl.muted = false;
+              mediaEl.volume = 1.0;
+              mediaEl
+                .play()
+                .then(() => {
+                  bgAudioAutoResumed = true;
+                })
+                .catch(() => {
+                  startLocalMseAudioBridge(mediaEl);
+                });
+            }
+          } else {
+            // Standard Firefox (media.autoplay.default = 1): use zero-socket in-memory MediaRecorder -> MediaSource bridge!
+            startLocalMseAudioBridge(mediaEl);
+          }
+        }
+      }
+
+      // 2. If the user reopened the Sidebar while Background Audio was playing, seamlessly hand playback back to the Sidebar!
+      if (sidebarAutoResumeRequested && !isBgAudioFrame) {
+        if (host.includes('spotify.com')) {
+          const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+          if (spToggle && !spToggle.disabled) {
+            const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+            if (aria.includes('pause')) {
+              sidebarAutoResumeRequested = false;
+              notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
+            } else if (curAutoplayPolicy === 'allowed') {
+              spToggle.click();
+              sidebarAutoResumeRequested = false;
+              notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
+            }
+          }
+        } else if (mediaEl && mediaEl.readyState >= 2) {
+          if (!mediaEl.paused && !mediaEl.muted && mediaEl.volume > 0) {
+            sidebarAutoResumeRequested = false;
+            notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
+          } else {
+            mediaEl.muted = false;
+            mediaEl.volume = 1.0;
+            mediaEl
+              .play()
+              .then(() => {
+                sidebarAutoResumeRequested = false;
+                notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
+              })
+              .catch(() => {});
           }
         }
       }
     } catch (_) {}
   }
 
-  setInterval(reportLivePlaybackState, 1800);
+  // If user clicks anywhere inside the reopened sidebar while background audio is still active, take over with trusted gesture!
+  if (!isBgAudioFrame) {
+    window.addEventListener(
+      'pointerdown',
+      () => {
+        if (!sidebarAutoResumeRequested) return;
+        sidebarAutoResumeRequested = false;
+        notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
+        try {
+          if (host.includes('spotify.com')) {
+            const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+            if (spToggle && !spToggle.disabled) {
+              const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+              if (!aria.includes('pause')) spToggle.click();
+            }
+          } else {
+            const mediaEl = document.querySelector('video.html5-main-video, video, audio');
+            if (mediaEl) {
+              mediaEl.muted = false;
+              mediaEl.volume = 1.0;
+              if (mediaEl.paused) mediaEl.play().catch(() => {});
+            }
+          }
+        } catch (_) {}
+      },
+      { passive: true, capture: true }
+    );
+  }
+
+  setInterval(reportLivePlaybackState, isBgAudioFrame ? 800 : 1200);
 
   // Low-frequency fallback DOM state check — skips heavy DOM inspection whenever media (<video>/<audio>) is playing
   setInterval(() => {
@@ -3290,6 +3437,10 @@
     if (!msg || msg.target !== 'pocketmail-media-frame') return;
 
     switch (msg.cmd) {
+      case 'AUTO_RESUME_PLAYBACK':
+        sidebarAutoResumeRequested = true;
+        reportLivePlaybackState();
+        break;
       case 'FREE_HEAVY_MEDIA':
         freeHeavyMediaResources();
         break;
