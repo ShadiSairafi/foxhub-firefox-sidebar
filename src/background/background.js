@@ -426,6 +426,7 @@ if (browser.webRequest) {
     'discordapp.net',
     'scdn.co',
     'spotifycdn.com',
+    'akamaized.net',
     // Spotify Bearer-token APIs (use credentials: 'omit' — never delay or inject cookies!)
     'api-partner.spotify.com',
     'clienttoken.spotify.com',
@@ -438,7 +439,8 @@ if (browser.webRequest) {
     if (STATIC_CDN_SUFFIXES.some((s) => h === s || h.endsWith(`.${s}`))) {
       return true;
     }
-    if (h.endsWith('.spotify.com') && h.includes('spclient')) {
+    // Only open.spotify.com and accounts.spotify.com use session cookies; all other *.spotify.com hosts (spclient, dealer, apresolve, login5, melody) use Bearer tokens
+    if (h.endsWith('.spotify.com') && h !== 'open.spotify.com' && h !== 'accounts.spotify.com') {
       return true;
     }
     if (fullUrl && (/\/(hcaptcha|recaptcha|turnstile)\b/i.test(fullUrl))) {

@@ -1726,6 +1726,70 @@
       },
       true
     );
+
+    // Detect if Firefox DRM (Widevine EME / GMP decoder) is disabled in user's browser settings
+    // (Firefox hides its yellow "You must enable DRM" infobar inside iframes, leaving users wondering why Spotify won't play!)
+    if (host === 'open.spotify.com') {
+      const checkSpotifyDrm = async () => {
+        if (!document.body || document.getElementById('pm-spotify-drm-banner')) return;
+        let drmSupported = false;
+        try {
+          if (navigator.requestMediaKeySystemAccess) {
+            const checkPromise = navigator
+              .requestMediaKeySystemAccess('com.widevine.alpha', [
+                {
+                  initDataTypes: ['cenc'],
+                  audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }]
+                }
+              ])
+              .then(() => true)
+              .catch(() => false);
+            const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), 3800));
+            drmSupported = await Promise.race([checkPromise, timeoutPromise]);
+          }
+        } catch (_) {
+          drmSupported = false;
+        }
+        if (drmSupported || document.getElementById('pm-spotify-drm-banner')) return;
+
+        const banner = document.createElement('div');
+        banner.id = 'pm-spotify-drm-banner';
+        banner.style.cssText =
+          'position:fixed;bottom:78px;left:8px;right:8px;z-index:2147483640;background:#181818;border:1px solid #1ed760;border-radius:10px;padding:10px 12px;color:#fff;font-family:system-ui,-apple-system,sans-serif;font-size:11.5px;line-height:1.45;box-shadow:0 8px 24px rgba(0,0,0,0.65);display:flex;align-items:flex-start;gap:10px;';
+
+        const msgWrap = document.createElement('div');
+        msgWrap.style.cssText = 'flex:1;min-width:0;';
+
+        const titleEl = document.createElement('div');
+        titleEl.style.cssText = 'font-weight:700;color:#1ed760;margin-bottom:3px;font-size:12px;';
+        titleEl.textContent = 'Enable Firefox DRM to Play Spotify Music';
+
+        const descEl = document.createElement('div');
+        descEl.style.cssText = 'color:#d4d4d4;';
+        descEl.textContent =
+          'Spotify encrypts audio with Widevine DRM. Open Firefox Settings → General → check "Play DRM-controlled content" (and ensure media.eme.enabled & media.gmp.decoder.enabled are true in about:config), then reload.';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.textContent = '✕';
+        closeBtn.title = 'Dismiss';
+        closeBtn.style.cssText =
+          'background:transparent;border:none;color:#aaa;cursor:pointer;font-size:14px;padding:2px 4px;line-height:1;';
+        closeBtn.addEventListener('click', () => banner.remove());
+
+        msgWrap.appendChild(titleEl);
+        msgWrap.appendChild(descEl);
+        banner.appendChild(msgWrap);
+        banner.appendChild(closeBtn);
+        document.body.appendChild(banner);
+      };
+
+      if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        setTimeout(checkSpotifyDrm, 1500);
+      } else {
+        window.addEventListener('DOMContentLoaded', () => setTimeout(checkSpotifyDrm, 1500), { once: true });
+      }
+    }
   }
 
   // Auto-recover X / Twitter if first load or /i/chat shows a transient "Something went wrong" / "Retry" state
