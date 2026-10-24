@@ -1643,8 +1643,25 @@
 
   const framePlaybackStates = new Map(); // appId -> { isPlaying, currentTime, resumeUrl, title, updatedAt }
   const pendingSidebarAudioTakeoverSet = new Set();
+  const sidebarMsePlayers = new Map(); // appId -> { ms, audioEl, sb, queue, objUrl }
   let sidebarLifecyclePort = null;
+  let sidebarInitCompleted = false;
   let lastDetectedAutoplayPolicy = 'allowed';
+
+  function cleanupSidebarMsePlayer(appId) {
+    const player = sidebarMsePlayers.get(appId);
+    if (!player) return;
+    sidebarMsePlayers.delete(appId);
+    try {
+      player.audioEl.pause();
+      player.audioEl.removeAttribute('src');
+      player.audioEl.load();
+      player.audioEl.remove();
+    } catch (_) {}
+    try {
+      if (player.objUrl) URL.revokeObjectURL(player.objUrl);
+    } catch (_) {}
+  }
 
   function isAppPersistent(appId) {
     if (!appId || appId === 'pocketmail') return false;
@@ -1660,6 +1677,7 @@
   }
 
   function syncPersistentSessionToBackground(appId, url, playback = null) {
+    if (!IS_SIDEBAR_VIEW || !sidebarInitCompleted) return;
     if ((appSettings.persistenceMode || 'eco') === 'eco') return;
     const payload = {
       type: 'UPDATE_PERSISTENT_SESSION',
@@ -2023,23 +2041,7 @@
       entry.pendingSpaUntil = 0;
       entry.lastNavAt = Date.now();
       showMediaBrandLoader(app, entry.frame);
-
-      // Bypass & unregister any pre-existing Service Worker (sw.js / serviceworker.js) once per iframe on WhatsApp, YouTube, and X
-      const needsSwBootClean =
-        !entry.swCleaned &&
-        (app.id === 'youtube' || app.id === 'whatsapp' || app.id === 'x');
-
-      if (needsSwBootClean) {
-        entry.swCleaned = true;
-        try {
-          const origin = new URL(targetUrl).origin;
-          entry.frame.src = `${origin}/robots.txt?pm_boot=1&pm_target=${encodeURIComponent(targetUrl)}`;
-        } catch (_) {
-          entry.frame.src = targetUrl;
-        }
-      } else {
-        entry.frame.src = targetUrl;
-      }
+      entry.frame.src = targetUrl;
     } else {
       // Already warm in Keep-Alive Pool — 0ms instant switch!
       hideMediaBrandLoader(entry.frame);
@@ -3150,8 +3152,64 @@
             : '');
         if (appId) {
           pendingSidebarAudioTakeoverSet.delete(appId);
+          cleanupSidebarMsePlayer(appId);
         }
         browser.runtime.sendMessage({ type: 'STOP_BG_AUDIO_HANDOFF' }).catch(() => {});
+      } else if (data.type === 'PM_BG_AUDIO_CHUNK' && data.chunk) {
+        const appId =
+          sourceEntry?.appId ||
+          (typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')
+            ? data.flatFrameName.replace('pm-media-frame-', '')
+            : '');
+        if (appId) {
+          let player = sidebarMsePlayers.get(appId);
+          if (!player) {
+            const ms = new MediaSource();
+            const objUrl = URL.createObjectURL(ms);
+            const audioEl = document.createElement('audio');
+            audioEl.autoplay = true;
+            audioEl.muted = false;
+            audioEl.volume = 1.0;
+            audioEl.src = objUrl;
+            document.body.appendChild(audioEl);
+            player = { ms, audioEl, sb: null, queue: [], objUrl };
+            sidebarMsePlayers.set(appId, player);
+
+            ms.addEventListener('sourceopen', () => {
+              try {
+                player.sb = ms.addSourceBuffer('audio/webm;codecs=opus');
+                player.sb.addEventListener('updateend', () => {
+                  try {
+                    if (player.audioEl.currentTime > 35 && !player.sb.updating && player.sb.buffered.length > 0) {
+                      const start = player.sb.buffered.start(0);
+                      if (player.audioEl.currentTime - start > 25) {
+                        player.sb.remove(start, player.audioEl.currentTime - 15);
+                        return;
+                      }
+                    }
+                    if (player.queue.length > 0 && !player.sb.updating) {
+                      player.sb.appendBuffer(player.queue.shift());
+                    }
+                    if (player.audioEl.paused) {
+                      player.audioEl.play().catch(() => {});
+                    }
+                  } catch (_) {}
+                });
+                if (player.queue.length > 0 && !player.sb.updating) {
+                  player.sb.appendBuffer(player.queue.shift());
+                }
+              } catch (_) {}
+            });
+          }
+
+          if (player.sb && !player.sb.updating && player.queue.length === 0) {
+            try {
+              player.sb.appendBuffer(data.chunk);
+            } catch (_) {}
+          } else if (player.queue.length < 40) {
+            player.queue.push(data.chunk);
+          }
+        }
       } else if (data.type === 'PM_FRAME_UNREAD_UPDATE') {
         let appId = sourceEntry?.appId || '';
         if (!appId && typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')) {
@@ -3923,6 +3981,8 @@
     // When the user closes the sidebar (×), save persistent app URLs and hand off active music/audio to Background Audio Keep-Alive!
     if (IS_SIDEBAR_VIEW) {
       window.addEventListener('pagehide', () => {
+        sidebarMsePlayers.forEach((_, id) => cleanupSidebarMsePlayer(id));
+        if (!sidebarInitCompleted) return;
         const mode = appSettings.persistenceMode || 'eco';
         if (mode === 'eco') return;
 
@@ -3998,10 +4058,16 @@
         }
       });
 
-      renderAll();
-
       const params = new URLSearchParams(window.location.search || '');
       const initialAppId = params.get('app');
+      const lastActiveId = appSettings.persistentLastActiveAppId;
+      if (IS_SIDEBAR_VIEW && !initialAppId && lastActiveId && lastActiveId !== 'pocketmail' && isAppPersistent(lastActiveId)) {
+        activeRailAppId = lastActiveId;
+      }
+
+      renderAll();
+      sidebarInitCompleted = true;
+
       if (initialAppId && window.PocketMailMediaApps) {
         const app = window.PocketMailMediaApps.getAppById(initialAppId, appSettings);
         if (app) {
@@ -4012,7 +4078,6 @@
 
       // If Persistent App Memory ('selected' or 'all') is enabled in Sidebar, restore the last active persistent app automatically!
       if (IS_SIDEBAR_VIEW && window.PocketMailMediaApps) {
-        const lastActiveId = appSettings.persistentLastActiveAppId;
         if (lastActiveId && lastActiveId !== 'pocketmail' && isAppPersistent(lastActiveId)) {
           const app = window.PocketMailMediaApps.getAppById(lastActiveId, appSettings);
           if (app) {

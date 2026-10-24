@@ -472,6 +472,22 @@
           display: none !important;
         }
 
+        /* Prevent clicking a contact's avatar in the Instagram DM list from opening their Story instead of their DM chat! */
+        html[data-pm-ig-view="dm-inbox"] [role="listitem"] div:has(> canvas),
+        html[data-pm-ig-view="dm-inbox"] [role="listitem"] div:has(> canvas) *,
+        html[data-pm-ig-view="dm-inbox"] [role="listitem"] [role="button"] [role="button"]:has(img),
+        html[data-pm-ig-view="dm-inbox"] [role="listitem"] [role="button"] [role="button"]:has(img) *,
+        html[data-pm-ig-view="dm-inbox"] [role="listitem"] canvas,
+        html[data-pm-ig-view="dm-inbox"] [role="listitem"] img,
+        html[data-pm-ig-view="dm-thread"] [role="listitem"] div:has(> canvas),
+        html[data-pm-ig-view="dm-thread"] [role="listitem"] div:has(> canvas) *,
+        html[data-pm-ig-view="dm-thread"] [role="listitem"] [role="button"] [role="button"]:has(img),
+        html[data-pm-ig-view="dm-thread"] [role="listitem"] [role="button"] [role="button"]:has(img) *,
+        html[data-pm-ig-view="dm-thread"] [role="listitem"] canvas,
+        html[data-pm-ig-view="dm-thread"] [role="listitem"] img {
+          pointer-events: none !important;
+        }
+
         @media (max-width: 720px) {
           html[data-pm-ig-view="dm-thread"] main[role="main"] > div > div > div:first-child,
           html[data-pm-ig-view="dm-thread"] div[role="navigation"] > div > div:first-child {
@@ -2591,15 +2607,52 @@
   // Live Playback & Timestamp Reporter + Background Audio Keep-Alive Auto-Resume
   let bgAudioAutoResumed = false;
   let bgAudioMseBridgeStarted = false;
+  let activeMseRecorder = null;
+  let activeMseMediaEl = null;
   let sidebarAutoResumeRequested = false;
+
+  function stopLocalMseAudioBridge() {
+    if (!bgAudioMseBridgeStarted) return;
+    bgAudioMseBridgeStarted = false;
+    try {
+      if (activeMseRecorder && activeMseRecorder.state !== 'inactive') {
+        activeMseRecorder.stop();
+      }
+    } catch (_) {}
+    activeMseRecorder = null;
+    try {
+      if (activeMseMediaEl && activeMseMediaEl.wrappedJSObject) {
+        delete activeMseMediaEl.wrappedJSObject.volume;
+        delete activeMseMediaEl.wrappedJSObject.muted;
+      }
+      if (activeMseMediaEl) {
+        activeMseMediaEl.muted = false;
+        activeMseMediaEl.volume = 1.0;
+      }
+    } catch (_) {}
+    activeMseMediaEl = null;
+  }
 
   function startLocalMseAudioBridge(mediaEl) {
     if (bgAudioMseBridgeStarted || !mediaEl) return;
     bgAudioMseBridgeStarted = true;
+    activeMseMediaEl = mediaEl;
     (async () => {
       try {
         mediaEl.muted = false;
         mediaEl.volume = 0;
+        // Lock page-world .volume and .muted setters on this element so YouTube Polymer hydrating yt-player-volume (v.volume = 1) never triggers Firefox's C++ Autoplay Pause!
+        if (window.wrappedJSObject && mediaEl.wrappedJSObject && typeof exportFunction === 'function') {
+          try {
+            const pageWin = window.wrappedJSObject;
+            const rawEl = mediaEl.wrappedJSObject;
+            const getOne = exportFunction(() => 1, pageWin);
+            const setNoop = exportFunction(() => {}, pageWin);
+            const getFalse = exportFunction(() => false, pageWin);
+            Object.defineProperty(rawEl, 'volume', { get: getOne, set: setNoop, configurable: true });
+            Object.defineProperty(rawEl, 'muted', { get: getFalse, set: setNoop, configurable: true });
+          } catch (_) {}
+        }
         await mediaEl.play();
         const stream = mediaEl.mozCaptureStream
           ? mediaEl.mozCaptureStream()
@@ -2609,7 +2662,9 @@
         if (stream && stream.getAudioTracks().length > 0) {
           const audioOnlyStream = new MediaStream(stream.getAudioTracks());
           const rec = new MediaRecorder(audioOnlyStream, { mimeType: 'audio/webm;codecs=opus' });
+          activeMseRecorder = rec;
           rec.ondataavailable = async (ev) => {
+            if (!bgAudioMseBridgeStarted) return;
             if (ev.data && ev.data.size > 0) {
               try {
                 const buf = await ev.data.arrayBuffer();
@@ -2645,6 +2700,10 @@
       if (mediaEl) {
         currentTime = Math.floor(mediaEl.currentTime || 0);
         if (!mediaEl.paused && !mediaEl.ended) {
+          isPlaying = true;
+        } else if (bgAudioMseBridgeStarted && mediaEl.paused && !mediaEl.ended && mediaEl.readyState >= 2) {
+          // Keep background bridge video playing if the page's UI framework transiently paused it during hydration
+          mediaEl.play().catch(() => {});
           isPlaying = true;
         }
       }
@@ -2735,10 +2794,7 @@
             }
           }
         } else if (mediaEl && mediaEl.readyState >= 2) {
-          if (!mediaEl.paused && !mediaEl.muted && mediaEl.volume > 0) {
-            sidebarAutoResumeRequested = false;
-            notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
-          } else {
+          if (curAutoplayPolicy === 'allowed') {
             mediaEl.muted = false;
             mediaEl.volume = 1.0;
             mediaEl
@@ -2747,20 +2803,28 @@
                 sidebarAutoResumeRequested = false;
                 notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
               })
-              .catch(() => {});
+              .catch(() => {
+                sidebarAutoResumeRequested = false;
+                startLocalMseAudioBridge(mediaEl);
+              });
+          } else {
+            // Reopened sidebar without user click inside iframe yet: play video & stream audio via zero-socket MSE bridge immediately!
+            sidebarAutoResumeRequested = false;
+            startLocalMseAudioBridge(mediaEl);
           }
         }
       }
     } catch (_) {}
   }
 
-  // If user clicks anywhere inside the reopened sidebar while background audio is still active, take over with trusted gesture!
+  // If user clicks anywhere inside the reopened sidebar while MSE bridge or auto-resume is active, switch to native unmuted audio with trusted gesture!
   if (!isBgAudioFrame) {
     window.addEventListener(
       'pointerdown',
       () => {
-        if (!sidebarAutoResumeRequested) return;
+        if (!sidebarAutoResumeRequested && !bgAudioMseBridgeStarted) return;
         sidebarAutoResumeRequested = false;
+        stopLocalMseAudioBridge();
         notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
         try {
           if (host.includes('spotify.com')) {

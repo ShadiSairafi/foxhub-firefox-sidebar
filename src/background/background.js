@@ -1046,8 +1046,13 @@ if (browser.runtime && browser.runtime.onConnect) {
           }
         }
         if (msg.appId && msg.playback) {
+          const prev = liveMediaPlaybackState.get(msg.appId);
+          const inTakeoverGrace =
+            prev && prev.handedOffAt && Date.now() - prev.handedOffAt < 8000 && prev.isPlaying;
           liveMediaPlaybackState.set(msg.appId, {
             ...msg.playback,
+            isPlaying: Boolean(msg.playback.isPlaying || inTakeoverGrace),
+            handedOffAt: inTakeoverGrace ? prev.handedOffAt : undefined,
             updatedAt: Date.now()
           });
           if (msg.playback.resumeUrl && isAppAllowedForPersistence(msg.appId)) {
@@ -1333,8 +1338,13 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         }
       }
       if (msg.appId && msg.playback) {
+        const prev = liveMediaPlaybackState.get(msg.appId);
+        const inTakeoverGrace =
+          prev && prev.handedOffAt && Date.now() - prev.handedOffAt < 8000 && prev.isPlaying;
         liveMediaPlaybackState.set(msg.appId, {
           ...msg.playback,
+          isPlaying: Boolean(msg.playback.isPlaying || inTakeoverGrace),
+          handedOffAt: inTakeoverGrace ? prev.handedOffAt : undefined,
           updatedAt: Date.now()
         });
         if (msg.playback.resumeUrl && isAppAllowedForPersistence(msg.appId)) {
@@ -1395,6 +1405,14 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       const activeBgApps = [];
       bgAudioPool.forEach((val, id) => {
         activeBgApps.push({ appId: id, url: val.url, title: val.title });
+        liveMediaPlaybackState.set(id, {
+          isPlaying: true,
+          currentTime: 0,
+          resumeUrl: val.url,
+          title: val.title || '',
+          handedOffAt: Date.now(),
+          updatedAt: Date.now()
+        });
       });
       stopBackgroundAudioFrames();
       return Promise.resolve({
