@@ -42,8 +42,21 @@
     return;
   }
 
-  // Mask iframe embedding fingerprint on TikTok so ByteDance's webmssdk.js doesn't flag window.top !== window.self as a bot scraper
-  if (host.includes('tiktok.com') && window.wrappedJSObject && typeof exportFunction === 'function') {
+  const isKnownBuiltInHost =
+    host.includes('instagram.com') ||
+    host.includes('whatsapp.com') ||
+    host.includes('discord.com') ||
+    host.includes('telegram.org') ||
+    host.includes('spotify.com') ||
+    host.includes('youtube.com') ||
+    host.includes('reddit.com') ||
+    host.includes('x.com') ||
+    host.includes('twitter.com') ||
+    host.includes('messenger.com') ||
+    host.includes('google.com');
+
+  // Mask iframe embedding fingerprint on TikTok & custom added websites so frame-busters (window.top !== window.self) never block or redirect the sidebar
+  if ((host.includes('tiktok.com') || !isKnownBuiltInHost) && window.wrappedJSObject && typeof exportFunction === 'function') {
     try {
       const pageWin = window.wrappedJSObject;
       const getSelf = exportFunction(() => pageWin, pageWin);
@@ -215,7 +228,8 @@
     host.includes('youtube.com') ||
     host.includes('whatsapp.com') ||
     host.includes('x.com') ||
-    host.includes('twitter.com')
+    host.includes('twitter.com') ||
+    !isKnownBuiltInHost
   ) {
     try {
       if (navigator.serviceWorker) {
@@ -375,11 +389,11 @@
         scrollbar-width: thin !important;
         scrollbar-color: rgba(160, 160, 160, 0.32) transparent !important;
         max-width: 100vw !important;
-        overflow-x: hidden !important;
+        overflow-x: clip !important;
       }
       body {
         max-width: 100vw !important;
-        overflow-x: hidden !important;
+        overflow-x: clip !important;
       }
       * {
         scrollbar-width: thin;
@@ -1282,11 +1296,18 @@
       `;
     } else if (host.includes('x.com') || host.includes('twitter.com')) {
       css += `
-        /* 9. X (Twitter) Narrow Sidebar Optimization */
-        html, body, #react-root {
+        /* 9. X (Twitter) Narrow Sidebar Optimization — Preserve window (html) as scroll container so VirtualScroller loads infinite posts! */
+        html {
           min-width: 0 !important;
           max-width: 100vw !important;
-          overflow-x: hidden !important;
+          overflow-x: clip !important;
+          overflow-y: scroll !important;
+        }
+        body, #react-root {
+          min-width: 0 !important;
+          max-width: 100vw !important;
+          overflow-x: clip !important;
+          overflow-y: visible !important;
         }
 
         @media (max-width: 780px) {
@@ -1311,15 +1332,23 @@
           [data-testid="sidebarColumn"] {
             display: none !important;
           }
-          main[role="main"],
+          main[role="main"] {
+            flex: 1 1 0% !important;
+            width: calc(100vw - 52px) !important;
+            max-width: calc(100vw - 52px) !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+          }
           main[role="main"] > div,
           [data-testid="primaryColumn"],
           [data-testid="DMDrawer"],
-          section[aria-labelledby] {
+          section[aria-labelledby],
+          article[data-testid="tweet"] {
             width: 100% !important;
             max-width: 100% !important;
             min-width: 0 !important;
             flex: 1 1 auto !important;
+            box-sizing: border-box !important;
           }
         }
       `;
@@ -1329,7 +1358,7 @@
         html, body, [role="main"] {
           min-width: 0 !important;
           max-width: 100vw !important;
-          overflow-x: hidden !important;
+          overflow-x: clip !important;
         }
 
         /* Prevent the left Chats column from ever squishing to 50px ("C-h-a-t-s" vertical text wrap) */
@@ -1402,7 +1431,7 @@
         html, body, #__next, main {
           min-width: 0 !important;
           max-width: 100vw !important;
-          overflow-x: hidden !important;
+          overflow-x: clip !important;
         }
         article,
         [data-message-author-role],
@@ -1427,7 +1456,7 @@
         html, body, chat-app, main {
           min-width: 0 !important;
           max-width: 100vw !important;
-          overflow-x: hidden !important;
+          overflow-x: clip !important;
         }
         /* Keep prompt input bar & conversation area fitting 100% inside narrow sidebars */
         input-container,
@@ -1436,6 +1465,23 @@
           max-width: 100% !important;
           min-width: 0 !important;
           box-sizing: border-box !important;
+        }
+      `;
+    } else {
+      css += `
+        /* 14. Universal Responsive Adapter for Custom Added Websites (+ button) */
+        html, body, #root, #app, #__next, main, [role="main"] {
+          min-width: 0 !important;
+          max-width: 100vw !important;
+          overflow-x: clip !important;
+          box-sizing: border-box !important;
+        }
+        img, video, canvas {
+          max-width: 100% !important;
+        }
+        pre, code, table {
+          max-width: 100% !important;
+          overflow-x: auto !important;
         }
       `;
     }
