@@ -693,49 +693,75 @@
         }
 
         @media (max-width: 940px) {
-          /* Hide Left Library (unless on Library tab) and remove Right Panel Strip — NEVER match .Root__top-container! */
+          /* Keep Left Library mounted with non-zero width (never display:none on .main-view-container, which causes ResizeObserver 0px division-by-zero crash!) */
           html:not([data-pm-spotify-view="library"]) #Desktop_LeftSidebar_Id,
-          html:not([data-pm-spotify-view="library"]) .Root__nav-bar,
+          html:not([data-pm-spotify-view="library"]) .Root__nav-bar {
+            position: fixed !important;
+            left: -9999px !important;
+            top: 0 !important;
+            width: 280px !important;
+            height: 80vh !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            z-index: -1 !important;
+          }
+
           #Desktop_PanelContainer_Id,
           .Root__right-sidebar,
+          #main-view + div:not(:has([data-testid="now-playing-bar"])),
           aside[aria-label="Now playing view"],
           aside[aria-label*="Now playing" i] {
             display: none !important;
             width: 0 !important;
             min-width: 0 !important;
             max-width: 0 !important;
-            flex: 0 0 0px !important;
-            margin: 0 !important;
-            padding: 0 !important;
           }
 
+          /* On Library tab, overlay #Desktop_LeftSidebar_Id cleanly over the main view without setting .main-view-container to 0px width! */
           html[data-pm-spotify-view="library"] #Desktop_LeftSidebar_Id {
+            position: fixed !important;
+            top: 48px !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
             width: 100vw !important;
-            min-width: 100% !important;
             max-width: 100vw !important;
-            flex: 1 1 100% !important;
-          }
-          html[data-pm-spotify-view="library"] .main-view-container,
-          html[data-pm-spotify-view="library"] .Root__main-view {
-            display: none !important;
+            height: calc(100vh - 48px) !important;
+            padding-bottom: 76px !important;
+            box-sizing: border-box !important;
+            z-index: 80 !important;
+            background: #121212 !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
           }
 
           [data-testid="root"],
-          .Root__top-container,
+          [data-testid="root"] > div:first-child,
+          .Root__top-container {
+            --left-sidebar-width: 0 !important;
+            --right-sidebar-width: 0 !important;
+            --panel-width: 0px !important;
+            --panel-gap: 0px !important;
+            grid-template-columns: 0px minmax(0, 1fr) 0px !important;
+            width: 100vw !important;
+            max-width: 100vw !important;
+            min-width: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow-x: clip !important;
+          }
+
           #main,
           #main-view,
           .Root__main-view,
           .main-view-container {
-            --left-sidebar-width: 0px !important;
-            --right-sidebar-width: 0px !important;
-            --panel-width: 0px !important;
-            --panel-gap: 0px !important;
+            grid-column: 1 / -1 !important;
             min-width: 0 !important;
             width: 100% !important;
             max-width: 100vw !important;
-            grid-template-columns: minmax(0, 1fr) !important;
             padding-right: 0 !important;
             margin-right: 0 !important;
+            box-sizing: border-box !important;
           }
 
           #global-nav-bar,
@@ -752,35 +778,54 @@
             display: none !important;
           }
 
-          /* Keep horizontal shelves native so Spotify's virtualized shelf IntersectionObserver renders all album cards! */
+          /* Disable Firefox content-visibility: auto paint-containment bug on Spotify's horizontal shelf carousels so cards never clip to 28px/0px! */
+          section[data-testid="component-shelf"],
+          section[data-testid="component-shelf"] *,
+          [data-testid="carousel-scroller"],
+          [data-testid="carousel-scroller"] * {
+            --carousel-shelf-content-visibility: visible !important;
+            content-visibility: visible !important;
+          }
+
+          img[data-testid="card-image"] {
+            opacity: 1 !important;
+          }
+
           section[data-testid="component-shelf"] {
-            position: relative !important;
             width: 100% !important;
             max-width: 100% !important;
+            min-width: 0 !important;
             box-sizing: border-box !important;
           }
 
-          /* Pin left/right carousel scroll arrows strictly inside the shelf bounds */
-          section[data-testid="component-shelf"] button[aria-label*="Previous" i],
-          section[data-testid="component-shelf"] button[aria-label*="Back" i] {
-            left: 6px !important;
-            right: auto !important;
-            z-index: 12 !important;
+          [data-testid="grid-container"] {
+            --column-count: 2 !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            grid-auto-rows: auto !important;
+            overflow-y: visible !important;
+            gap: 10px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
           }
-          section[data-testid="component-shelf"] button[aria-label*="Next" i],
-          section[data-testid="component-shelf"] button[aria-label*="Forward" i] {
-            right: 8px !important;
-            left: auto !important;
-            z-index: 12 !important;
+          @media (min-width: 580px) {
+            [data-testid="grid-container"] {
+              --column-count: 3 !important;
+              grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            }
           }
 
           .contentSpacing {
             padding-left: 10px !important;
             padding-right: 10px !important;
             max-width: 100% !important;
+            min-width: 0 !important;
             box-sizing: border-box !important;
           }
 
+          [data-testid="now-playing-bar"],
+          div:has(> [data-testid="now-playing-bar"]),
           footer[data-testid="now-playing-bar"],
           .Root__now-playing-bar,
           .now-playing-bar-container {
@@ -789,7 +834,9 @@
             min-width: 0 !important;
             padding: 4px 8px !important;
             box-sizing: border-box !important;
+            z-index: 90 !important;
           }
+          [data-testid="now-playing-bar"] > div,
           footer[data-testid="now-playing-bar"] > div {
             min-width: 0 !important;
             width: 100% !important;
@@ -2747,11 +2794,12 @@
 
     // Special Case 1: Spotify Zero-Reload View Switching (Never reload open.spotify.com or audio stops!)
     if (host.includes('spotify.com')) {
-      const spView = destPath.startsWith('/collection')
-        ? 'library'
-        : destPath.startsWith('/search')
-        ? 'search'
-        : 'player';
+      const spView =
+        destPath.startsWith('/collection') || dest.hash === '#library' || icon === 'library'
+          ? 'library'
+          : destPath.startsWith('/search') || icon === 'search'
+          ? 'search'
+          : 'player';
       spotifyViewOverride = spView;
       syncAppSpecificDomState();
 

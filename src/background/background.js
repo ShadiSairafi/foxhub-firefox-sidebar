@@ -425,12 +425,20 @@ if (browser.webRequest) {
     'media.discordapp.net',
     'discordapp.net',
     'scdn.co',
-    'spotifycdn.com'
+    'spotifycdn.com',
+    // Spotify Bearer-token APIs (use credentials: 'omit' — never delay or inject cookies!)
+    'api-partner.spotify.com',
+    'clienttoken.spotify.com',
+    'api.spotify.com',
+    'spclient.wg.spotify.com'
   ];
 
   const isStaticCdnHost = (hostname, fullUrl = '') => {
     const h = (hostname || '').toLowerCase();
     if (STATIC_CDN_SUFFIXES.some((s) => h === s || h.endsWith(`.${s}`))) {
+      return true;
+    }
+    if (h.endsWith('.spotify.com') && h.includes('spclient')) {
       return true;
     }
     if (fullUrl && (/\/(hcaptcha|recaptcha|turnstile)\b/i.test(fullUrl))) {
@@ -511,10 +519,12 @@ if (browser.webRequest) {
     'https://discord.com/',
     'https://web.telegram.org/',
     'https://open.spotify.com/',
+    'https://accounts.spotify.com/',
     'https://www.youtube.com/',
     'https://music.youtube.com/',
     'https://www.tiktok.com/',
     'https://x.com/',
+    'https://api.x.com/',
     'https://www.messenger.com/',
     'https://www.reddit.com/',
     'https://chat.reddit.com/'
@@ -572,32 +582,33 @@ if (browser.webRequest) {
     }
   }
 
+  function getRootOriginForHost(hostname) {
+    const h = (hostname || '').toLowerCase();
+    if (h.endsWith('.spotify.com') || h === 'spotify.com') return 'https://open.spotify.com';
+    if (h.endsWith('.x.com') || h === 'x.com' || h.endsWith('.twitter.com')) return 'https://x.com';
+    if (h.endsWith('.tiktok.com') || h === 'tiktok.com') return 'https://www.tiktok.com';
+    if (h.endsWith('.instagram.com') || h === 'instagram.com') return 'https://www.instagram.com';
+    if (h.endsWith('.reddit.com') || h === 'reddit.com') return 'https://www.reddit.com';
+    if (h.endsWith('.youtube.com') || h === 'youtube.com') return 'https://www.youtube.com';
+    if (h.endsWith('.messenger.com') || h === 'messenger.com') return 'https://www.messenger.com';
+    if (h.endsWith('.discord.com') || h === 'discord.com') return 'https://discord.com';
+    return '';
+  }
+
   if (browser.webRequest.onBeforeSendHeaders) {
     browser.webRequest.onBeforeSendHeaders.addListener(
       (details) => {
         if (!Array.isArray(details.requestHeaders)) {
           return {};
         }
+        if (!isFromPocketMail(details)) {
+          return {};
+        }
+
         const isDirectExtRequest = Boolean(
           (details.originUrl && details.originUrl.startsWith(extOrigin)) ||
             (details.documentUrl && details.documentUrl.startsWith(extOrigin))
         );
-        const isTikTokImRequest = Boolean(
-          details.url &&
-            details.url.includes('tiktok.com') &&
-            (details.type === 'sub_frame' ||
-              details.url.includes('im-api.') ||
-              details.url.includes('im-va.') ||
-              details.url.includes('im-ws.') ||
-              details.url.includes('/im/'))
-        );
-        // O(1) synchronous fast-exit for in-page XHRs (except direct extension requests & TikTok IM API cookie sync)
-        if (details.type !== 'sub_frame' && !isDirectExtRequest && !isTikTokImRequest) {
-          return {};
-        }
-        if (!isFromPocketMail(details)) {
-          return {};
-        }
 
         let parsedUrl = null;
         try {
@@ -612,6 +623,7 @@ if (browser.webRequest) {
         }
 
         const targetOrigin = parsedUrl.origin;
+        const rootOrigin = getRootOriginForHost(parsedUrl.hostname);
         const headers = [...details.requestHeaders];
         // True ONLY for the top-level embedded media app frame inside PocketHub (never for nested iframes like hCaptcha inside Discord)
         const isTopEmbeddedAppFrame =
@@ -663,42 +675,22 @@ if (browser.webRequest) {
           headers.push({ name: 'Referer', value: 'https://mail.google.com/mail/u/0/' });
         }
 
-        const needsCookieMerge =
-          isTopEmbeddedAppFrame ||
-          isRedditChat ||
-          isTikTokImRequest ||
-          (isDirectExtRequest && details.type !== 'sub_frame' && parsedUrl.hostname.includes('google.com'));
-
-        if (!needsCookieMerge) {
-          return { requestHeaders: headers };
-        }
-
         // Fast Path: If cookies are already in our 5m RAM cache, merge 100% SYNCHRONOUSLY in 0ms (no Promise!)
-        const syncCookies =
-          getSyncCachedCookies(targetOrigin) || (isTikTokImRequest ? getSyncCachedCookies('tiktok-root') : null);
-        if (syncCookies) {
-          if (isRedditChat) {
-            const syncRootReddit = getSyncCachedCookies('https://www.reddit.com');
-            if (syncRootReddit) {
-              mergeCookiesIntoHeaders(headers, [...syncCookies, ...syncRootReddit]);
-              return { requestHeaders: headers };
-            }
-          } else {
-            mergeCookiesIntoHeaders(headers, syncCookies);
-            return { requestHeaders: headers };
-          }
+        const syncCookies = getSyncCachedCookies(targetOrigin);
+        const syncRootCookies = rootOrigin && rootOrigin !== targetOrigin ? getSyncCachedCookies(rootOrigin) : null;
+        if (syncCookies && (!rootOrigin || rootOrigin === targetOrigin || syncRootCookies)) {
+          const combined = syncRootCookies ? [...syncCookies, ...syncRootCookies] : syncCookies;
+          mergeCookiesIntoHeaders(headers, combined);
+          return { requestHeaders: headers };
         }
 
         return (async () => {
           if (browser.cookies && browser.cookies.getAll && details.url.startsWith('http')) {
             try {
               let storeCookies = await getCachedCookiesForOrigin(details.url, targetOrigin);
-              if (isRedditChat) {
-                const rootRedditCookies = await getCachedCookiesForOrigin(
-                  'https://www.reddit.com/',
-                  'https://www.reddit.com'
-                );
-                storeCookies = [...(storeCookies || []), ...(rootRedditCookies || [])];
+              if (rootOrigin && rootOrigin !== targetOrigin) {
+                const rootCookies = await getCachedCookiesForOrigin(`${rootOrigin}/`, rootOrigin);
+                storeCookies = [...(storeCookies || []), ...(rootCookies || [])];
               }
               mergeCookiesIntoHeaders(headers, storeCookies);
             } catch (_) {}
