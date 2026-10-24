@@ -2900,6 +2900,12 @@
         return;
       }
 
+      if (data.type === 'PM_OPEN_SPOTIFY_DRM_TAB') {
+        browser.tabs.create({ url: data.url || 'https://open.spotify.com/' });
+        showToast('Click "Enable DRM" on Firefox\'s yellow bar at the top of the tab!');
+        return;
+      }
+
       // If a custom website frame reports its live HTML <link rel="icon"> faviconUrl, persist it
       if (data.faviconUrl && sourceEntry && sourceEntry.appId && sourceEntry.appId.startsWith('custom-')) {
         const customs = Array.isArray(appSettings.customMediaApps) ? appSettings.customMediaApps : [];

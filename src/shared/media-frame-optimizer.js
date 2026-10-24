@@ -1730,64 +1730,178 @@
     // Detect if Firefox DRM (Widevine EME / GMP decoder) is disabled in user's browser settings
     // (Firefox hides its yellow "You must enable DRM" infobar inside iframes, leaving users wondering why Spotify won't play!)
     if (host === 'open.spotify.com') {
-      const checkSpotifyDrm = async () => {
-        if (!document.body || document.getElementById('pm-spotify-drm-banner')) return;
-        let drmSupported = false;
+      let drmVerifiedOk = false;
+      let drmPollTimer = null;
+
+      const probeWidevineDrm = async (timeoutMs = 3200) => {
         try {
-          if (navigator.requestMediaKeySystemAccess) {
-            const checkPromise = navigator
-              .requestMediaKeySystemAccess('com.widevine.alpha', [
-                {
-                  initDataTypes: ['cenc'],
-                  audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }]
-                }
-              ])
-              .then(() => true)
-              .catch(() => false);
-            const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), 3800));
-            drmSupported = await Promise.race([checkPromise, timeoutPromise]);
-          }
+          if (!navigator.requestMediaKeySystemAccess) return false;
+          const checkPromise = navigator
+            .requestMediaKeySystemAccess('com.widevine.alpha', [
+              {
+                initDataTypes: ['cenc'],
+                audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }]
+              }
+            ])
+            .then(() => true)
+            .catch(() => false);
+          const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs));
+          return await Promise.race([checkPromise, timeoutPromise]);
         } catch (_) {
-          drmSupported = false;
+          return false;
         }
-        if (drmSupported || document.getElementById('pm-spotify-drm-banner')) return;
+      };
+
+      const showSpotifyDrmPrompt = async (pulseIfVisible = false) => {
+        if (!document.body || drmVerifiedOk) return;
+        const existing = document.getElementById('pm-spotify-drm-banner');
+        if (existing) {
+          if (pulseIfVisible) {
+            existing.style.transform = 'scale(1.02)';
+            existing.style.boxShadow = '0 0 0 2px #1ed760, 0 10px 28px rgba(0,0,0,0.8)';
+            setTimeout(() => {
+              existing.style.transform = 'scale(1)';
+              existing.style.boxShadow = '0 8px 24px rgba(0,0,0,0.72)';
+            }, 260);
+          }
+          return;
+        }
+
+        const isOk = await probeWidevineDrm(3200);
+        if (isOk) {
+          drmVerifiedOk = true;
+          return;
+        }
+        if (document.getElementById('pm-spotify-drm-banner')) return;
 
         const banner = document.createElement('div');
         banner.id = 'pm-spotify-drm-banner';
         banner.style.cssText =
-          'position:fixed;bottom:78px;left:8px;right:8px;z-index:2147483640;background:#181818;border:1px solid #1ed760;border-radius:10px;padding:10px 12px;color:#fff;font-family:system-ui,-apple-system,sans-serif;font-size:11.5px;line-height:1.45;box-shadow:0 8px 24px rgba(0,0,0,0.65);display:flex;align-items:flex-start;gap:10px;';
+          'position:fixed;bottom:78px;left:8px;right:8px;z-index:2147483640;background:#161616;border:1.5px solid #1ed760;border-radius:12px;padding:11px 12px;color:#fff;font-family:system-ui,-apple-system,sans-serif;font-size:11.5px;line-height:1.45;box-shadow:0 8px 24px rgba(0,0,0,0.72);display:flex;flex-direction:column;gap:8px;transition:transform 0.2s ease,box-shadow 0.2s ease;';
 
-        const msgWrap = document.createElement('div');
-        msgWrap.style.cssText = 'flex:1;min-width:0;';
+        const topRow = document.createElement('div');
+        topRow.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:8px;';
 
         const titleEl = document.createElement('div');
-        titleEl.style.cssText = 'font-weight:700;color:#1ed760;margin-bottom:3px;font-size:12px;';
-        titleEl.textContent = 'Enable Firefox DRM to Play Spotify Music';
-
-        const descEl = document.createElement('div');
-        descEl.style.cssText = 'color:#d4d4d4;';
-        descEl.textContent =
-          'Spotify encrypts audio with Widevine DRM. Open Firefox Settings → General → check "Play DRM-controlled content" (and ensure media.eme.enabled & media.gmp.decoder.enabled are true in about:config), then reload.';
+        titleEl.style.cssText = 'font-weight:700;color:#1ed760;font-size:12.5px;';
+        titleEl.textContent = '🎵 Enable Firefox DRM to Play Music';
 
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.textContent = '✕';
         closeBtn.title = 'Dismiss';
         closeBtn.style.cssText =
-          'background:transparent;border:none;color:#aaa;cursor:pointer;font-size:14px;padding:2px 4px;line-height:1;';
-        closeBtn.addEventListener('click', () => banner.remove());
+          'background:transparent;border:none;color:#aaa;cursor:pointer;font-size:14px;padding:0 4px;line-height:1;';
+        closeBtn.addEventListener('click', () => {
+          if (drmPollTimer) {
+            clearInterval(drmPollTimer);
+            drmPollTimer = null;
+          }
+          banner.remove();
+        });
 
-        msgWrap.appendChild(titleEl);
-        msgWrap.appendChild(descEl);
-        banner.appendChild(msgWrap);
-        banner.appendChild(closeBtn);
+        topRow.appendChild(titleEl);
+        topRow.appendChild(closeBtn);
+
+        const descEl = document.createElement('div');
+        descEl.style.cssText = 'color:#d8d8d8;font-size:11.2px;';
+        descEl.textContent =
+          'Spotify requires Widevine DRM for audio (Firefox hides its yellow "Enable DRM" bar inside sidebars). Choose either quick option:';
+
+        const stepsEl = document.createElement('div');
+        stepsEl.style.cssText =
+          'background:#222;border-radius:8px;padding:7px 9px;color:#eee;font-size:11px;display:flex;flex-direction:column;gap:4px;';
+
+        const step1 = document.createElement('div');
+        step1.textContent = '1️⃣ Click "Open Tab to Enable DRM" below → click Firefox\'s yellow "Enable DRM" button at the top of the tab.';
+
+        const step2 = document.createElement('div');
+        step2.textContent =
+          '2️⃣ Or in Firefox Settings → Tabs and browsing → Media → check "Play DRM-controlled content".';
+
+        const step3 = document.createElement('div');
+        step3.style.cssText = 'color:#aaa;font-size:10.3px;';
+        step3.textContent =
+          'Tip: If audio still stays paused, open about:config and set media.gmp.decoder.enabled to true.';
+
+        stepsEl.appendChild(step1);
+        stepsEl.appendChild(step2);
+        stepsEl.appendChild(step3);
+
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;';
+
+        const openTabBtn = document.createElement('button');
+        openTabBtn.type = 'button';
+        openTabBtn.textContent = '⚡ Open Tab to Enable DRM';
+        openTabBtn.style.cssText =
+          'background:#1ed760;color:#000;font-weight:700;border:none;border-radius:999px;padding:6px 11px;font-size:11px;cursor:pointer;';
+        openTabBtn.addEventListener('click', () => {
+          notifyParent('PM_OPEN_SPOTIFY_DRM_TAB', { url: 'https://open.spotify.com/' });
+          openTabBtn.textContent = '✓ Opened Tab — Click "Enable DRM" at Top!';
+        });
+
+        const reloadBtn = document.createElement('button');
+        reloadBtn.type = 'button';
+        reloadBtn.textContent = '↻ I Enabled It — Reload';
+        reloadBtn.style.cssText =
+          'background:#2a2a2a;color:#fff;font-weight:600;border:1px solid #444;border-radius:999px;padding:6px 10px;font-size:11px;cursor:pointer;';
+        reloadBtn.addEventListener('click', () => {
+          reloadBtn.textContent = 'Reloading…';
+          window.location.reload();
+        });
+
+        btnRow.appendChild(openTabBtn);
+        btnRow.appendChild(reloadBtn);
+
+        banner.appendChild(topRow);
+        banner.appendChild(descEl);
+        banner.appendChild(stepsEl);
+        banner.appendChild(btnRow);
         document.body.appendChild(banner);
+
+        // Poll every 2.5s while banner is open: as soon as user enables DRM in Firefox, auto-reload Spotify!
+        if (!drmPollTimer) {
+          drmPollTimer = setInterval(async () => {
+            if (!document.getElementById('pm-spotify-drm-banner')) {
+              clearInterval(drmPollTimer);
+              drmPollTimer = null;
+              return;
+            }
+            const ready = await probeWidevineDrm(1800);
+            if (ready) {
+              drmVerifiedOk = true;
+              clearInterval(drmPollTimer);
+              drmPollTimer = null;
+              titleEl.textContent = '✓ Firefox DRM Activated! Starting Spotify…';
+              setTimeout(() => window.location.reload(), 650);
+            }
+          }, 2500);
+        }
       };
 
+      // Also re-prompt if user clicks a Play button while DRM is still off
+      document.addEventListener(
+        'click',
+        (e) => {
+          if (drmVerifiedOk) return;
+          const playEl =
+            e.target && e.target.closest
+              ? e.target.closest('[data-testid="play-button"], [data-testid="control-button-playpause"]')
+              : null;
+          if (playEl) {
+            showSpotifyDrmPrompt(true);
+          }
+        },
+        true
+      );
+
       if (document.readyState === 'complete' || document.readyState === 'interactive') {
-        setTimeout(checkSpotifyDrm, 1500);
+        setTimeout(() => showSpotifyDrmPrompt(false), 1400);
       } else {
-        window.addEventListener('DOMContentLoaded', () => setTimeout(checkSpotifyDrm, 1500), { once: true });
+        window.addEventListener('DOMContentLoaded', () => setTimeout(() => showSpotifyDrmPrompt(false), 1400), {
+          once: true
+        });
       }
     }
   }
