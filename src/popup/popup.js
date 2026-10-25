@@ -1300,7 +1300,7 @@
     activeApps.forEach((app) => {
       const btn = document.createElement('button');
       const isActive = activeRailAppId === app.id;
-      const isAliveInPool = mediaFramePool.has(app.id);
+      const isAliveInPool = mediaFramePool.has(app.id) || pendingSidebarAudioTakeoverSet.has(app.id);
       const unreadInfo = socialAppUnreadMap.get(app.id);
       const unreadCount = unreadInfo?.unreadCount || 0;
       const hasUnread = Boolean(unreadInfo?.hasUnread || unreadCount > 0);
@@ -1396,7 +1396,7 @@
 
       btn.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        if (mediaFramePool.has(app.id)) {
+        if (mediaFramePool.has(app.id) || pendingSidebarAudioTakeoverSet.has(app.id)) {
           closeMediaAppFrame(app.id);
           showToast(`Closed ${app.name} background session`);
         }
@@ -1644,6 +1644,7 @@
   const framePlaybackStates = new Map(); // appId -> { isPlaying, currentTime, resumeUrl, title, updatedAt }
   const pendingSidebarAudioTakeoverSet = new Set();
   const sidebarMsePlayers = new Map(); // appId -> { ms, audioEl, sb, queue, objUrl }
+  const sidebarSpEmePlayers = new Map(); // appId -> { videoEl, ms, sb, queue, mk, mkReadyPromise, serverCert, licAuth, pendingGenReqs, objUrl, targetTime }
   let sidebarLifecyclePort = null;
   let sidebarInitCompleted = false;
   let lastDetectedAutoplayPolicy = 'allowed';
@@ -1663,6 +1664,153 @@
     } catch (_) {}
   }
 
+  function cleanupSidebarSpEmePlayer(appId) {
+    const sp = sidebarSpEmePlayers.get(appId);
+    if (!sp) return;
+    sidebarSpEmePlayers.delete(appId);
+    try {
+      if (sp.videoEl) {
+        sp.videoEl.pause();
+        sp.videoEl.removeAttribute('src');
+        sp.videoEl.load();
+        sp.videoEl.remove();
+      }
+    } catch (_) {}
+    try {
+      if (sp.objUrl) URL.revokeObjectURL(sp.objUrl);
+    } catch (_) {}
+  }
+
+  function getOrCreateSidebarSpState(appId) {
+    let sp = sidebarSpEmePlayers.get(appId);
+    if (!sp) {
+      sp = {
+        videoEl: null,
+        ms: null,
+        sb: null,
+        queue: [],
+        mk: null,
+        mkReadyPromise: null,
+        serverCert: null,
+        licAuth: null,
+        pendingGenReqs: [],
+        objUrl: null,
+        targetTime: 0
+      };
+      sidebarSpEmePlayers.set(appId, sp);
+    }
+    return sp;
+  }
+
+  function drainSidebarSpQueue(appId) {
+    const sp = sidebarSpEmePlayers.get(appId);
+    if (!sp || !sp.sb || sp.sb.updating || sp.queue.length === 0) return;
+    const item = sp.queue.shift();
+    try {
+      if (item.type === 'remove') {
+        sp.sb.remove(item.start, item.end);
+      } else if (item.chunk) {
+        if (
+          typeof item.timestampOffset === 'number' &&
+          Math.abs((sp.sb.timestampOffset || 0) - item.timestampOffset) > 0.01
+        ) {
+          sp.sb.timestampOffset = item.timestampOffset;
+        }
+        sp.sb.appendBuffer(item.chunk);
+      }
+    } catch (_) {}
+  }
+
+  async function processPendingSidebarSpGenReqs(appId) {
+    const sp = sidebarSpEmePlayers.get(appId);
+    if (!sp || !sp.mk || !sp.licAuth || sp.pendingGenReqs.length === 0) return;
+    while (sp.pendingGenReqs.length > 0) {
+      const req = sp.pendingGenReqs.shift();
+      try {
+        const sess = sp.mk.createSession();
+        sess.addEventListener('message', async (ev) => {
+          try {
+            const resp = await fetch(sp.licAuth.url, {
+              method: 'POST',
+              headers: sp.licAuth.headers,
+              body: ev.message
+            });
+            const licBuf = await resp.arrayBuffer();
+            await sess.update(licBuf);
+            const curSp = sidebarSpEmePlayers.get(appId);
+            if (curSp && curSp.videoEl) {
+              if (
+                curSp.targetTime &&
+                Math.abs(curSp.videoEl.currentTime - curSp.targetTime) > 1.5 &&
+                curSp.videoEl.readyState >= 1
+              ) {
+                curSp.videoEl.currentTime = curSp.targetTime;
+              }
+              curSp.videoEl.play().catch(() => {});
+            }
+          } catch (_) {}
+        });
+        await sess.generateRequest(req.initDataType, req.initData);
+      } catch (_) {}
+    }
+  }
+
+  function ensureSidebarSpEmePlayer(appId, mime) {
+    const sp = getOrCreateSidebarSpState(appId);
+    if (sp.mkReadyPromise) return sp.mkReadyPromise;
+    const effectiveMime = mime || 'audio/mp4; codecs="mp4a.40.2"';
+    sp.mkReadyPromise = (async () => {
+      try {
+        const v = document.createElement('video');
+        v.autoplay = true;
+        v.muted = false;
+        v.volume = 1.0;
+        document.body.appendChild(v);
+        sp.videoEl = v;
+
+        const acc = await navigator.requestMediaKeySystemAccess('com.widevine.alpha', [
+          {
+            initDataTypes: ['cenc'],
+            audioCapabilities: [{ contentType: effectiveMime, robustness: 'SW_SECURE_CRYPTO' }]
+          }
+        ]);
+        const mk = await acc.createMediaKeys();
+        if (sp.serverCert) {
+          await mk.setServerCertificate(sp.serverCert).catch(() => {});
+        }
+        await v.setMediaKeys(mk);
+        sp.mk = mk;
+
+        const ms = new MediaSource();
+        sp.ms = ms;
+        sp.objUrl = URL.createObjectURL(ms);
+        v.src = sp.objUrl;
+        await new Promise((resolve) => {
+          ms.addEventListener(
+            'sourceopen',
+            () => {
+              try {
+                const sb = ms.addSourceBuffer(effectiveMime);
+                sp.sb = sb;
+                sb.addEventListener('updateend', () => {
+                  drainSidebarSpQueue(appId);
+                  if (sp.videoEl && sp.videoEl.paused && sp.videoEl.readyState >= 2) {
+                    sp.videoEl.play().catch(() => {});
+                  }
+                });
+              } catch (_) {}
+              resolve();
+            },
+            { once: true }
+          );
+        });
+        drainSidebarSpQueue(appId);
+        processPendingSidebarSpGenReqs(appId);
+      } catch (_) {}
+    })();
+    return sp.mkReadyPromise;
+  }
+
   function isAppPersistent(appId) {
     if (!appId || appId === 'pocketmail') return false;
     const mode = appSettings.persistenceMode || 'eco';
@@ -1677,7 +1825,7 @@
   }
 
   function syncPersistentSessionToBackground(appId, url, playback = null) {
-    if (!IS_SIDEBAR_VIEW || !sidebarInitCompleted) return;
+    if (IS_POPOUT_VIEW || !sidebarInitCompleted) return;
     if ((appSettings.persistenceMode || 'eco') === 'eco') return;
     const payload = {
       type: 'UPDATE_PERSISTENT_SESSION',
@@ -1790,6 +1938,13 @@
   function closeMediaAppFrame(appId) {
     const entry = mediaFramePool.get(appId);
     mediaFramePool.delete(appId);
+    framePlaybackStates.delete(appId);
+    pendingSidebarAudioTakeoverSet.delete(appId);
+    cleanupSidebarMsePlayer(appId);
+    cleanupSidebarSpEmePlayer(appId);
+    browser.runtime
+      .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId, clearPlaybackState: true })
+      .catch(() => {});
     if (entry) {
       try {
         entry.frame.remove();
@@ -3153,8 +3308,61 @@
         if (appId) {
           pendingSidebarAudioTakeoverSet.delete(appId);
           cleanupSidebarMsePlayer(appId);
+          cleanupSidebarSpEmePlayer(appId);
+          browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
         }
-        browser.runtime.sendMessage({ type: 'STOP_BG_AUDIO_HANDOFF' }).catch(() => {});
+      } else if (data.type === 'PM_SP_EME_BRIDGE') {
+        const appId =
+          sourceEntry?.appId ||
+          (typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')
+            ? data.flatFrameName.replace('pm-media-frame-', '')
+            : '');
+        if (appId) {
+          const sp = getOrCreateSidebarSpState(appId);
+          const bt = data.bridgeType;
+          if (bt === 'SERVER_CERT') {
+            sp.serverCert = data.cert;
+            if (sp.mk) sp.mk.setServerCertificate(data.cert).catch(() => {});
+          } else if (bt === 'LIC_AUTH') {
+            sp.licAuth = { url: data.url, headers: data.headers };
+            if (pendingSidebarAudioTakeoverSet.has(appId)) {
+              pendingSidebarAudioTakeoverSet.delete(appId);
+              browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
+            }
+            processPendingSidebarSpGenReqs(appId);
+          } else if (bt === 'GEN_REQ') {
+            sp.pendingGenReqs.push({ initDataType: data.initDataType, initData: data.initData });
+            ensureSidebarSpEmePlayer(appId, 'audio/mp4; codecs="mp4a.40.2"');
+            processPendingSidebarSpGenReqs(appId);
+          } else if (bt === 'MSE_INIT') {
+            ensureSidebarSpEmePlayer(appId, data.mime);
+          } else if (bt === 'MSE_CHUNK') {
+            ensureSidebarSpEmePlayer(appId, data.mime);
+            sp.queue.push({ type: 'append', chunk: data.chunk, timestampOffset: data.timestampOffset });
+            drainSidebarSpQueue(appId);
+          } else if (bt === 'MSE_REMOVE') {
+            sp.queue.push({ type: 'remove', start: data.start, end: data.end });
+            drainSidebarSpQueue(appId);
+          } else if (bt === 'SYNC_TIME') {
+            sp.targetTime = data.currentTime;
+            if (!data.paused && pendingSidebarAudioTakeoverSet.has(appId)) {
+              pendingSidebarAudioTakeoverSet.delete(appId);
+              browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
+            }
+            if (sp.videoEl) {
+              if (!data.paused) {
+                if (Math.abs(sp.videoEl.currentTime - data.currentTime) > 1.5 && sp.videoEl.readyState >= 1) {
+                  sp.videoEl.currentTime = data.currentTime;
+                }
+                if (sp.videoEl.paused && sp.videoEl.readyState >= 2) {
+                  sp.videoEl.play().catch(() => {});
+                }
+              } else if (!sp.videoEl.paused) {
+                sp.videoEl.pause();
+              }
+            }
+          }
+        }
       } else if (data.type === 'PM_BG_AUDIO_CHUNK' && data.chunk) {
         const appId =
           sourceEntry?.appId ||
@@ -3162,6 +3370,10 @@
             ? data.flatFrameName.replace('pm-media-frame-', '')
             : '');
         if (appId) {
+          if (pendingSidebarAudioTakeoverSet.has(appId)) {
+            pendingSidebarAudioTakeoverSet.delete(appId);
+            browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
+          }
           let player = sidebarMsePlayers.get(appId);
           if (!player) {
             const ms = new MediaSource();
@@ -3317,8 +3529,20 @@
             ? data.flatFrameName.replace('pm-media-frame-', '')
             : '');
         if (appId) {
+          if (data.isPlaying && pendingSidebarAudioTakeoverSet.size > 0) {
+            Array.from(pendingSidebarAudioTakeoverSet).forEach((otherId) => {
+              if (otherId !== appId) {
+                pendingSidebarAudioTakeoverSet.delete(otherId);
+                browser.runtime
+                  .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: otherId, clearPlaybackState: true })
+                  .catch(() => {});
+              }
+            });
+          }
           const isTakeoverOrMse =
-            sidebarMsePlayers.has(appId) || pendingSidebarAudioTakeoverSet.has(appId);
+            sidebarMsePlayers.has(appId) ||
+            sidebarSpEmePlayers.has(appId) ||
+            pendingSidebarAudioTakeoverSet.has(appId);
           const pb = {
             isPlaying: Boolean(data.isPlaying || isTakeoverOrMse),
             currentTime: Number(data.currentTime) || 0,
@@ -3980,34 +4204,52 @@
       }
     });
 
-    // When the user closes the sidebar (×), save persistent app URLs and hand off active music/audio to Background Audio Keep-Alive!
-    if (IS_SIDEBAR_VIEW) {
+    // When the user closes the sidebar (×) or popup, save persistent app URLs and hand off active music/audio to Background Audio Keep-Alive!
+    if (!IS_POPOUT_VIEW) {
       window.addEventListener('pagehide', () => {
         const activeMseIds = new Set(sidebarMsePlayers.keys());
+        const activeSpEmeIds = new Set(sidebarSpEmePlayers.keys());
         sidebarMsePlayers.forEach((_, id) => cleanupSidebarMsePlayer(id));
+        sidebarSpEmePlayers.forEach((_, id) => cleanupSidebarSpEmePlayer(id));
         if (!sidebarInitCompleted) return;
         const mode = appSettings.persistenceMode || 'eco';
         if (mode === 'eco') return;
 
         const savedUrls = {};
         const playingApps = [];
+        const addedPlayingIds = new Set();
         mediaFramePool.forEach((entry, id) => {
-          if (!isAppPersistent(id)) return;
           const pb = framePlaybackStates.get(id);
           const bestUrl = pb?.resumeUrl || entry.currentUrl || entry.restoredUrl || '';
-          if (bestUrl && !bestUrl.includes('pm_boot=1')) {
+          if (bestUrl && !bestUrl.includes('pm_boot=1') && isAppPersistent(id)) {
             savedUrls[id] = bestUrl;
           }
           const wasPlayingOrTakeover =
-            (pb && pb.isPlaying && Date.now() - pb.updatedAt < 12000) ||
+            (pb && pb.isPlaying && Date.now() - pb.updatedAt < 60000) ||
             activeMseIds.has(id) ||
+            activeSpEmeIds.has(id) ||
             pendingSidebarAudioTakeoverSet.has(id);
           if (wasPlayingOrTakeover && bestUrl) {
+            addedPlayingIds.add(id);
             playingApps.push({
               appId: id,
               url: bestUrl,
               title: pb?.title || ''
             });
+          }
+        });
+
+        // Also include any app still playing in background.html (when the user opened onto Mail/Instagram and closed without switching to the media app)
+        pendingSidebarAudioTakeoverSet.forEach((bgId) => {
+          if (!addedPlayingIds.has(bgId)) {
+            const bgUrl = hibernatedAppUrls.get(bgId) || appSettings.persistentSavedAppUrls?.[bgId] || '';
+            if (bgUrl) {
+              playingApps.push({
+                appId: bgId,
+                url: bgUrl,
+                title: ''
+              });
+            }
           }
         });
 
@@ -4031,8 +4273,8 @@
       appSettings = res.settings || appSettings;
       snoozedMap = res.snoozed || {};
 
-      // If Sidebar is opening, connect the lifecycle port (for 0ms close handoff) and stop any background audio frames so the sidebar takes over cleanly!
-      if (IS_SIDEBAR_VIEW) {
+      // If Sidebar or Popup is opening, connect the lifecycle port (for 0ms close handoff) and query active background audio apps!
+      if (!IS_POPOUT_VIEW) {
         try {
           if (browser.runtime && typeof browser.runtime.connect === 'function') {
             sidebarLifecyclePort = browser.runtime.connect({ name: 'foxhub-sidebar-lifecycle' });
@@ -4060,7 +4302,7 @@
       // Pre-seed hibernatedAppUrls for all persistent apps so clicking them or auto-restoring resumes their exact saved URL/timestamp!
       const savedMap = appSettings.persistentSavedAppUrls || {};
       Object.entries(savedMap).forEach(([id, savedUrl]) => {
-        if (savedUrl && isAppPersistent(id)) {
+        if (savedUrl && isAppPersistent(id) && !hibernatedAppUrls.has(id)) {
           hibernatedAppUrls.set(id, savedUrl);
         }
       });
@@ -4099,21 +4341,6 @@
             openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
           }
         }
-        // Also warm any background-playing persistent app in the hidden keep-alive pool if the user reopened onto a different app
-        pendingSidebarAudioTakeoverSet.forEach((bgId) => {
-          if (bgId && bgId !== activeRailAppId && isAppPersistent(bgId)) {
-            const bgApp = window.PocketMailMediaApps.getAppById(bgId, appSettings);
-            const bgUrl = hibernatedAppUrls.get(bgId);
-            if (bgApp && bgUrl) {
-              const bgEntry = getOrCreateMediaFrame(bgApp);
-              if (!bgEntry.hasNavigated) {
-                bgEntry.hasNavigated = true;
-                bgEntry.currentUrl = bgUrl;
-                bgEntry.frame.src = bgUrl;
-              }
-            }
-          }
-        });
       }
     }
   }

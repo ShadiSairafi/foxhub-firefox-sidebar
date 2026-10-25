@@ -920,6 +920,7 @@ function restartPollingTimer() {
 const liveMediaPlaybackState = new Map(); // appId -> { isPlaying, currentTime, resumeUrl, title, updatedAt }
 const bgAudioPool = new Map(); // appId -> { frame, url, title, autoplayBlocked }
 const bgMsePlayers = new Map(); // appId -> { ms, audioEl, sb, queue, objUrl }
+const bgSpEmePlayers = new Map(); // appId -> { videoEl, ms, sb, queue, mk, mkReadyPromise, serverCert, licAuth, pendingGenReqs, objUrl, targetTime, msId }
 
 function isAppAllowedForPersistence(appId) {
   if (!appId || appId === 'pocketmail') return false;
@@ -949,27 +950,196 @@ function cleanupMsePlayer(appId) {
   } catch (_) {}
 }
 
+function cleanupSpEmePlayer(appId) {
+  const sp = bgSpEmePlayers.get(appId);
+  if (!sp) return;
+  bgSpEmePlayers.delete(appId);
+  try {
+    if (sp.videoEl) {
+      sp.videoEl.pause();
+      sp.videoEl.removeAttribute('src');
+      sp.videoEl.load();
+      sp.videoEl.remove();
+    }
+  } catch (_) {}
+  try {
+    if (sp.objUrl) URL.revokeObjectURL(sp.objUrl);
+  } catch (_) {}
+}
+
+function getOrCreateBgSpState(appId) {
+  let sp = bgSpEmePlayers.get(appId);
+  if (!sp) {
+    sp = {
+      videoEl: null,
+      ms: null,
+      sb: null,
+      queue: [],
+      mk: null,
+      mkReadyPromise: null,
+      serverCert: null,
+      licAuth: null,
+      pendingGenReqs: [],
+      objUrl: null,
+      targetTime: 0,
+      msId: 0
+    };
+    bgSpEmePlayers.set(appId, sp);
+  }
+  return sp;
+}
+
+function drainBgSpQueue(appId) {
+  const sp = bgSpEmePlayers.get(appId);
+  if (!sp || !sp.sb || sp.sb.updating || sp.queue.length === 0) return;
+  const item = sp.queue.shift();
+  try {
+    if (item.type === 'remove') {
+      sp.sb.remove(item.start, item.end);
+    } else if (item.chunk) {
+      if (
+        typeof item.timestampOffset === 'number' &&
+        Math.abs((sp.sb.timestampOffset || 0) - item.timestampOffset) > 0.01
+      ) {
+        sp.sb.timestampOffset = item.timestampOffset;
+      }
+      sp.sb.appendBuffer(item.chunk);
+    }
+  } catch (_) {}
+}
+
+async function processPendingSpGenReqs(appId) {
+  const sp = bgSpEmePlayers.get(appId);
+  if (!sp || !sp.mk || !sp.licAuth || sp.pendingGenReqs.length === 0) return;
+  while (sp.pendingGenReqs.length > 0) {
+    const req = sp.pendingGenReqs.shift();
+    try {
+      const sess = sp.mk.createSession();
+      sess.addEventListener('message', async (ev) => {
+        try {
+          const resp = await fetch(sp.licAuth.url, {
+            method: 'POST',
+            headers: sp.licAuth.headers,
+            body: ev.message
+          });
+          const licBuf = await resp.arrayBuffer();
+          await sess.update(licBuf);
+          const curSp = bgSpEmePlayers.get(appId);
+          if (curSp && curSp.videoEl) {
+            if (
+              curSp.targetTime &&
+              Math.abs(curSp.videoEl.currentTime - curSp.targetTime) > 1.5 &&
+              curSp.videoEl.readyState >= 1
+            ) {
+              curSp.videoEl.currentTime = curSp.targetTime;
+            }
+            curSp.videoEl.play().catch(() => {});
+          }
+        } catch (_) {}
+      });
+      await sess.generateRequest(req.initDataType, req.initData);
+    } catch (_) {}
+  }
+}
+
+function ensureBgSpEmePlayer(appId, mime) {
+  const sp = getOrCreateBgSpState(appId);
+  if (sp.mkReadyPromise) return sp.mkReadyPromise;
+  const effectiveMime = mime || 'audio/mp4; codecs="mp4a.40.2"';
+  sp.mkReadyPromise = (async () => {
+    try {
+      const v = document.createElement('video');
+      v.autoplay = true;
+      v.muted = false;
+      v.volume = 1.0;
+      document.body.appendChild(v);
+      sp.videoEl = v;
+
+      const acc = await navigator.requestMediaKeySystemAccess('com.widevine.alpha', [
+        {
+          initDataTypes: ['cenc'],
+          audioCapabilities: [{ contentType: effectiveMime, robustness: 'SW_SECURE_CRYPTO' }]
+        }
+      ]);
+      const mk = await acc.createMediaKeys();
+      if (sp.serverCert) {
+        await mk.setServerCertificate(sp.serverCert).catch(() => {});
+      }
+      await v.setMediaKeys(mk);
+      sp.mk = mk;
+
+      const ms = new MediaSource();
+      sp.ms = ms;
+      sp.objUrl = URL.createObjectURL(ms);
+      v.src = sp.objUrl;
+      await new Promise((resolve) => {
+        ms.addEventListener(
+          'sourceopen',
+          () => {
+            try {
+              const sb = ms.addSourceBuffer(effectiveMime);
+              sp.sb = sb;
+              sb.addEventListener('updateend', () => {
+                drainBgSpQueue(appId);
+                if (sp.videoEl && sp.videoEl.paused && sp.videoEl.readyState >= 2) {
+                  sp.videoEl.play().catch(() => {});
+                }
+              });
+            } catch (_) {}
+            resolve();
+          },
+          { once: true }
+        );
+      });
+      drainBgSpQueue(appId);
+      processPendingSpGenReqs(appId);
+    } catch (_) {}
+  })();
+  return sp.mkReadyPromise;
+}
+
+function stopSingleBackgroundAudioFrame(appId) {
+  if (!appId) return;
+  cleanupMsePlayer(appId);
+  cleanupSpEmePlayer(appId);
+  const entry = bgAudioPool.get(appId);
+  if (entry) {
+    bgAudioPool.delete(appId);
+    try {
+      entry.frame.remove();
+      entry.frame.src = 'about:blank';
+    } catch (_) {}
+  }
+  if (bgAudioPool.size === 0) {
+    updateToolbarBadge();
+  }
+}
+
 function stopBackgroundAudioFrames() {
-  if (bgAudioPool.size === 0 && bgMsePlayers.size === 0) return;
+  if (bgAudioPool.size === 0 && bgMsePlayers.size === 0 && bgSpEmePlayers.size === 0) return;
   bgAudioPool.forEach((entry, appId) => {
     cleanupMsePlayer(appId);
+    cleanupSpEmePlayer(appId);
     try {
       entry.frame.remove();
       entry.frame.src = 'about:blank';
     } catch (_) {}
   });
   bgMsePlayers.forEach((_, appId) => cleanupMsePlayer(appId));
+  bgSpEmePlayers.forEach((_, appId) => cleanupSpEmePlayer(appId));
   bgAudioPool.clear();
   updateToolbarBadge();
 }
 
 function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
   if (!appId || !targetUrl || !document.body) return;
-  if (!isAppAllowedForPersistence(appId)) return;
+  const mode = currentSettings.persistenceMode || 'eco';
+  if (mode === 'eco' || currentSettings.keepAudioPlayingWhenClosed === false) return;
 
   const existing = bgAudioPool.get(appId);
   if (existing) {
-    if (Date.now() - (existing.startedAt || 0) < 1500) {
+    // If this app's background audio keep-alive frame is already connected and running, keep it playing with 0ms interruption!
+    if (existing.frame && existing.frame.isConnected) {
       return;
     }
     try {
@@ -979,6 +1149,7 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
     bgAudioPool.delete(appId);
   }
   cleanupMsePlayer(appId);
+  cleanupSpEmePlayer(appId);
 
   const iframe = document.createElement('iframe');
   iframe.name = `pm-bg-audio-${appId}`;
@@ -1017,7 +1188,7 @@ function triggerSidebarClosedAudioHandoff(candidates = []) {
   let startedAny = false;
   if (Array.isArray(candidates) && candidates.length > 0) {
     candidates.forEach((c) => {
-      if (c && c.appId && c.url && isAppAllowedForPersistence(c.appId)) {
+      if (c && c.appId && c.url) {
         startBackgroundAudioKeepAlive(c.appId, c.url, c.title || '');
         startedAny = true;
       }
@@ -1025,7 +1196,7 @@ function triggerSidebarClosedAudioHandoff(candidates = []) {
   }
   if (!startedAny) {
     liveMediaPlaybackState.forEach((st, id) => {
-      if (st.isPlaying && Date.now() - st.updatedAt < 20000 && isAppAllowedForPersistence(id)) {
+      if (st.isPlaying && Date.now() - st.updatedAt < 60000) {
         const targetUrl = st.resumeUrl || currentSettings.persistentSavedAppUrls?.[id];
         if (targetUrl) {
           startBackgroundAudioKeepAlive(id, targetUrl, st.title || '');
@@ -1103,6 +1274,60 @@ window.addEventListener('message', (e) => {
         }
       }
     }
+    if (data.isPlaying) {
+      liveMediaPlaybackState.set(appId, {
+        isPlaying: true,
+        currentTime: Number(data.currentTime) || 0,
+        resumeUrl: data.resumeUrl || bgAudioPool.get(appId)?.url || '',
+        title: data.title || bgAudioPool.get(appId)?.title || '',
+        updatedAt: Date.now()
+      });
+    }
+  } else if (data.type === 'PM_SP_EME_BRIDGE') {
+    const sp = getOrCreateBgSpState(appId);
+    const bt = data.bridgeType;
+    if (bt === 'SERVER_CERT') {
+      sp.serverCert = data.cert;
+      if (sp.mk) sp.mk.setServerCertificate(data.cert).catch(() => {});
+    } else if (bt === 'LIC_AUTH') {
+      sp.licAuth = { url: data.url, headers: data.headers };
+      processPendingSpGenReqs(appId);
+    } else if (bt === 'GEN_REQ') {
+      sp.pendingGenReqs.push({ initDataType: data.initDataType, initData: data.initData });
+      ensureBgSpEmePlayer(appId, 'audio/mp4; codecs="mp4a.40.2"');
+      processPendingSpGenReqs(appId);
+    } else if (bt === 'MSE_INIT') {
+      ensureBgSpEmePlayer(appId, data.mime);
+    } else if (bt === 'MSE_CHUNK') {
+      ensureBgSpEmePlayer(appId, data.mime);
+      sp.queue.push({ type: 'append', chunk: data.chunk, timestampOffset: data.timestampOffset });
+      drainBgSpQueue(appId);
+    } else if (bt === 'MSE_REMOVE') {
+      sp.queue.push({ type: 'remove', start: data.start, end: data.end });
+      drainBgSpQueue(appId);
+    } else if (bt === 'SYNC_TIME') {
+      sp.targetTime = data.currentTime;
+      if (sp.videoEl) {
+        if (!data.paused) {
+          if (Math.abs(sp.videoEl.currentTime - data.currentTime) > 1.5 && sp.videoEl.readyState >= 1) {
+            sp.videoEl.currentTime = data.currentTime;
+          }
+          if (sp.videoEl.paused && sp.videoEl.readyState >= 2) {
+            sp.videoEl.play().catch(() => {});
+          }
+          const bgEntry = bgAudioPool.get(appId);
+          liveMediaPlaybackState.set(appId, {
+            isPlaying: true,
+            currentTime: Math.floor(data.currentTime || 0),
+            resumeUrl: bgEntry?.url || 'https://open.spotify.com/',
+            title: bgEntry?.title || 'Spotify',
+            updatedAt: Date.now()
+          });
+        } else if (!sp.videoEl.paused) {
+          sp.videoEl.pause();
+        }
+      }
+    }
   } else if (data.type === 'PM_BG_AUDIO_CHUNK' && data.chunk) {
     // 100% local in-memory MediaSource Opus stream player (zero network/UDP sockets, bypasses iframe autoplay restrictions!)
     let player = bgMsePlayers.get(appId);
@@ -1152,6 +1377,15 @@ window.addEventListener('message', (e) => {
     } else if (player.queue.length < 40) {
       player.queue.push(data.chunk);
     }
+    const bgEntry = bgAudioPool.get(appId);
+    const prevSt = liveMediaPlaybackState.get(appId);
+    liveMediaPlaybackState.set(appId, {
+      isPlaying: true,
+      currentTime: prevSt?.currentTime || 0,
+      resumeUrl: bgEntry?.url || prevSt?.resumeUrl || '',
+      title: bgEntry?.title || prevSt?.title || '',
+      updatedAt: Date.now()
+    });
   }
 });
 
@@ -1398,13 +1632,13 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         const candidates = Array.isArray(msg.playingApps) ? msg.playingApps : [];
         if (candidates.length > 0) {
           candidates.forEach((c) => {
-            if (c && c.appId && c.url && isAppAllowedForPersistence(c.appId)) {
+            if (c && c.appId && c.url) {
               startBackgroundAudioKeepAlive(c.appId, c.url, c.title || '');
             }
           });
         } else {
           liveMediaPlaybackState.forEach((st, id) => {
-            if (st.isPlaying && Date.now() - st.updatedAt < 12000 && isAppAllowedForPersistence(id)) {
+            if (st.isPlaying && Date.now() - st.updatedAt < 60000) {
               const targetUrl = st.resumeUrl || currentSettings.persistentSavedAppUrls?.[id];
               if (targetUrl) {
                 startBackgroundAudioKeepAlive(id, targetUrl, st.title || '');
@@ -1429,12 +1663,29 @@ browser.runtime.onMessage.addListener((msg, sender) => {
           updatedAt: Date.now()
         });
       });
-      stopBackgroundAudioFrames();
+      // Do NOT kill bgAudioPool here! Keep background audio playing with 0ms interruption while the user checks Mail or another app (e.g. Instagram).
+      // Only stop a specific background audio app via STOP_SINGLE_BG_AUDIO_APP when the user opens or takes over that specific media app in the sidebar.
       return Promise.resolve({
         ok: true,
         activeBgApps,
         settings: currentSettings
       });
+    }
+
+    case 'STOP_SINGLE_BG_AUDIO_APP': {
+      if (msg.appId) {
+        stopSingleBackgroundAudioFrame(msg.appId);
+        if (msg.clearPlaybackState) {
+          liveMediaPlaybackState.delete(msg.appId);
+        }
+      }
+      return Promise.resolve({ ok: true });
+    }
+
+    case 'STOP_ALL_BG_AUDIO_APPS': {
+      stopBackgroundAudioFrames();
+      liveMediaPlaybackState.clear();
+      return Promise.resolve({ ok: true });
     }
 
     case 'GET_BG_AUDIO_STATUS': {

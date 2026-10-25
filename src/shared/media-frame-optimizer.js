@@ -43,6 +43,174 @@
     } catch (_) {}
   }
 
+  // Zero-Socket Widevine EME + MSE Bridge for Spotify (mirrors off-DOM EME <video> & SourceBuffer to parent moz-extension:// background/popup document when autoplay is blocked)
+  if (host.includes('spotify.com') && !isTopFrame && window.wrappedJSObject) {
+    try {
+      const bridgeInitiallyEnabled = Boolean(isBgAudioFrame || initialAutoplayPolicy !== 'allowed');
+      window.wrappedJSObject.eval(`
+        (function() {
+          if (window.__pmSpHookInstalled) return;
+          window.__pmSpHookInstalled = true;
+          window.__spMediaEls = [];
+          window.__pmSpBridgeEnabled = ${bridgeInitiallyEnabled ? 'true' : 'false'};
+          window.__pmSpIsBgFrame = ${isBgAudioFrame ? 'true' : 'false'};
+          let spMsCounter = 0;
+
+          const copyBuf = (b) => {
+            if (!b) return null;
+            const u8 = b instanceof ArrayBuffer ? new Uint8Array(b) : new Uint8Array(b.buffer || b, b.byteOffset || 0, b.byteLength || b.length);
+            const out = new Uint8Array(u8.byteLength);
+            out.set(u8);
+            return out.buffer;
+          };
+
+          const postBridge = (bridgeType, extra) => {
+            try {
+              window.top.postMessage(Object.assign({
+                source: 'pocketmail-media-frame',
+                type: 'PM_SP_EME_BRIDGE',
+                flatFrameName: window.name || '',
+                bridgeType
+              }, extra || {}), '*');
+            } catch (_) {}
+          };
+
+          const origFetch = window.fetch.bind(window);
+          window.fetch = function(input, init) {
+            const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+            if (url.includes('widevine-license') && !url.includes('certificate')) {
+              let hdrs = {};
+              try {
+                const h = (init && init.headers) || (input && input.headers);
+                if (h) {
+                  if (typeof h.entries === 'function') {
+                    for (const [k, v] of h.entries()) hdrs[k] = v;
+                  } else if (typeof h === 'object') {
+                    hdrs = Object.assign({}, h);
+                  }
+                }
+              } catch (_) {}
+              postBridge('LIC_AUTH', { url, headers: hdrs });
+            }
+            return origFetch(input, init);
+          };
+
+          if (window.MediaKeys && MediaKeys.prototype.setServerCertificate) {
+            const origCert = MediaKeys.prototype.setServerCertificate;
+            MediaKeys.prototype.setServerCertificate = function(cert) {
+              try {
+                const c = copyBuf(cert);
+                postBridge('SERVER_CERT', { cert: c });
+              } catch (_) {}
+              return origCert.apply(this, arguments);
+            };
+          }
+
+          if (window.MediaKeySession) {
+            const origGen = MediaKeySession.prototype.generateRequest;
+            MediaKeySession.prototype.generateRequest = function(initDataType, initData) {
+              try {
+                const d = copyBuf(initData);
+                postBridge('GEN_REQ', { initDataType, initData: d });
+              } catch (_) {}
+              return origGen.apply(this, arguments);
+            };
+          }
+
+          if (window.MediaSource) {
+            const origAddSb = MediaSource.prototype.addSourceBuffer;
+            MediaSource.prototype.addSourceBuffer = function(mime) {
+              const sb = origAddSb.apply(this, arguments);
+              if (typeof mime === 'string' && mime.startsWith('audio/')) {
+                const msId = ++spMsCounter;
+                postBridge('MSE_INIT', { mime, msId });
+                const origApp = sb.appendBuffer.bind(sb);
+                sb.appendBuffer = function(buf) {
+                  try {
+                    const c = copyBuf(buf);
+                    postBridge('MSE_CHUNK', {
+                      mime,
+                      msId,
+                      chunk: c,
+                      timestampOffset: sb.timestampOffset || 0
+                    });
+                  } catch (_) {}
+                  return origApp(buf);
+                };
+                if (typeof sb.remove === 'function') {
+                  const origRem = sb.remove.bind(sb);
+                  sb.remove = function(start, end) {
+                    try {
+                      postBridge('MSE_REMOVE', { msId, start, end });
+                    } catch (_) {}
+                    return origRem(start, end);
+                  };
+                }
+              }
+              return sb;
+            };
+          }
+
+          const origPlay = HTMLMediaElement.prototype.play;
+          HTMLMediaElement.prototype.play = function() {
+            if (!window.__spMediaEls.includes(this)) window.__spMediaEls.push(this);
+            const curPol = typeof navigator.getAutoplayPolicy === 'function' ? navigator.getAutoplayPolicy('mediaelement') : 'allowed';
+            if (this.mediaKeys && (window.__pmSpIsBgFrame || (window.__pmSpBridgeEnabled && curPol !== 'allowed'))) {
+              try {
+                this.muted = false;
+                this.volume = 0;
+                Object.defineProperty(this, 'volume', { get: () => 1, set: () => {}, configurable: true });
+                Object.defineProperty(this, 'muted', { get: () => false, set: () => {}, configurable: true });
+              } catch (_) {}
+            }
+            const p = origPlay.apply(this, arguments);
+            if (this.mediaKeys && (window.__pmSpIsBgFrame || (window.__pmSpBridgeEnabled && curPol !== 'allowed'))) {
+              postBridge('SYNC_TIME', { currentTime: this.currentTime, paused: false });
+            }
+            return p;
+          };
+
+          window.__pmDisableSpBridge = function() {
+            window.__pmSpBridgeEnabled = false;
+            window.__spMediaEls.forEach((el) => {
+              try {
+                delete el.volume;
+                delete el.muted;
+                el.muted = false;
+                el.volume = 1.0;
+              } catch (_) {}
+            });
+          };
+
+          setInterval(() => {
+            const curPol = typeof navigator.getAutoplayPolicy === 'function' ? navigator.getAutoplayPolicy('mediaelement') : 'allowed';
+            if (!window.__pmSpIsBgFrame && (!window.__pmSpBridgeEnabled || curPol === 'allowed')) return;
+            const el = window.__spMediaEls.find((e) => e.mediaKeys);
+            if (el) {
+              postBridge('SYNC_TIME', { currentTime: el.currentTime, paused: el.paused });
+            }
+          }, 450);
+
+          window.__getSpDiag = function() {
+            try {
+              const el = window.__spMediaEls.find((e) => e.mediaKeys) || window.__spMediaEls[0] || null;
+              if (!el) return null;
+              return JSON.stringify({
+                paused: Boolean(el.paused),
+                ended: Boolean(el.ended),
+                ct: Number(el.currentTime) || 0,
+                rs: Number(el.readyState) || 0,
+                hasKeys: Boolean(el.mediaKeys)
+              });
+            } catch (_) {
+              return null;
+            }
+          };
+        })();
+      `);
+    } catch (_) {}
+  }
+
   let currentZoom = 1.0;
 
   // Never touch CAPTCHA or anti-bot verification frames (ensures hCaptcha/Cloudflare/reCAPTCHA load with zero delay!)
@@ -2678,6 +2846,20 @@
   let sidebarAutoResumeRequested = false;
   let lastSpotifyAutoResumeClickAt = 0;
 
+  function getActiveMediaElement() {
+    const mainYt = document.querySelector(
+      '#movie_player video.html5-main-video, ytd-player video.html5-main-video, video.html5-main-video'
+    );
+    if (mainYt) return mainYt;
+    const all = Array.from(document.querySelectorAll('video, audio'));
+    const playing = all.find((el) => !el.paused && !el.ended && el.readyState >= 1);
+    if (playing) return playing;
+    const nonPreview = all.find(
+      (el) => !el.closest('ytd-video-preview, #video-preview, ytd-miniplayer, [hidden]')
+    );
+    return nonPreview || all[0] || null;
+  }
+
   function stopLocalMseAudioBridge() {
     if (!bgAudioMseBridgeStarted) return;
     bgAudioMseBridgeStarted = false;
@@ -2750,6 +2932,8 @@
           };
           rec.start(140);
           bgAudioAutoResumed = true;
+        } else {
+          bgAudioMseBridgeStarted = false;
         }
       } catch (_) {
         bgAudioMseBridgeStarted = false;
@@ -2762,8 +2946,9 @@
       let isPlaying = false;
       let currentTime = 0;
       let resumeUrl = window.location.href;
+      let spMediaPlaying = false;
 
-      const mediaEl = document.querySelector('video.html5-main-video, video, audio');
+      const mediaEl = getActiveMediaElement();
       if (mediaEl) {
         currentTime = Math.floor(mediaEl.currentTime || 0);
         if (!mediaEl.paused && !mediaEl.ended) {
@@ -2776,8 +2961,25 @@
       }
 
       if (host.includes('spotify.com')) {
+        try {
+          if (window.wrappedJSObject && typeof window.wrappedJSObject.__getSpDiag === 'function') {
+            const rawDiag = window.wrappedJSObject.__getSpDiag();
+            if (rawDiag) {
+              const diag = JSON.parse(rawDiag);
+              if (diag && !diag.paused && !diag.ended && diag.rs >= 1) {
+                spMediaPlaying = true;
+                isPlaying = true;
+                if (diag.ct > 0) currentTime = Math.floor(diag.ct);
+              }
+            }
+          }
+        } catch (_) {}
+
         const spPlayBtn = document.querySelector('[data-testid="control-button-playpause"]');
-        if (spPlayBtn && !spPlayBtn.disabled) {
+        const posEl = document.querySelector('[data-testid="playback-position"]');
+        const posText = posEl ? (posEl.textContent || '').trim() : '';
+        const isSpPlayerHydrated = Boolean(spPlayBtn && !spPlayBtn.disabled && posText && posText !== '-:--');
+        if (isSpPlayerHydrated) {
           const aria = (spPlayBtn.getAttribute('aria-label') || '').toLowerCase();
           if (aria.includes('pause')) {
             isPlaying = true;
@@ -2788,10 +2990,15 @@
         if (cinematicsEl && cinematicsEl.firstChild) {
           cinematicsEl.textContent = '';
         }
-        if (window.location.pathname.startsWith('/watch') && currentTime > 2) {
+        if (window.location.pathname.startsWith('/watch')) {
           try {
             const u = new URL(window.location.href);
-            u.searchParams.set('t', `${currentTime}s`);
+            if ((u.searchParams.get('list') || '').startsWith('RD')) {
+              u.searchParams.delete('index');
+            }
+            if (currentTime >= 1) {
+              u.searchParams.set('t', `${currentTime}s`);
+            }
             resumeUrl = u.href;
           } catch (_) {}
         }
@@ -2806,19 +3013,21 @@
         resumeUrl,
         title: document.title || '',
         initialAutoplayPolicy,
-        autoplayBlocked: Boolean(isBgAudioFrame && host.includes('spotify.com') && curAutoplayPolicy !== 'allowed')
+        autoplayBlocked: false
       });
 
       // 1. If running inside Background Audio Keep-Alive Engine (when sidebar is closed), auto-resume playback once ready!
       if (!bgAudioAutoResumed && isBgAudioFrame) {
         if (host.includes('spotify.com')) {
-          // Wait specifically until Spotify's bottom Now Playing bar button is initialized and not disabled (~3.5s)
+          // Wait until Spotify's bottom Now Playing bar is hydrated (not disabled and position !== '-:--')
           const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-          if (spToggle && !spToggle.disabled) {
-            const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-            if (aria.includes('pause')) {
+          const posEl = document.querySelector('[data-testid="playback-position"]');
+          const posText = posEl ? (posEl.textContent || '').trim() : '';
+          if (spToggle && !spToggle.disabled && posText && posText !== '-:--') {
+            if (spMediaPlaying) {
               bgAudioAutoResumed = true;
-            } else {
+            } else if (Date.now() - lastSpotifyAutoResumeClickAt > 1800) {
+              lastSpotifyAutoResumeClickAt = Date.now();
               spToggle.click();
             }
           }
@@ -2845,21 +3054,24 @@
         }
       }
 
-      // 2. If the user reopened the Sidebar while Background Audio was playing, seamlessly hand playback back to the Sidebar!
-      if (sidebarAutoResumeRequested && !isBgAudioFrame) {
-        if (host.includes('spotify.com')) {
+      // 2. If the user reopened the Sidebar while Background Audio was playing (or opened a YouTube /watch video before clicking inside iframe), seamlessly play audio!
+      if (!isBgAudioFrame) {
+        if (sidebarAutoResumeRequested && host.includes('spotify.com')) {
           const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-          if (spToggle && !spToggle.disabled) {
-            const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-            if (aria.includes('pause')) {
+          const posEl = document.querySelector('[data-testid="playback-position"]');
+          const posText = posEl ? (posEl.textContent || '').trim() : '';
+          if (spToggle && !spToggle.disabled && posText && posText !== '-:--') {
+            if (spMediaPlaying) {
               sidebarAutoResumeRequested = false;
-              notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
-            } else if (Date.now() - lastSpotifyAutoResumeClickAt > 2000) {
+              if (curAutoplayPolicy === 'allowed') {
+                notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
+              }
+            } else if (Date.now() - lastSpotifyAutoResumeClickAt > 1800) {
               lastSpotifyAutoResumeClickAt = Date.now();
               spToggle.click();
             }
           }
-        } else if (mediaEl && mediaEl.readyState >= 2) {
+        } else if (sidebarAutoResumeRequested && mediaEl && mediaEl.readyState >= 2) {
           if (curAutoplayPolicy === 'allowed') {
             mediaEl.muted = false;
             mediaEl.volume = 1.0;
@@ -2878,29 +3090,55 @@
             sidebarAutoResumeRequested = false;
             startLocalMseAudioBridge(mediaEl);
           }
+        } else if (
+          host.includes('youtube.com') &&
+          window.location.pathname.startsWith('/watch') &&
+          curAutoplayPolicy !== 'allowed' &&
+          !bgAudioMseBridgeStarted &&
+          mediaEl &&
+          mediaEl.readyState >= 2 &&
+          mediaEl.paused &&
+          !mediaEl.ended
+        ) {
+          // Auto-play restored YouTube /watch video immediately via MSE bridge even before user clicks inside the iframe!
+          startLocalMseAudioBridge(mediaEl);
         }
       }
     } catch (_) {}
   }
 
-  // If user clicks anywhere inside the reopened sidebar while MSE bridge or auto-resume is active, switch to native unmuted audio with trusted gesture!
+  // If user clicks anywhere inside the reopened sidebar while MSE/EME bridge or auto-resume is active, switch to native unmuted audio with trusted gesture!
   if (!isBgAudioFrame) {
     window.addEventListener(
       'pointerdown',
       () => {
-        if (!sidebarAutoResumeRequested && !bgAudioMseBridgeStarted) return;
+        const spBridgeActive = Boolean(
+          host.includes('spotify.com') &&
+            window.wrappedJSObject &&
+            window.wrappedJSObject.__pmSpBridgeEnabled
+        );
+        if (spBridgeActive) {
+          try {
+            window.wrappedJSObject.__pmDisableSpBridge();
+          } catch (_) {}
+        }
+        if (!sidebarAutoResumeRequested && !bgAudioMseBridgeStarted && !spBridgeActive) return;
+        const wasMseBridge = bgAudioMseBridgeStarted;
+        const wasAutoResume = sidebarAutoResumeRequested;
         sidebarAutoResumeRequested = false;
         stopLocalMseAudioBridge();
         notifyParent('PM_SIDEBAR_TOOK_OVER_AUDIO', {});
         try {
           if (host.includes('spotify.com')) {
-            const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-            if (spToggle && !spToggle.disabled) {
-              const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-              if (!aria.includes('pause')) spToggle.click();
+            if (wasAutoResume) {
+              const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+              if (spToggle && !spToggle.disabled) {
+                const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+                if (!aria.includes('pause')) spToggle.click();
+              }
             }
-          } else {
-            const mediaEl = document.querySelector('video.html5-main-video, video, audio');
+          } else if (wasMseBridge || wasAutoResume) {
+            const mediaEl = getActiveMediaElement();
             if (mediaEl) {
               mediaEl.muted = false;
               mediaEl.volume = 1.0;
@@ -2918,7 +3156,7 @@
   // Low-frequency fallback DOM state check — skips heavy DOM inspection whenever media (<video>/<audio>) is playing
   setInterval(() => {
     try {
-      const mediaEl = document.querySelector('video, audio');
+      const mediaEl = getActiveMediaElement();
       if (mediaEl && !mediaEl.paused && !mediaEl.ended) {
         return;
       }
