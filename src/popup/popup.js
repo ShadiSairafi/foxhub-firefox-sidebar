@@ -1664,9 +1664,18 @@
     } catch (_) {}
   }
 
+  const sidebarSpCachedMeta = new Map(); // appId -> { serverCert, licAuth }
+
   function cleanupSidebarSpEmePlayer(appId) {
     const sp = sidebarSpEmePlayers.get(appId);
     if (!sp) return;
+    if (sp.serverCert || sp.licAuth) {
+      const prev = sidebarSpCachedMeta.get(appId) || {};
+      sidebarSpCachedMeta.set(appId, {
+        serverCert: sp.serverCert || prev.serverCert || null,
+        licAuth: sp.licAuth || prev.licAuth || null
+      });
+    }
     sidebarSpEmePlayers.delete(appId);
     try {
       if (sp.videoEl) {
@@ -1684,6 +1693,7 @@
   function getOrCreateSidebarSpState(appId) {
     let sp = sidebarSpEmePlayers.get(appId);
     if (!sp) {
+      const cached = sidebarSpCachedMeta.get(appId) || {};
       sp = {
         videoEl: null,
         ms: null,
@@ -1691,15 +1701,53 @@
         queue: [],
         mk: null,
         mkReadyPromise: null,
-        serverCert: null,
-        licAuth: null,
+        serverCert: cached.serverCert || null,
+        licAuth: cached.licAuth || null,
         pendingGenReqs: [],
         objUrl: null,
-        targetTime: 0
+        targetTime: 0,
+        remotePaused: false,
+        msId: 0
       };
       sidebarSpEmePlayers.set(appId, sp);
     }
     return sp;
+  }
+
+  function syncSidebarSpVideoTimeAndPlay(sp) {
+    if (!sp || !sp.videoEl) return;
+    try {
+      if (sp.sb && sp.sb.buffered && sp.sb.buffered.length > 0) {
+        const ct = sp.videoEl.currentTime || 0;
+        let inBuffered = false;
+        for (let i = 0; i < sp.sb.buffered.length; i++) {
+          if (ct >= sp.sb.buffered.start(i) - 0.25 && ct <= sp.sb.buffered.end(i) + 0.25) {
+            inBuffered = true;
+            break;
+          }
+        }
+        if (!inBuffered) {
+          const bStart = sp.sb.buffered.start(0);
+          const bEnd = sp.sb.buffered.end(sp.sb.buffered.length - 1);
+          if (sp.targetTime >= bStart && sp.targetTime <= bEnd) {
+            sp.videoEl.currentTime = sp.targetTime;
+          } else {
+            sp.videoEl.currentTime = bStart + 0.05;
+          }
+        } else if (sp.targetTime > 0 && Math.abs(ct - sp.targetTime) > 1.8) {
+          sp.videoEl.currentTime = sp.targetTime;
+        }
+      } else if (
+        sp.targetTime > 0 &&
+        Math.abs((sp.videoEl.currentTime || 0) - sp.targetTime) > 1.8 &&
+        sp.videoEl.readyState >= 1
+      ) {
+        sp.videoEl.currentTime = sp.targetTime;
+      }
+      if (!sp.remotePaused && sp.videoEl.paused) {
+        sp.videoEl.play().catch(() => {});
+      }
+    } catch (_) {}
   }
 
   function drainSidebarSpQueue(appId) {
@@ -1707,7 +1755,10 @@
     if (!sp || !sp.sb || sp.sb.updating || sp.queue.length === 0) return;
     const item = sp.queue.shift();
     try {
-      if (item.type === 'remove') {
+      if (item.type === 'abort') {
+        sp.sb.abort();
+        drainSidebarSpQueue(appId);
+      } else if (item.type === 'remove') {
         sp.sb.remove(item.start, item.end);
       } else if (item.chunk) {
         if (
@@ -1738,15 +1789,8 @@
             const licBuf = await resp.arrayBuffer();
             await sess.update(licBuf);
             const curSp = sidebarSpEmePlayers.get(appId);
-            if (curSp && curSp.videoEl) {
-              if (
-                curSp.targetTime &&
-                Math.abs(curSp.videoEl.currentTime - curSp.targetTime) > 1.5 &&
-                curSp.videoEl.readyState >= 1
-              ) {
-                curSp.videoEl.currentTime = curSp.targetTime;
-              }
-              curSp.videoEl.play().catch(() => {});
+            if (curSp) {
+              syncSidebarSpVideoTimeAndPlay(curSp);
             }
           } catch (_) {}
         });
@@ -1755,10 +1799,50 @@
     }
   }
 
-  function ensureSidebarSpEmePlayer(appId, mime) {
+  function attachFreshSidebarMediaSource(appId, sp, effectiveMime) {
+    try {
+      if (sp.objUrl) URL.revokeObjectURL(sp.objUrl);
+    } catch (_) {}
+    sp.sb = null;
+    const ms = new MediaSource();
+    sp.ms = ms;
+    sp.objUrl = URL.createObjectURL(ms);
+    sp.videoEl.src = sp.objUrl;
+    return new Promise((resolve) => {
+      ms.addEventListener(
+        'sourceopen',
+        () => {
+          try {
+            const sb = ms.addSourceBuffer(effectiveMime);
+            sp.sb = sb;
+            sb.addEventListener('updateend', () => {
+              drainSidebarSpQueue(appId);
+              syncSidebarSpVideoTimeAndPlay(sp);
+            });
+          } catch (_) {}
+          resolve();
+        },
+        { once: true }
+      );
+    });
+  }
+
+  function ensureSidebarSpEmePlayer(appId, mime, newMsId = 0) {
     const sp = getOrCreateSidebarSpState(appId);
-    if (sp.mkReadyPromise) return sp.mkReadyPromise;
     const effectiveMime = mime || 'audio/mp4; codecs="mp4a.40.2"';
+    if (newMsId && sp.msId && newMsId !== sp.msId && sp.videoEl && sp.mk) {
+      sp.msId = newMsId;
+      sp.queue = [];
+      sp.mkReadyPromise = attachFreshSidebarMediaSource(appId, sp, effectiveMime).then(() => {
+        drainSidebarSpQueue(appId);
+        processPendingSidebarSpGenReqs(appId);
+      });
+      return sp.mkReadyPromise;
+    }
+    if (newMsId && !sp.msId) {
+      sp.msId = newMsId;
+    }
+    if (sp.mkReadyPromise) return sp.mkReadyPromise;
     sp.mkReadyPromise = (async () => {
       try {
         const v = document.createElement('video');
@@ -1781,29 +1865,7 @@
         await v.setMediaKeys(mk);
         sp.mk = mk;
 
-        const ms = new MediaSource();
-        sp.ms = ms;
-        sp.objUrl = URL.createObjectURL(ms);
-        v.src = sp.objUrl;
-        await new Promise((resolve) => {
-          ms.addEventListener(
-            'sourceopen',
-            () => {
-              try {
-                const sb = ms.addSourceBuffer(effectiveMime);
-                sp.sb = sb;
-                sb.addEventListener('updateend', () => {
-                  drainSidebarSpQueue(appId);
-                  if (sp.videoEl && sp.videoEl.paused && sp.videoEl.readyState >= 2) {
-                    sp.videoEl.play().catch(() => {});
-                  }
-                });
-              } catch (_) {}
-              resolve();
-            },
-            { once: true }
-          );
-        });
+        await attachFreshSidebarMediaSource(appId, sp, effectiveMime);
         drainSidebarSpQueue(appId);
         processPendingSidebarSpGenReqs(appId);
       } catch (_) {}
@@ -1813,7 +1875,7 @@
 
   function isAppPersistent(appId) {
     if (!appId || appId === 'pocketmail') return false;
-    const mode = appSettings.persistenceMode || 'eco';
+    const mode = appSettings.persistenceMode || 'selected';
     if (mode === 'all') return true;
     if (mode === 'selected') {
       const list = Array.isArray(appSettings.persistentAppIds)
@@ -1826,7 +1888,7 @@
 
   function syncPersistentSessionToBackground(appId, url, playback = null) {
     if (IS_POPOUT_VIEW || !sidebarInitCompleted) return;
-    if ((appSettings.persistenceMode || 'eco') === 'eco') return;
+    if ((appSettings.persistenceMode || 'selected') === 'eco') return;
     const payload = {
       type: 'UPDATE_PERSISTENT_SESSION',
       activeAppId: activeRailAppId,
@@ -1843,7 +1905,7 @@
   }
 
   function enforceMediaPoolMemoryCap(protectedAppId) {
-    const mode = appSettings.persistenceMode || 'eco';
+    const mode = appSettings.persistenceMode || 'selected';
     const selectedCount = Array.isArray(appSettings.persistentAppIds) ? appSettings.persistentAppIds.length : 3;
     const effectiveCap =
       mode === 'all'
@@ -1929,7 +1991,33 @@
     return entry;
   }
 
+  function pauseOtherSidebarMediaFrames(activeAudioAppId) {
+    mediaFramePool.forEach((entry, id) => {
+      if (id === activeAudioAppId) return;
+      cleanupSidebarMsePlayer(id);
+      cleanupSidebarSpEmePlayer(id);
+      pendingSidebarAudioTakeoverSet.delete(id);
+      const st = framePlaybackStates.get(id);
+      if (st && st.isPlaying) {
+        st.isPlaying = false;
+      }
+      browser.runtime
+        .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: id, clearPlaybackState: true })
+        .catch(() => {});
+      try {
+        entry.frame.contentWindow?.postMessage(
+          { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+          '*'
+        );
+      } catch (_) {}
+    });
+  }
+
   function switchActiveMediaFrame(appId) {
+    const isMediaApp = ['spotify', 'youtube', 'tiktok', 'twitch'].includes(appId);
+    if (isMediaApp) {
+      pauseOtherSidebarMediaFrames(appId);
+    }
     mediaFramePool.forEach((entry, id) => {
       entry.frame.classList.toggle('is-active', id === appId);
     });
@@ -2058,6 +2146,9 @@
 
     // Ensure main origin + static CDN origins + cookie cache are pre-warmed
     ensureOriginPreconnected(customUrl || app.defaultUrl, app.id);
+    if (app.id === 'spotify') {
+      browser.runtime.sendMessage({ type: 'PREINIT_BG_SP_PLAYER', appId: 'spotify' }).catch(() => {});
+    }
 
     const entry = getOrCreateMediaFrame(app);
     if (!entry) return;
@@ -2273,7 +2364,7 @@
     }
 
     // Persistent App Memory & Background Audio Controls
-    const pMode = appSettings.persistenceMode || 'eco';
+    const pMode = appSettings.persistenceMode || 'selected';
     document.querySelectorAll('[data-persistence-mode]').forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-persistence-mode') === pMode);
     });
@@ -3311,6 +3402,15 @@
           cleanupSidebarSpEmePlayer(appId);
           browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
         }
+      } else if (data.type === 'PM_SP_SIDEBAR_PLAYPAUSE_CLICK') {
+        const appId =
+          sourceEntry?.appId ||
+          (typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')
+            ? data.flatFrameName.replace('pm-media-frame-', '')
+            : 'spotify');
+        browser.runtime
+          .sendMessage({ type: 'PM_SP_SIDEBAR_PLAYPAUSE_CLICK', appId, aria: data.aria || '' })
+          .catch(() => {});
       } else if (data.type === 'PM_SP_EME_BRIDGE') {
         const appId =
           sourceEntry?.appId ||
@@ -3318,49 +3418,36 @@
             ? data.flatFrameName.replace('pm-media-frame-', '')
             : '');
         if (appId) {
-          const sp = getOrCreateSidebarSpState(appId);
-          const bt = data.bridgeType;
-          if (bt === 'SERVER_CERT') {
-            sp.serverCert = data.cert;
-            if (sp.mk) sp.mk.setServerCertificate(data.cert).catch(() => {});
-          } else if (bt === 'LIC_AUTH') {
-            sp.licAuth = { url: data.url, headers: data.headers };
-            if (pendingSidebarAudioTakeoverSet.has(appId)) {
-              pendingSidebarAudioTakeoverSet.delete(appId);
-              browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
+          // Route all Spotify EME + MSE bridge streams directly to persistent background.html player so closing the sidebar has 0.0ms gap!
+          try {
+            const bgWin =
+              browser.extension && typeof browser.extension.getBackgroundPage === 'function'
+                ? browser.extension.getBackgroundPage()
+                : null;
+            if (bgWin && typeof bgWin.__pmHandleSpEmeBridge === 'function') {
+              bgWin.__pmHandleSpEmeBridge(appId, data, 'sidebar');
+            } else if (sidebarLifecyclePort) {
+              sidebarLifecyclePort.postMessage({ type: 'FORWARD_SP_EME_BRIDGE', appId, data });
             }
-            processPendingSidebarSpGenReqs(appId);
-          } else if (bt === 'GEN_REQ') {
-            sp.pendingGenReqs.push({ initDataType: data.initDataType, initData: data.initData });
-            ensureSidebarSpEmePlayer(appId, 'audio/mp4; codecs="mp4a.40.2"');
-            processPendingSidebarSpGenReqs(appId);
-          } else if (bt === 'MSE_INIT') {
-            ensureSidebarSpEmePlayer(appId, data.mime);
-          } else if (bt === 'MSE_CHUNK') {
-            ensureSidebarSpEmePlayer(appId, data.mime);
-            sp.queue.push({ type: 'append', chunk: data.chunk, timestampOffset: data.timestampOffset });
-            drainSidebarSpQueue(appId);
-          } else if (bt === 'MSE_REMOVE') {
-            sp.queue.push({ type: 'remove', start: data.start, end: data.end });
-            drainSidebarSpQueue(appId);
-          } else if (bt === 'SYNC_TIME') {
-            sp.targetTime = data.currentTime;
-            if (!data.paused && pendingSidebarAudioTakeoverSet.has(appId)) {
-              pendingSidebarAudioTakeoverSet.delete(appId);
-              browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
+          } catch (_) {
+            if (sidebarLifecyclePort) {
+              try {
+                sidebarLifecyclePort.postMessage({ type: 'FORWARD_SP_EME_BRIDGE', appId, data });
+              } catch (__) {}
             }
-            if (sp.videoEl) {
-              if (!data.paused) {
-                if (Math.abs(sp.videoEl.currentTime - data.currentTime) > 1.5 && sp.videoEl.readyState >= 1) {
-                  sp.videoEl.currentTime = data.currentTime;
-                }
-                if (sp.videoEl.paused && sp.videoEl.readyState >= 2) {
-                  sp.videoEl.play().catch(() => {});
-                }
-              } else if (!sp.videoEl.paused) {
-                sp.videoEl.pause();
-              }
-            }
+          }
+
+          if (data.bridgeType === 'SYNC_TIME' && !data.paused) {
+            pendingSidebarAudioTakeoverSet.delete(appId);
+            const pb = {
+              isPlaying: true,
+              currentTime: Math.floor(Number(data.currentTime) || 0),
+              resumeUrl: sourceEntry?.currentUrl || 'https://open.spotify.com/',
+              title: 'Spotify',
+              updatedAt: Date.now()
+            };
+            framePlaybackStates.set(appId, pb);
+            syncPersistentSessionToBackground(appId, pb.resumeUrl, pb);
           }
         }
       } else if (data.type === 'PM_BG_AUDIO_CHUNK' && data.chunk) {
@@ -3529,15 +3616,18 @@
             ? data.flatFrameName.replace('pm-media-frame-', '')
             : '');
         if (appId) {
-          if (data.isPlaying && pendingSidebarAudioTakeoverSet.size > 0) {
-            Array.from(pendingSidebarAudioTakeoverSet).forEach((otherId) => {
-              if (otherId !== appId) {
-                pendingSidebarAudioTakeoverSet.delete(otherId);
-                browser.runtime
-                  .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: otherId, clearPlaybackState: true })
-                  .catch(() => {});
-              }
-            });
+          if (data.isPlaying) {
+            pauseOtherSidebarMediaFrames(appId);
+            if (pendingSidebarAudioTakeoverSet.size > 0) {
+              Array.from(pendingSidebarAudioTakeoverSet).forEach((otherId) => {
+                if (otherId !== appId) {
+                  pendingSidebarAudioTakeoverSet.delete(otherId);
+                  browser.runtime
+                    .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: otherId, clearPlaybackState: true })
+                    .catch(() => {});
+                }
+              });
+            }
           }
           const isTakeoverOrMse =
             sidebarMsePlayers.has(appId) ||

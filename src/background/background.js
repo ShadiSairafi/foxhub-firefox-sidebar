@@ -35,11 +35,12 @@ const DEFAULT_SETTINGS = {
   autoHideMediaTopBar: true,    // Default ON: Auto-hide top shortcuts bar and reveal smoothly on hover
   hasSeenTopBarHint: false,     // Shows first-time onboarding hint explaining top-edge hover bar
   topBarAutoHideMigratedV1: true,
-  persistenceMode: 'eco',       // 'eco' (reset & free RAM) | 'selected' (custom picked apps) | 'all' (all apps persistent)
+  persistenceMode: 'selected',  // 'eco' (reset & free RAM) | 'selected' (custom picked apps) | 'all' (all apps persistent)
   persistentAppIds: ['spotify', 'youtube', 'discord'], // Apps kept persistent in 'selected' mode
   persistentLastActiveAppId: 'pocketmail',
   persistentSavedAppUrls: {},   // { spotify: 'https://...', youtube: 'https://...', ... }
   keepAudioPlayingWhenClosed: true,
+  persistenceDefaultSelectedMigratedV1: true,
   customWallpaperData: '',
   customWallpaperUrl: '',
   gradientColor1: '#FAD6A5',
@@ -88,9 +89,22 @@ async function loadStorage() {
   const data = await browser.storage.local.get(['settings', 'localOverlay', 'cachedState']);
   if (data.settings) {
     currentSettings = { ...DEFAULT_SETTINGS, ...data.settings };
+    let needsSave = false;
     if (!data.settings.topBarAutoHideMigratedV1) {
       currentSettings.autoHideMediaTopBar = true;
       currentSettings.topBarAutoHideMigratedV1 = true;
+      needsSave = true;
+    }
+    if (!data.settings.persistenceDefaultSelectedMigratedV1) {
+      currentSettings.persistenceMode = 'selected';
+      currentSettings.keepAudioPlayingWhenClosed = true;
+      if (!Array.isArray(currentSettings.persistentAppIds) || currentSettings.persistentAppIds.length === 0) {
+        currentSettings.persistentAppIds = ['spotify', 'youtube', 'discord'];
+      }
+      currentSettings.persistenceDefaultSelectedMigratedV1 = true;
+      needsSave = true;
+    }
+    if (needsSave) {
       await browser.storage.local.set({ settings: currentSettings });
     }
   } else {
@@ -920,11 +934,43 @@ function restartPollingTimer() {
 const liveMediaPlaybackState = new Map(); // appId -> { isPlaying, currentTime, resumeUrl, title, updatedAt }
 const bgAudioPool = new Map(); // appId -> { frame, url, title, autoplayBlocked }
 const bgMsePlayers = new Map(); // appId -> { ms, audioEl, sb, queue, objUrl }
-const bgSpEmePlayers = new Map(); // appId -> { videoEl, ms, sb, queue, mk, mkReadyPromise, serverCert, licAuth, pendingGenReqs, objUrl, targetTime, msId }
+const bgSpEmePlayers = new Map(); // appId -> spInstance (active audible player)
+const bgStagingSpPlayers = new Map(); // appId -> spInstance (silent staging player during closed-sidebar handoff)
+const bgSpCachedMeta = new Map(); // appId -> { serverCert, licAuth }
+let bgSpInstanceCounter = 0;
+
+function toLocalArrayBuffer(buf) {
+  if (!buf) return null;
+  try {
+    const u8 =
+      buf instanceof ArrayBuffer
+        ? new Uint8Array(buf)
+        : new Uint8Array(buf.buffer || buf, buf.byteOffset || 0, buf.byteLength || buf.length || 0);
+    const out = new Uint8Array(u8.byteLength);
+    out.set(u8);
+    return out.buffer;
+  } catch (_) {
+    return null;
+  }
+}
+
+function cloneLocalLicAuth(rawUrl, rawHeaders) {
+  try {
+    const cleanHeaders = {};
+    if (rawHeaders && typeof rawHeaders === 'object') {
+      for (const k of Object.keys(rawHeaders)) {
+        cleanHeaders[String(k)] = String(rawHeaders[k]);
+      }
+    }
+    return { url: String(rawUrl || ''), headers: cleanHeaders };
+  } catch (_) {
+    return null;
+  }
+}
 
 function isAppAllowedForPersistence(appId) {
   if (!appId || appId === 'pocketmail') return false;
-  const mode = currentSettings.persistenceMode || 'eco';
+  const mode = currentSettings.persistenceMode || 'selected';
   if (mode === 'all') return true;
   if (mode === 'selected') {
     const list = Array.isArray(currentSettings.persistentAppIds)
@@ -950,10 +996,19 @@ function cleanupMsePlayer(appId) {
   } catch (_) {}
 }
 
-function cleanupSpEmePlayer(appId) {
-  const sp = bgSpEmePlayers.get(appId);
-  if (!sp) return;
-  bgSpEmePlayers.delete(appId);
+function disposeSpPlayerInstance(sp) {
+  if (!sp || sp.disposed) return;
+  sp.disposed = true;
+  if (sp.serverCert || sp.licAuth) {
+    const prev = bgSpCachedMeta.get(sp.appId) || {};
+    bgSpCachedMeta.set(sp.appId, {
+      ...prev,
+      serverCert: sp.serverCert || prev.serverCert || null,
+      licAuth: sp.licAuth || prev.licAuth || null
+    });
+  }
+  sp.queue = [];
+  sp.pendingGenReqs = [];
   try {
     if (sp.videoEl) {
       sp.videoEl.pause();
@@ -967,91 +1022,373 @@ function cleanupSpEmePlayer(appId) {
   } catch (_) {}
 }
 
-function getOrCreateBgSpState(appId) {
-  let sp = bgSpEmePlayers.get(appId);
-  if (!sp) {
-    sp = {
-      videoEl: null,
-      ms: null,
-      sb: null,
-      queue: [],
-      mk: null,
-      mkReadyPromise: null,
-      serverCert: null,
-      licAuth: null,
-      pendingGenReqs: [],
-      objUrl: null,
-      targetTime: 0,
-      msId: 0
-    };
-    bgSpEmePlayers.set(appId, sp);
+function cleanupSpEmePlayer(appId) {
+  const sp = bgSpEmePlayers.get(appId);
+  if (sp) {
+    bgSpEmePlayers.delete(appId);
+    disposeSpPlayerInstance(sp);
   }
-  return sp;
+  const st = bgStagingSpPlayers.get(appId);
+  if (st) {
+    bgStagingSpPlayers.delete(appId);
+    disposeSpPlayerInstance(st);
+  }
 }
 
-function drainBgSpQueue(appId) {
-  const sp = bgSpEmePlayers.get(appId);
-  if (!sp || !sp.sb || sp.sb.updating || sp.queue.length === 0) return;
-  const item = sp.queue.shift();
+function removeBgAudioIframeOnly(appId) {
+  const entry = bgAudioPool.get(appId);
+  if (entry) {
+    bgAudioPool.delete(appId);
+    try {
+      entry.frame.remove();
+      entry.frame.src = 'about:blank';
+    } catch (_) {}
+  }
+  const st = bgStagingSpPlayers.get(appId);
+  if (st) {
+    bgStagingSpPlayers.delete(appId);
+    disposeSpPlayerInstance(st);
+  }
+  if (bgAudioPool.size === 0) {
+    updateToolbarBadge();
+  }
+}
+
+function recordRecentSpGenReq(appId, initDataType, initData) {
+  if (!appId || !initData) return;
+  const prev = bgSpCachedMeta.get(appId) || {};
+  const now = Date.now();
+  const list = (prev.recentGenReqs || []).filter((r) => now - r.ts < 4000);
+  list.push({ initDataType: initDataType || 'cenc', initData, ts: now });
+  bgSpCachedMeta.set(appId, { ...prev, recentGenReqs: list.slice(-4) });
+}
+
+function createSpPlayerInstance(appId, mime, msId = 0, isStaging = false, sourceType = 'sidebar') {
+  const cached = bgSpCachedMeta.get(appId) || {};
+  const now = Date.now();
+  const seededGenReqs = (cached.recentGenReqs || [])
+    .filter((r) => now - r.ts < 2500)
+    .map((r) => ({ initDataType: r.initDataType, initData: r.initData }));
+  return {
+    id: ++bgSpInstanceCounter,
+    appId,
+    msId: msId || 0,
+    mime: mime || 'audio/mp4; codecs="mp4a.40.2"',
+    isStaging: Boolean(isStaging),
+    sourceType,
+    awaitingBgFrameHandoff: false,
+    hasLicense: false,
+    licensedAt: 0,
+    lastLicStatus: 0,
+    lastGenErr: null,
+    disposed: false,
+    videoEl: null,
+    ms: null,
+    sb: null,
+    queue: [],
+    mk: null,
+    mkReadyPromise: null,
+    serverCert: cached.serverCert || null,
+    licAuth: cached.licAuth || null,
+    pendingGenReqs: seededGenReqs,
+    processedInitDataKeys: new Set(),
+    objUrl: null,
+    targetTime: 0,
+    desiredVolume: 1.0,
+    desiredMuted: false,
+    remotePaused: false,
+    lastSeekSentAt: 0
+  };
+}
+
+function isTimeInSpBuffered(sp, t) {
+  if (!sp || !sp.sb || !sp.sb.buffered || sp.sb.buffered.length === 0) return false;
+  for (let i = 0; i < sp.sb.buffered.length; i++) {
+    if (t >= sp.sb.buffered.start(i) - 0.3 && t <= sp.sb.buffered.end(i) + 0.3) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getSpBufferedEnd(sp) {
+  if (!sp || !sp.sb || !sp.sb.buffered || sp.sb.buffered.length === 0) return 0;
+  return sp.sb.buffered.end(sp.sb.buffered.length - 1);
+}
+
+function syncSpInstanceTimeAndPlay(sp, forceSeek = false) {
+  if (!sp || sp.disposed || !sp.videoEl) return;
   try {
-    if (item.type === 'remove') {
-      sp.sb.remove(item.start, item.end);
-    } else if (item.chunk) {
-      if (
-        typeof item.timestampOffset === 'number' &&
-        Math.abs((sp.sb.timestampOffset || 0) - item.timestampOffset) > 0.01
-      ) {
-        sp.sb.timestampOffset = item.timestampOffset;
+    if (sp.sb && sp.sb.buffered && sp.sb.buffered.length > 0) {
+      const ct = sp.videoEl.currentTime || 0;
+      const inBuffered = isTimeInSpBuffered(sp, ct);
+      if (!inBuffered) {
+        const bStart = sp.sb.buffered.start(0);
+        const bEnd = sp.sb.buffered.end(sp.sb.buffered.length - 1);
+        if (sp.targetTime >= bStart && sp.targetTime <= bEnd) {
+          sp.videoEl.currentTime = sp.targetTime;
+        } else {
+          sp.videoEl.currentTime = bStart + 0.05;
+        }
+      } else if (sp.targetTime > 0 && (forceSeek || Math.abs(ct - sp.targetTime) > 1.8)) {
+        if (isTimeInSpBuffered(sp, sp.targetTime)) {
+          sp.videoEl.currentTime = sp.targetTime;
+        }
       }
-      sp.sb.appendBuffer(item.chunk);
+    } else if (
+      sp.targetTime > 0 &&
+      (forceSeek || Math.abs((sp.videoEl.currentTime || 0) - sp.targetTime) > 1.8) &&
+      sp.videoEl.readyState >= 1
+    ) {
+      sp.videoEl.currentTime = sp.targetTime;
+    }
+    if (!sp.isStaging && !sp.remotePaused && sp.videoEl.paused) {
+      sp.videoEl.play().catch(() => {});
     }
   } catch (_) {}
 }
 
-async function processPendingSpGenReqs(appId) {
-  const sp = bgSpEmePlayers.get(appId);
-  if (!sp || !sp.mk || !sp.licAuth || sp.pendingGenReqs.length === 0) return;
-  while (sp.pendingGenReqs.length > 0) {
-    const req = sp.pendingGenReqs.shift();
-    try {
-      const sess = sp.mk.createSession();
-      sess.addEventListener('message', async (ev) => {
-        try {
-          const resp = await fetch(sp.licAuth.url, {
-            method: 'POST',
-            headers: sp.licAuth.headers,
-            body: ev.message
-          });
-          const licBuf = await resp.arrayBuffer();
-          await sess.update(licBuf);
-          const curSp = bgSpEmePlayers.get(appId);
-          if (curSp && curSp.videoEl) {
-            if (
-              curSp.targetTime &&
-              Math.abs(curSp.videoEl.currentTime - curSp.targetTime) > 1.5 &&
-              curSp.videoEl.readyState >= 1
-            ) {
-              curSp.videoEl.currentTime = curSp.targetTime;
-            }
-            curSp.videoEl.play().catch(() => {});
-          }
-        } catch (_) {}
-      });
-      await sess.generateRequest(req.initDataType, req.initData);
-    } catch (_) {}
+function promoteStagingSpPlayer(appId, syncFromActive = true) {
+  const stagingSp = bgStagingSpPlayers.get(appId);
+  if (!stagingSp || stagingSp.disposed) return;
+  const activeSp = bgSpEmePlayers.get(appId);
+  const liveCt =
+    syncFromActive && activeSp && activeSp.videoEl && !activeSp.disposed
+      ? Number(activeSp.videoEl.currentTime) || 0
+      : 0;
+
+  if (liveCt > 0) {
+    stagingSp.targetTime = liveCt;
+    const bgEntry = bgAudioPool.get(appId);
+    if (bgEntry && bgEntry.frame && bgEntry.frame.contentWindow) {
+      try {
+        bgEntry.frame.contentWindow.postMessage(
+          { target: 'pocketmail-media-frame', cmd: 'SEEK_SP_MEDIA', currentTime: liveCt },
+          '*'
+        );
+      } catch (_) {}
+    }
+  }
+
+  stagingSp.isStaging = false;
+  stagingSp.awaitingBgFrameHandoff = false;
+  stagingSp.desiredVolume = activeSp ? activeSp.desiredVolume : 1.0;
+  stagingSp.desiredMuted = activeSp ? activeSp.desiredMuted : false;
+  if (stagingSp.videoEl) {
+    stagingSp.videoEl.muted = stagingSp.desiredMuted;
+    stagingSp.videoEl.volume = stagingSp.desiredVolume;
+  }
+
+  bgSpEmePlayers.set(appId, stagingSp);
+  bgStagingSpPlayers.delete(appId);
+  syncSpInstanceTimeAndPlay(stagingSp, syncFromActive);
+
+  if (activeSp && activeSp !== stagingSp) {
+    disposeSpPlayerInstance(activeSp);
   }
 }
 
-function ensureBgSpEmePlayer(appId, mime) {
-  const sp = getOrCreateBgSpState(appId);
+function checkAndPromoteStagingSpPlayer(appId) {
+  const stagingSp = bgStagingSpPlayers.get(appId);
+  if (!stagingSp || stagingSp.disposed) return;
+  // Never auto-promote an idle sidebar staging instance while background audio is still actively playing
+  if (stagingSp.sourceType === 'sidebar' && bgAudioPool.has(appId)) {
+    return;
+  }
+  const activeSp = bgSpEmePlayers.get(appId);
+
+  const activeDeadOrNearEnd =
+    !activeSp ||
+    activeSp.disposed ||
+    !activeSp.videoEl ||
+    activeSp.videoEl.paused ||
+    activeSp.videoEl.ended ||
+    (getSpBufferedEnd(activeSp) > 0 && getSpBufferedEnd(activeSp) - (activeSp.videoEl.currentTime || 0) < 0.45);
+
+  const stagingReady =
+    stagingSp.hasLicense && stagingSp.sb && stagingSp.sb.buffered && stagingSp.sb.buffered.length > 0;
+
+  if (!stagingReady) {
+    if (activeDeadOrNearEnd && stagingSp.sb && stagingSp.sb.buffered && stagingSp.sb.buffered.length > 0) {
+      promoteStagingSpPlayer(appId, true);
+    }
+    return;
+  }
+
+  const liveCt = activeSp && activeSp.videoEl ? Number(activeSp.videoEl.currentTime) || 0 : 0;
+  if (
+    activeDeadOrNearEnd ||
+    liveCt <= 0 ||
+    isTimeInSpBuffered(stagingSp, liveCt) ||
+    (stagingSp.licensedAt > 0 && Date.now() - stagingSp.licensedAt > 1400)
+  ) {
+    promoteStagingSpPlayer(appId, true);
+  } else if (Date.now() - stagingSp.lastSeekSentAt > 600) {
+    stagingSp.lastSeekSentAt = Date.now();
+    const bgEntry = bgAudioPool.get(appId);
+    if (bgEntry && bgEntry.frame && bgEntry.frame.contentWindow) {
+      try {
+        bgEntry.frame.contentWindow.postMessage(
+          { target: 'pocketmail-media-frame', cmd: 'SEEK_SP_MEDIA', currentTime: liveCt },
+          '*'
+        );
+      } catch (_) {}
+    }
+  }
+}
+
+function drainSpInstanceQueue(sp) {
+  if (!sp || sp.disposed || !sp.sb || sp.sb.updating || sp.queue.length === 0) return;
+  const item = sp.queue.shift();
+  try {
+    if (item.type === 'abort') {
+      try {
+        sp.sb.abort();
+      } catch (_) {}
+      drainSpInstanceQueue(sp);
+      return;
+    }
+    if (item.type === 'remove') {
+      sp.sb.remove(item.start, item.end);
+      return;
+    }
+    if (item.chunk) {
+      if (
+        typeof item.timestampOffset === 'number' &&
+        Math.abs((sp.sb.timestampOffset || 0) - item.timestampOffset) > 0.01
+      ) {
+        try {
+          sp.sb.timestampOffset = item.timestampOffset;
+        } catch (_) {
+          try {
+            sp.sb.abort();
+            sp.sb.timestampOffset = item.timestampOffset;
+          } catch (__) {}
+        }
+      }
+      sp.sb.appendBuffer(item.chunk);
+    }
+  } catch (err) {
+    if (
+      err &&
+      err.name === 'QuotaExceededError' &&
+      sp.videoEl &&
+      sp.sb &&
+      !sp.sb.updating &&
+      sp.sb.buffered.length > 0
+    ) {
+      try {
+        const bStart = sp.sb.buffered.start(0);
+        const cutEnd = Math.max(bStart + 5, (sp.videoEl.currentTime || 0) - 8);
+        if (cutEnd > bStart) {
+          sp.queue.unshift(item);
+          sp.sb.remove(bStart, cutEnd);
+          return;
+        }
+      } catch (_) {}
+    }
+    if (!sp.disposed && sp.sb && !sp.sb.updating && sp.queue.length > 0) {
+      setTimeout(() => drainSpInstanceQueue(sp), 15);
+    }
+  }
+}
+
+async function processSpInstanceGenReqs(sp) {
+  if (!sp || sp.disposed || !sp.mk || !sp.licAuth || sp.pendingGenReqs.length === 0) return;
+  while (sp.pendingGenReqs.length > 0 && !sp.disposed) {
+    const req = sp.pendingGenReqs.shift();
+    try {
+      const keySig = `${req.initDataType}:${new Uint8Array(req.initData).join(',')}`;
+      if (sp.processedInitDataKeys.has(keySig)) {
+        continue;
+      }
+      sp.processedInitDataKeys.add(keySig);
+      const sess = sp.mk.createSession();
+      sess.addEventListener('message', async (ev) => {
+        if (sp.disposed) return;
+        try {
+          const auth = sp.licAuth || bgSpCachedMeta.get(sp.appId)?.licAuth;
+          if (!auth) return;
+          const resp = await fetch(auth.url, {
+            method: 'POST',
+            headers: auth.headers,
+            body: ev.message
+          });
+          sp.lastLicStatus = resp.status;
+          if (!resp.ok) {
+            sp.processedInitDataKeys.delete(keySig);
+            return;
+          }
+          const licBuf = await resp.arrayBuffer();
+          if (sp.disposed) return;
+          await sess.update(licBuf);
+          sp.hasLicense = true;
+          if (!sp.licensedAt) sp.licensedAt = Date.now();
+          if (sp.isStaging) {
+            checkAndPromoteStagingSpPlayer(sp.appId);
+          } else {
+            syncSpInstanceTimeAndPlay(sp);
+          }
+        } catch (err) {
+          sp.lastGenErr = String(err);
+          sp.processedInitDataKeys.delete(keySig);
+        }
+      });
+      await sess.generateRequest(req.initDataType, req.initData);
+    } catch (err) {
+      sp.lastGenErr = String(err);
+    }
+  }
+}
+
+function prewarmNextSpMediaKeys() {}
+
+function attachFreshSpMediaSource(sp, effectiveMime) {
+  if (!sp || sp.disposed || !sp.videoEl) return Promise.resolve();
+  try {
+    if (sp.objUrl) URL.revokeObjectURL(sp.objUrl);
+  } catch (_) {}
+  sp.sb = null;
+  const ms = new MediaSource();
+  sp.ms = ms;
+  sp.objUrl = URL.createObjectURL(ms);
+  sp.videoEl.src = sp.objUrl;
+  return new Promise((resolve) => {
+    ms.addEventListener(
+      'sourceopen',
+      () => {
+        if (!sp.disposed && sp.ms === ms) {
+          try {
+            const sb = ms.addSourceBuffer(effectiveMime);
+            sp.sb = sb;
+            sb.addEventListener('updateend', () => {
+              if (sp.disposed || sp.sb !== sb) return;
+              drainSpInstanceQueue(sp);
+              if (sp.isStaging) {
+                checkAndPromoteStagingSpPlayer(sp.appId);
+              } else {
+                syncSpInstanceTimeAndPlay(sp);
+              }
+            });
+          } catch (_) {}
+        }
+        resolve();
+      },
+      { once: true }
+    );
+  });
+}
+
+function initSpPlayerInstance(sp) {
+  if (!sp || sp.disposed) return Promise.resolve();
   if (sp.mkReadyPromise) return sp.mkReadyPromise;
-  const effectiveMime = mime || 'audio/mp4; codecs="mp4a.40.2"';
+  const effectiveMime = sp.mime || 'audio/mp4; codecs="mp4a.40.2"';
   sp.mkReadyPromise = (async () => {
     try {
       const v = document.createElement('video');
-      v.autoplay = true;
-      v.muted = false;
-      v.volume = 1.0;
+      v.autoplay = !sp.isStaging;
+      v.muted = sp.isStaging ? true : sp.desiredMuted;
+      v.volume = sp.isStaging ? 0 : sp.desiredVolume;
       document.body.appendChild(v);
       sp.videoEl = v;
 
@@ -1061,42 +1398,312 @@ function ensureBgSpEmePlayer(appId, mime) {
           audioCapabilities: [{ contentType: effectiveMime, robustness: 'SW_SECURE_CRYPTO' }]
         }
       ]);
+      if (sp.disposed) return;
       const mk = await acc.createMediaKeys();
+      if (sp.disposed) return;
       if (sp.serverCert) {
         await mk.setServerCertificate(sp.serverCert).catch(() => {});
       }
       await v.setMediaKeys(mk);
+      if (sp.disposed) return;
       sp.mk = mk;
 
-      const ms = new MediaSource();
-      sp.ms = ms;
-      sp.objUrl = URL.createObjectURL(ms);
-      v.src = sp.objUrl;
-      await new Promise((resolve) => {
-        ms.addEventListener(
-          'sourceopen',
-          () => {
-            try {
-              const sb = ms.addSourceBuffer(effectiveMime);
-              sp.sb = sb;
-              sb.addEventListener('updateend', () => {
-                drainBgSpQueue(appId);
-                if (sp.videoEl && sp.videoEl.paused && sp.videoEl.readyState >= 2) {
-                  sp.videoEl.play().catch(() => {});
-                }
-              });
-            } catch (_) {}
-            resolve();
-          },
-          { once: true }
-        );
-      });
-      drainBgSpQueue(appId);
-      processPendingSpGenReqs(appId);
+      await attachFreshSpMediaSource(sp, effectiveMime);
+      if (sp.disposed) return;
+      drainSpInstanceQueue(sp);
+      processSpInstanceGenReqs(sp);
     } catch (_) {}
   })();
   return sp.mkReadyPromise;
 }
+
+function ensureBgSpEmePlayer(appId, mime = 'audio/mp4; codecs="mp4a.40.2"', newMsId = 0, sourceType = 'sidebar') {
+  let sp = bgSpEmePlayers.get(appId);
+  const effectiveMime = mime || 'audio/mp4; codecs="mp4a.40.2"';
+  if (!sp || sp.disposed) {
+    sp = createSpPlayerInstance(appId, effectiveMime, newMsId, false, sourceType);
+    bgSpEmePlayers.set(appId, sp);
+    return initSpPlayerInstance(sp);
+  }
+  sp.sourceType = sourceType;
+  if (newMsId && !sp.msId) {
+    sp.msId = newMsId;
+  } else if (newMsId && sp.msId && newMsId !== sp.msId) {
+    const prevVol = sp.desiredVolume;
+    const prevMuted = sp.desiredMuted;
+    disposeSpPlayerInstance(sp);
+    sp = createSpPlayerInstance(appId, effectiveMime, newMsId, false, sourceType);
+    sp.desiredVolume = prevVol;
+    sp.desiredMuted = prevMuted;
+    bgSpEmePlayers.set(appId, sp);
+    return initSpPlayerInstance(sp);
+  }
+  return initSpPlayerInstance(sp);
+}
+
+function ensureStagingSpEmePlayer(appId, mime = 'audio/mp4; codecs="mp4a.40.2"', newMsId = 0, sourceType = 'bg') {
+  let st = bgStagingSpPlayers.get(appId);
+  const effectiveMime = mime || 'audio/mp4; codecs="mp4a.40.2"';
+  if (!st || st.disposed) {
+    st = createSpPlayerInstance(appId, effectiveMime, newMsId, true, sourceType);
+    bgStagingSpPlayers.set(appId, st);
+    return initSpPlayerInstance(st);
+  }
+  if (newMsId && !st.msId) {
+    st.msId = newMsId;
+  } else if (newMsId && st.msId && newMsId !== st.msId) {
+    disposeSpPlayerInstance(st);
+    st = createSpPlayerInstance(appId, effectiveMime, newMsId, true, sourceType);
+    bgStagingSpPlayers.set(appId, st);
+    return initSpPlayerInstance(st);
+  }
+  return initSpPlayerInstance(st);
+}
+
+function shouldRouteBgToStaging(appId) {
+  const activeSp = bgSpEmePlayers.get(appId);
+  if (!activeSp || activeSp.disposed || !activeSp.awaitingBgFrameHandoff) return false;
+  if (!activeSp.videoEl || activeSp.videoEl.paused || activeSp.videoEl.ended) return false;
+  const bufEnd = getSpBufferedEnd(activeSp);
+  const ct = activeSp.videoEl.currentTime || 0;
+  return bufEnd > ct + 0.35;
+}
+
+function activateSidebarSpTakeover(appId) {
+  if (bgAudioPool.has(appId)) {
+    removeBgAudioIframeOnly(appId);
+  }
+  const st = bgStagingSpPlayers.get(appId);
+  if (st) {
+    disposeSpPlayerInstance(st);
+    bgStagingSpPlayers.delete(appId);
+  }
+  const activeSp = bgSpEmePlayers.get(appId);
+  if (activeSp && !activeSp.disposed) {
+    activeSp.awaitingBgFrameHandoff = false;
+    activeSp.sourceType = 'sidebar';
+    activeSp.remotePaused = false;
+  }
+}
+
+function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
+  if (!appId || !data) return;
+  const bt = data.bridgeType;
+
+  if (bt === 'USER_PLAY_INTENT') {
+    if (bgStagingSpPlayers.has(appId)) {
+      promoteStagingSpPlayer(appId, false);
+    }
+    const activeSp = bgSpEmePlayers.get(appId);
+    if (activeSp && !activeSp.disposed) {
+      activeSp.awaitingBgFrameHandoff = false;
+      activeSp.remotePaused = false;
+      syncSpInstanceTimeAndPlay(activeSp);
+    }
+    return;
+  }
+
+  // Only retire an active background audio iframe when the sidebar actually starts playing (never on idle MSE_INIT when reopening the sidebar!)
+  if (sourceType === 'sidebar' && bgAudioPool.has(appId) && bt === 'SYNC_TIME' && !data.paused) {
+    activateSidebarSpTakeover(appId);
+  }
+
+  if (bt === 'SERVER_CERT') {
+    const certBuf = toLocalArrayBuffer(data.cert);
+    if (!certBuf) return;
+    const prev = bgSpCachedMeta.get(appId) || {};
+    bgSpCachedMeta.set(appId, { ...prev, serverCert: certBuf });
+    prewarmNextSpMediaKeys('audio/mp4; codecs="mp4a.40.2"', certBuf);
+    const activeSp = bgSpEmePlayers.get(appId);
+    if (activeSp && !activeSp.disposed) {
+      activeSp.serverCert = certBuf;
+      if (activeSp.mk) activeSp.mk.setServerCertificate(certBuf).catch(() => {});
+    }
+    const stagingSp = bgStagingSpPlayers.get(appId);
+    if (stagingSp && !stagingSp.disposed) {
+      stagingSp.serverCert = certBuf;
+      if (stagingSp.mk) stagingSp.mk.setServerCertificate(certBuf).catch(() => {});
+    }
+    return;
+  }
+
+  if (bt === 'LIC_AUTH') {
+    const licAuth = cloneLocalLicAuth(data.url, data.headers);
+    if (!licAuth) return;
+    const prev = bgSpCachedMeta.get(appId) || {};
+    bgSpCachedMeta.set(appId, { ...prev, licAuth });
+    const activeSp = bgSpEmePlayers.get(appId);
+    if (activeSp && !activeSp.disposed) {
+      activeSp.licAuth = licAuth;
+      processSpInstanceGenReqs(activeSp);
+    }
+    const stagingSp = bgStagingSpPlayers.get(appId);
+    if (stagingSp && !stagingSp.disposed) {
+      stagingSp.licAuth = licAuth;
+      processSpInstanceGenReqs(stagingSp);
+    }
+    return;
+  }
+
+  // Ignore passive/idle MSE_INIT or paused ticks from the newly opened sidebar iframe while background audio is still playing
+  if (sourceType === 'sidebar' && bgAudioPool.has(appId)) {
+    return;
+  }
+
+  const useStaging = sourceType === 'bg' && (shouldRouteBgToStaging(appId) || bgStagingSpPlayers.has(appId));
+
+  if (bt === 'MSE_INIT') {
+    if (useStaging) {
+      ensureStagingSpEmePlayer(appId, data.mime, data.msId, sourceType);
+    } else {
+      ensureBgSpEmePlayer(appId, data.mime, data.msId, sourceType);
+    }
+    return;
+  }
+
+  if (bt === 'GEN_REQ') {
+    const initBuf = toLocalArrayBuffer(data.initData);
+    if (!initBuf) return;
+    recordRecentSpGenReq(appId, data.initDataType, initBuf);
+    if (useStaging) {
+      ensureStagingSpEmePlayer(appId, 'audio/mp4; codecs="mp4a.40.2"', 0, sourceType);
+      const st = bgStagingSpPlayers.get(appId);
+      if (st) {
+        st.pendingGenReqs.push({ initDataType: data.initDataType, initData: initBuf });
+        processSpInstanceGenReqs(st);
+      }
+    } else {
+      ensureBgSpEmePlayer(appId, 'audio/mp4; codecs="mp4a.40.2"', 0, sourceType);
+      const sp = bgSpEmePlayers.get(appId);
+      if (sp) {
+        sp.pendingGenReqs.push({ initDataType: data.initDataType, initData: initBuf });
+        processSpInstanceGenReqs(sp);
+      }
+    }
+    return;
+  }
+
+  if (bt === 'MSE_CHUNK') {
+    const chunkBuf = toLocalArrayBuffer(data.chunk);
+    if (!chunkBuf) return;
+    if (useStaging) {
+      const curSt = bgStagingSpPlayers.get(appId);
+      if (curSt && curSt.sourceType === sourceType && data.msId && curSt.msId && data.msId < curSt.msId) return;
+      ensureStagingSpEmePlayer(appId, data.mime, data.msId, sourceType);
+      const st = bgStagingSpPlayers.get(appId);
+      if (st) {
+        st.queue.push({ type: 'append', chunk: chunkBuf, timestampOffset: data.timestampOffset });
+        drainSpInstanceQueue(st);
+      }
+    } else {
+      const curSp = bgSpEmePlayers.get(appId);
+      if (curSp && curSp.sourceType === sourceType && data.msId && curSp.msId && data.msId < curSp.msId) return;
+      ensureBgSpEmePlayer(appId, data.mime, data.msId, sourceType);
+      const sp = bgSpEmePlayers.get(appId);
+      if (sp) {
+        sp.queue.push({ type: 'append', chunk: chunkBuf, timestampOffset: data.timestampOffset });
+        drainSpInstanceQueue(sp);
+      }
+    }
+    return;
+  }
+
+  if (bt === 'MSE_REMOVE') {
+    const target = useStaging ? bgStagingSpPlayers.get(appId) : bgSpEmePlayers.get(appId);
+    if (!target || (data.msId && target.msId && data.msId < target.msId)) return;
+    target.queue.push({ type: 'remove', start: data.start, end: data.end });
+    drainSpInstanceQueue(target);
+    return;
+  }
+
+  if (bt === 'MSE_ABORT') {
+    const target = useStaging ? bgStagingSpPlayers.get(appId) : bgSpEmePlayers.get(appId);
+    if (!target || (data.msId && target.msId && data.msId < target.msId)) return;
+    target.queue.push({ type: 'abort' });
+    drainSpInstanceQueue(target);
+    return;
+  }
+
+  if (bt === 'VOLUME') {
+    const target = useStaging ? bgStagingSpPlayers.get(appId) : bgSpEmePlayers.get(appId);
+    if (!target) return;
+    if (typeof data.volume === 'number') target.desiredVolume = data.volume;
+    if (typeof data.muted === 'boolean') target.desiredMuted = data.muted;
+    if (!target.isStaging && target.videoEl) {
+      target.videoEl.muted = target.desiredMuted;
+      target.videoEl.volume = target.desiredVolume;
+    }
+    return;
+  }
+
+  if (bt === 'SYNC_TIME') {
+    if (useStaging) {
+      const st = bgStagingSpPlayers.get(appId);
+      if (!st) return;
+      st.targetTime = Number(data.currentTime) || 0;
+      if (!data.fromSeek || !data.paused) {
+        st.remotePaused = Boolean(data.paused);
+      }
+      if (!data.paused) {
+        checkAndPromoteStagingSpPlayer(appId);
+      }
+      return;
+    }
+
+    const sp = bgSpEmePlayers.get(appId);
+    if (!sp) return;
+    if (sourceType === 'sidebar' && sp.sourceType === 'bg' && data.paused && !data.explicitPause) {
+      // Ignore passive paused ticks from the newly opened sidebar iframe while background audio is still playing
+      return;
+    }
+    if (sourceType === 'bg' && data.paused) {
+      // Background keep-alive iframe has no user UI; ignore transient Spotify Connect / hydration pauses so buffered audio never drops!
+      return;
+    }
+    sp.targetTime = Number(data.currentTime) || 0;
+    if (data.fromSeek && data.paused) {
+      // Initial track seek before play() resolves: update targetTime without marking remotePaused=true
+      if (sp.videoEl && !sp.videoEl.paused) {
+        syncSpInstanceTimeAndPlay(sp, true);
+      }
+      return;
+    }
+    sp.remotePaused = Boolean(data.paused);
+    if (sp.videoEl) {
+      if (!data.paused) {
+        syncSpInstanceTimeAndPlay(sp, Boolean(data.forceSeek));
+        const bgEntry = bgAudioPool.get(appId);
+        const prevSt = liveMediaPlaybackState.get(appId);
+        liveMediaPlaybackState.set(appId, {
+          isPlaying: true,
+          currentTime: Math.floor(sp.videoEl.currentTime || data.currentTime || 0),
+          resumeUrl:
+            bgEntry?.url ||
+            prevSt?.resumeUrl ||
+            currentSettings.persistentSavedAppUrls?.[appId] ||
+            'https://open.spotify.com/',
+          title: bgEntry?.title || prevSt?.title || 'Spotify',
+          updatedAt: Date.now()
+        });
+      } else if (!sp.videoEl.paused) {
+        sp.videoEl.pause();
+        const prevSt = liveMediaPlaybackState.get(appId);
+        if (prevSt) {
+          prevSt.isPlaying = false;
+          prevSt.updatedAt = Date.now();
+        }
+      }
+    }
+  }
+}
+
+window.__pmHandleSpEmeBridge = handleSpEmeBridgeMessage;
+
+setInterval(() => {
+  bgStagingSpPlayers.forEach((_, appId) => {
+    checkAndPromoteStagingSpPlayer(appId);
+  });
+}, 250);
 
 function stopSingleBackgroundAudioFrame(appId) {
   if (!appId) return;
@@ -1116,7 +1723,14 @@ function stopSingleBackgroundAudioFrame(appId) {
 }
 
 function stopBackgroundAudioFrames() {
-  if (bgAudioPool.size === 0 && bgMsePlayers.size === 0 && bgSpEmePlayers.size === 0) return;
+  if (
+    bgAudioPool.size === 0 &&
+    bgMsePlayers.size === 0 &&
+    bgSpEmePlayers.size === 0 &&
+    bgStagingSpPlayers.size === 0
+  ) {
+    return;
+  }
   bgAudioPool.forEach((entry, appId) => {
     cleanupMsePlayer(appId);
     cleanupSpEmePlayer(appId);
@@ -1127,19 +1741,38 @@ function stopBackgroundAudioFrames() {
   });
   bgMsePlayers.forEach((_, appId) => cleanupMsePlayer(appId));
   bgSpEmePlayers.forEach((_, appId) => cleanupSpEmePlayer(appId));
+  bgStagingSpPlayers.forEach((_, appId) => cleanupSpEmePlayer(appId));
   bgAudioPool.clear();
   updateToolbarBadge();
 }
 
 function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
   if (!appId || !targetUrl || !document.body) return;
-  const mode = currentSettings.persistenceMode || 'eco';
+  const mode = currentSettings.persistenceMode || 'selected';
   if (mode === 'eco' || currentSettings.keepAudioPlayingWhenClosed === false) return;
+
+  // Ensure only one background audio app plays at a time (never YouTube + Spotify simultaneously)
+  Array.from(bgAudioPool.keys()).forEach((otherId) => {
+    if (otherId !== appId) {
+      stopSingleBackgroundAudioFrame(otherId);
+      liveMediaPlaybackState.delete(otherId);
+    }
+  });
+  Array.from(bgSpEmePlayers.keys()).forEach((otherId) => {
+    if (otherId !== appId) {
+      cleanupSpEmePlayer(otherId);
+    }
+  });
 
   const existing = bgAudioPool.get(appId);
   if (existing) {
     // If this app's background audio keep-alive frame is already connected and running, keep it playing with 0ms interruption!
     if (existing.frame && existing.frame.isConnected) {
+      const st = bgStagingSpPlayers.get(appId);
+      if (st && st.sourceType === 'sidebar') {
+        disposeSpPlayerInstance(st);
+        bgStagingSpPlayers.delete(appId);
+      }
       return;
     }
     try {
@@ -1149,7 +1782,37 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
     bgAudioPool.delete(appId);
   }
   cleanupMsePlayer(appId);
-  cleanupSpEmePlayer(appId);
+
+  if (appId === 'spotify') {
+    const staleStaging = bgStagingSpPlayers.get(appId);
+    if (staleStaging) {
+      disposeSpPlayerInstance(staleStaging);
+      bgStagingSpPlayers.delete(appId);
+    }
+    const activeSp = bgSpEmePlayers.get(appId);
+    const hasWarmBuffer = Boolean(
+      activeSp &&
+        !activeSp.disposed &&
+        activeSp.videoEl &&
+        activeSp.sb &&
+        activeSp.sb.buffered &&
+        activeSp.sb.buffered.length > 0 &&
+        !activeSp.remotePaused
+    );
+    if (hasWarmBuffer) {
+      // Keep the already-buffered Spotify EME <video> in background.html playing with 0.0ms gap while the background iframe boots and stages!
+      activeSp.awaitingBgFrameHandoff = true;
+      activeSp.sourceType = 'bg';
+      activeSp.videoEl.muted = activeSp.desiredMuted;
+      activeSp.videoEl.volume = activeSp.desiredVolume;
+      syncSpInstanceTimeAndPlay(activeSp);
+    } else {
+      cleanupSpEmePlayer(appId);
+      ensureBgSpEmePlayer(appId, 'audio/mp4; codecs="mp4a.40.2"', 0, 'bg');
+    }
+  } else {
+    cleanupSpEmePlayer(appId);
+  }
 
   const iframe = document.createElement('iframe');
   iframe.name = `pm-bg-audio-${appId}`;
@@ -1176,32 +1839,68 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
 }
 
 function triggerSidebarClosedAudioHandoff(candidates = []) {
-  const mode = currentSettings.persistenceMode || 'eco';
-  if (mode === 'eco') {
+  const mode = currentSettings.persistenceMode || 'selected';
+  if (mode === 'eco' || currentSettings.keepAudioPlayingWhenClosed === false) {
     stopBackgroundAudioFrames();
     return;
   }
   browser.storage.local.set({ settings: currentSettings }).catch(() => {});
 
-  if (currentSettings.keepAudioPlayingWhenClosed === false) return;
-
   let startedAny = false;
   if (Array.isArray(candidates) && candidates.length > 0) {
-    candidates.forEach((c) => {
-      if (c && c.appId && c.url) {
-        startBackgroundAudioKeepAlive(c.appId, c.url, c.title || '');
-        startedAny = true;
-      }
-    });
+    // Pick the active or most recently playing candidate
+    const chosen =
+      candidates.find((c) => c && c.appId === currentSettings.persistentLastActiveAppId && c.url) ||
+      candidates[candidates.length - 1];
+    if (chosen && chosen.appId && chosen.url && isAppAllowedForPersistence(chosen.appId)) {
+      startBackgroundAudioKeepAlive(chosen.appId, chosen.url, chosen.title || '');
+      startedAny = true;
+    }
   }
   if (!startedAny) {
+    let bestId = null;
+    let bestSt = null;
     liveMediaPlaybackState.forEach((st, id) => {
-      if (st.isPlaying && Date.now() - st.updatedAt < 60000) {
-        const targetUrl = st.resumeUrl || currentSettings.persistentSavedAppUrls?.[id];
-        if (targetUrl) {
-          startBackgroundAudioKeepAlive(id, targetUrl, st.title || '');
-          startedAny = true;
+      if (st.isPlaying && Date.now() - st.updatedAt < 60000 && isAppAllowedForPersistence(id)) {
+        if (!bestSt || id === currentSettings.persistentLastActiveAppId || st.updatedAt >= bestSt.updatedAt) {
+          bestId = id;
+          bestSt = st;
         }
+      }
+    });
+    if (bestId && bestSt) {
+      const targetUrl =
+        bestSt.resumeUrl ||
+        currentSettings.persistentSavedAppUrls?.[bestId] ||
+        (bestId === 'spotify' ? 'https://open.spotify.com/' : '');
+      if (targetUrl) {
+        startBackgroundAudioKeepAlive(bestId, targetUrl, bestSt.title || '');
+        startedAny = true;
+      }
+    }
+  }
+  if (!startedAny) {
+    // Also check if bgSpEmePlayers already has an active playing Spotify session from the sidebar!
+    const sp = bgSpEmePlayers.get('spotify');
+    if (
+      sp &&
+      !sp.disposed &&
+      !sp.remotePaused &&
+      sp.sb &&
+      sp.sb.buffered &&
+      sp.sb.buffered.length > 0 &&
+      isAppAllowedForPersistence('spotify')
+    ) {
+      const targetUrl = currentSettings.persistentSavedAppUrls?.spotify || 'https://open.spotify.com/';
+      startBackgroundAudioKeepAlive('spotify', targetUrl, 'Spotify');
+      startedAny = true;
+    }
+  }
+  if (!startedAny) {
+    // Clean up any non-persistent or paused EME players
+    bgSpEmePlayers.forEach((sp, id) => {
+      if (!bgAudioPool.has(id)) {
+        cleanupSpEmePlayer(id);
       }
     });
   }
@@ -1213,6 +1912,10 @@ if (browser.runtime && browser.runtime.onConnect) {
 
     port.onMessage.addListener((msg) => {
       if (!msg || typeof msg !== 'object') return;
+      if (msg.type === 'FORWARD_SP_EME_BRIDGE' && msg.appId && msg.data) {
+        handleSpEmeBridgeMessage(msg.appId, msg.data, 'sidebar');
+        return;
+      }
       if (msg.type === 'UPDATE_PERSISTENT_SESSION') {
         if (msg.activeAppId && isAppAllowedForPersistence(msg.activeAppId)) {
           currentSettings.persistentLastActiveAppId = msg.activeAppId;
@@ -1231,9 +1934,20 @@ if (browser.runtime && browser.runtime.onConnect) {
           const prev = liveMediaPlaybackState.get(msg.appId);
           const inTakeoverGrace =
             prev && prev.handedOffAt && Date.now() - prev.handedOffAt < 15000 && prev.isPlaying;
+          const nextIsPlaying = Boolean(msg.playback.isPlaying || inTakeoverGrace);
+          if (nextIsPlaying) {
+            liveMediaPlaybackState.forEach((otherSt, otherId) => {
+              if (otherId !== msg.appId && otherSt.isPlaying) {
+                otherSt.isPlaying = false;
+              }
+            });
+          }
           liveMediaPlaybackState.set(msg.appId, {
-            ...msg.playback,
-            isPlaying: Boolean(msg.playback.isPlaying || inTakeoverGrace),
+            isPlaying: nextIsPlaying,
+            currentTime: Number(msg.playback.currentTime) || 0,
+            duration: Number(msg.playback.duration) || 0,
+            resumeUrl: String(msg.playback.resumeUrl || ''),
+            title: String(msg.playback.title || ''),
             handedOffAt: inTakeoverGrace ? prev.handedOffAt : undefined,
             updatedAt: Date.now()
           });
@@ -1284,50 +1998,7 @@ window.addEventListener('message', (e) => {
       });
     }
   } else if (data.type === 'PM_SP_EME_BRIDGE') {
-    const sp = getOrCreateBgSpState(appId);
-    const bt = data.bridgeType;
-    if (bt === 'SERVER_CERT') {
-      sp.serverCert = data.cert;
-      if (sp.mk) sp.mk.setServerCertificate(data.cert).catch(() => {});
-    } else if (bt === 'LIC_AUTH') {
-      sp.licAuth = { url: data.url, headers: data.headers };
-      processPendingSpGenReqs(appId);
-    } else if (bt === 'GEN_REQ') {
-      sp.pendingGenReqs.push({ initDataType: data.initDataType, initData: data.initData });
-      ensureBgSpEmePlayer(appId, 'audio/mp4; codecs="mp4a.40.2"');
-      processPendingSpGenReqs(appId);
-    } else if (bt === 'MSE_INIT') {
-      ensureBgSpEmePlayer(appId, data.mime);
-    } else if (bt === 'MSE_CHUNK') {
-      ensureBgSpEmePlayer(appId, data.mime);
-      sp.queue.push({ type: 'append', chunk: data.chunk, timestampOffset: data.timestampOffset });
-      drainBgSpQueue(appId);
-    } else if (bt === 'MSE_REMOVE') {
-      sp.queue.push({ type: 'remove', start: data.start, end: data.end });
-      drainBgSpQueue(appId);
-    } else if (bt === 'SYNC_TIME') {
-      sp.targetTime = data.currentTime;
-      if (sp.videoEl) {
-        if (!data.paused) {
-          if (Math.abs(sp.videoEl.currentTime - data.currentTime) > 1.5 && sp.videoEl.readyState >= 1) {
-            sp.videoEl.currentTime = data.currentTime;
-          }
-          if (sp.videoEl.paused && sp.videoEl.readyState >= 2) {
-            sp.videoEl.play().catch(() => {});
-          }
-          const bgEntry = bgAudioPool.get(appId);
-          liveMediaPlaybackState.set(appId, {
-            isPlaying: true,
-            currentTime: Math.floor(data.currentTime || 0),
-            resumeUrl: bgEntry?.url || 'https://open.spotify.com/',
-            title: bgEntry?.title || 'Spotify',
-            updatedAt: Date.now()
-          });
-        } else if (!sp.videoEl.paused) {
-          sp.videoEl.pause();
-        }
-      }
-    }
+    handleSpEmeBridgeMessage(appId, data, 'bg');
   } else if (data.type === 'PM_BG_AUDIO_CHUNK' && data.chunk) {
     // 100% local in-memory MediaSource Opus stream player (zero network/UDP sockets, bypasses iframe autoplay restrictions!)
     let player = bgMsePlayers.get(appId);
@@ -1588,9 +2259,20 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         const prev = liveMediaPlaybackState.get(msg.appId);
         const inTakeoverGrace =
           prev && prev.handedOffAt && Date.now() - prev.handedOffAt < 15000 && prev.isPlaying;
+        const nextIsPlaying = Boolean(msg.playback.isPlaying || inTakeoverGrace);
+        if (nextIsPlaying) {
+          liveMediaPlaybackState.forEach((otherSt, otherId) => {
+            if (otherId !== msg.appId && otherSt.isPlaying) {
+              otherSt.isPlaying = false;
+            }
+          });
+        }
         liveMediaPlaybackState.set(msg.appId, {
-          ...msg.playback,
-          isPlaying: Boolean(msg.playback.isPlaying || inTakeoverGrace),
+          isPlaying: nextIsPlaying,
+          currentTime: Number(msg.playback.currentTime) || 0,
+          duration: Number(msg.playback.duration) || 0,
+          resumeUrl: String(msg.playback.resumeUrl || ''),
+          title: String(msg.playback.title || ''),
           handedOffAt: inTakeoverGrace ? prev.handedOffAt : undefined,
           updatedAt: Date.now()
         });
@@ -1605,9 +2287,42 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       return Promise.resolve({ ok: true });
     }
 
+    case 'PREINIT_BG_SP_PLAYER': {
+      const appId = msg.appId || 'spotify';
+      prewarmNextSpMediaKeys('audio/mp4; codecs="mp4a.40.2"');
+      if (!bgSpEmePlayers.has(appId)) {
+        ensureBgSpEmePlayer(appId, 'audio/mp4; codecs="mp4a.40.2"', 0, 'sidebar');
+      }
+      return Promise.resolve({ ok: true });
+    }
+
+    case 'PM_SP_SIDEBAR_PLAYPAUSE_CLICK': {
+      const appId = msg.appId || 'spotify';
+      const aria = String(msg.aria || '').toLowerCase();
+      // If user clicked Pause in the sidebar, pause bgSpEmePlayers and remove background iframe
+      if (aria.includes('pause')) {
+        if (bgAudioPool.has(appId)) {
+          removeBgAudioIframeOnly(appId);
+        }
+        const sp = bgSpEmePlayers.get(appId);
+        if (sp && sp.videoEl) {
+          sp.remotePaused = true;
+          try {
+            sp.videoEl.pause();
+          } catch (_) {}
+        }
+        const st = liveMediaPlaybackState.get(appId);
+        if (st) {
+          st.isPlaying = false;
+          st.updatedAt = Date.now();
+        }
+      }
+      return Promise.resolve({ ok: true });
+    }
+
     case 'SIDEBAR_CLOSED_HANDOFF': {
-      const mode = currentSettings.persistenceMode || 'eco';
-      if (mode === 'eco') {
+      const mode = currentSettings.persistenceMode || 'selected';
+      if (mode === 'eco' || currentSettings.keepAudioPlayingWhenClosed === false) {
         stopBackgroundAudioFrames();
         return Promise.resolve({ ok: true });
       }
@@ -1625,28 +2340,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
           }
         });
       }
-      browser.storage.local.set({ settings: currentSettings }).catch(() => {});
-
-      // If any persistent app was actively playing audio/music when the sidebar closed, hand off to Background Audio Keep-Alive!
-      if (currentSettings.keepAudioPlayingWhenClosed !== false) {
-        const candidates = Array.isArray(msg.playingApps) ? msg.playingApps : [];
-        if (candidates.length > 0) {
-          candidates.forEach((c) => {
-            if (c && c.appId && c.url) {
-              startBackgroundAudioKeepAlive(c.appId, c.url, c.title || '');
-            }
-          });
-        } else {
-          liveMediaPlaybackState.forEach((st, id) => {
-            if (st.isPlaying && Date.now() - st.updatedAt < 60000) {
-              const targetUrl = st.resumeUrl || currentSettings.persistentSavedAppUrls?.[id];
-              if (targetUrl) {
-                startBackgroundAudioKeepAlive(id, targetUrl, st.title || '');
-              }
-            }
-          });
-        }
-      }
+      triggerSidebarClosedAudioHandoff(Array.isArray(msg.playingApps) ? msg.playingApps : []);
       return Promise.resolve({ ok: true });
     }
 
