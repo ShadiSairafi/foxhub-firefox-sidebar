@@ -24,8 +24,26 @@ Instead of keeping ten pinned tabs open just to grab login verification codes, r
 * **Multi-Account Gmail Support:** Automatically picks up all signed-in Firefox Google accounts (`u/0`, `u/1`, `u/2`, etc.) in a unified inbox or per-account tabs.
 * **Quick Email Actions:** Read full email threads, copy 2FA codes in one click, reply, archive, delete, star, snooze locally, or listen to emails with Text-to-Speech.
 * **10 Built-In Sidebar Apps + Custom URLs:** Instagram, WhatsApp, Discord, Telegram, Spotify, YouTube, TikTok, X, Messenger, and Reddit, plus the option to pin any custom web link.
+* **Background Audio & Persistence Modes:** Keep Spotify or YouTube playing seamlessly in the background even when the sidebar/popup is closed, with configurable **Selected Apps**, **Keep All Open**, or **Eco Mode** memory settings.
+* **Interactive Video Scrubber & Modal Controls:** Seek through Instagram Reels, TikToks, and YouTube Shorts with a hover timestamp preview bar, plus full-sized Instagram profile post modals with one-click Comment (`💬`) toggle, Play/Pause, and Mute/Unmute controls.
 * **8 Warm Themes & Custom Backgrounds:** Choose from 8 warm palettes (*Warm Linen, Botanical Sage, Sakura Morning, Coastal Breeze, Golden Hour, Lavender Cloud, Gallery Paper, Cozy Espresso*), illustrated wallpapers, or upload your own background image.
 * **Acoustic Notification Chimes:** Local Web Audio notification chimes with volume control and Do Not Disturb mode.
+
+## What's New in v2.6.1
+
+* **Instagram Sidebar & Lightbox Polish:**
+  * Profile post & reel modals now open in a clean, full-sized card view by default and toggle the scrollable comments & reply drawer on demand when clicking the Comment (`💬`) button.
+  * Added dedicated Play/Pause click support and a floating Mute/Unmute audio button inside profile post & reel modals.
+  * Improved responsive scaling across both compact (`436px`) and wide (`736px+`) sidebar widths with zero letterboxing gaps.
+  * Fixed profile header & grid layout persistence when navigating from Reels to user profiles, and sped up Direct (DM) thread switching.
+* **Discord Compact Sidebar Support:**
+  * Fixed Discord's server & DM rail visibility at compact sidebar widths (`<= 680px`) by preserving CSS subgrid icon alignment and removing clipping masks, with smooth auto-expand on hover.
+* **TikTok Action Pill Contrast:**
+  * Styled the bottom-right TikTok action bar pill with a frosted glass card and high-contrast white icons and counters.
+* **X (Twitter) Feed Stability:**
+  * Prevented unwanted automatic feed scrolling on initial load and fresh installs so the timeline always starts cleanly at the top.
+* **Interactive Video Scrubber Bar:**
+  * Added a sleek bottom scrubber bar with hover timestamp preview and click/drag seeking for Instagram Reels, TikTok, and YouTube Shorts.
 
 ## Privacy & Security
 

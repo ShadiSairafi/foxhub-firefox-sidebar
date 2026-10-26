@@ -10,6 +10,7 @@
   const SVGS = {
     starFilled: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
     starOutline: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+    copy: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
     speaker: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`,
     check: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
     archive: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`,
@@ -183,6 +184,13 @@
     if (chipSnoozedLabel) {
       chipSnoozedLabel.textContent = snoozedCount > 0 ? `Snoozed (${snoozedCount})` : 'Snoozed';
     }
+    const chipSentLabel = document.getElementById('chip-sent-label');
+    if (chipSentLabel) {
+      const sentCount = Array.isArray(appState.sentMessages)
+        ? appState.sentMessages.filter((m) => selectedAccountEmail === 'ALL' || m.accountEmail === selectedAccountEmail).length
+        : 0;
+      chipSentLabel.textContent = sentCount > 0 ? `Sent (${sentCount})` : 'Sent';
+    }
   }
 
   /**
@@ -246,6 +254,22 @@
       return entries
         .map((e) => ({ ...e.message, snoozedUntil: e.wakeAt }))
         .filter((m) => selectedAccountEmail === 'ALL' || m.accountEmail === selectedAccountEmail);
+    }
+
+    if (activeFilter === 'sent') {
+      let sentList = Array.isArray(appState.sentMessages) ? [...appState.sentMessages] : [];
+      sentList = sentList.filter((m) => selectedAccountEmail === 'ALL' || m.accountEmail === selectedAccountEmail);
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        sentList = sentList.filter(
+          (m) =>
+            (m.subject || '').toLowerCase().includes(q) ||
+            (m.senderName || '').toLowerCase().includes(q) ||
+            (m.senderEmail || '').toLowerCase().includes(q) ||
+            (m.snippet || '').toLowerCase().includes(q)
+        );
+      }
+      return sentList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     }
 
     const activeAccounts = (appState.accounts || []).filter((a) => !a.disabled);
@@ -314,6 +338,8 @@
       const emptyTitle =
         activeFilter === 'starred'
           ? 'No starred emails right now'
+          : activeFilter === 'sent'
+          ? 'No sent emails yet'
           : activeFilter === 'snoozed'
           ? 'No snoozed emails right now'
           : searchQuery
@@ -324,6 +350,8 @@
       const emptySub =
         searchQuery
           ? 'Try a different search keyword or switch accounts above.'
+          : activeFilter === 'sent'
+          ? 'Emails you send or reply to from FoxHub will appear here and in your Gmail Sent folder.'
           : totalWithRead > 0 && activeFilter === 'unread'
           ? `You marked ${totalWithRead} recent email(s) as read. Switch to "All" or click Restore below to view them again.`
           : 'Enjoy a quiet moment — or customize your glassmorphism cards & backgrounds with the palette icon above.';
@@ -432,6 +460,10 @@
                       </button>`
                     : ''
                 }
+                <button class="pm-action-pill" data-action="copyText" title="Copy highlighted text or full message content">
+                  ${SVGS.copy}
+                  <span>Copy</span>
+                </button>
                 <button class="pm-action-pill" data-action="listen" title="Read this email aloud">
                   ${SVGS.speaker}
                   <span>Listen</span>
@@ -480,11 +512,37 @@
             }
             return;
           }
+          if (action === 'copyText') {
+            const selText = (window.getSelection && window.getSelection().toString().trim()) || '';
+            if (selText && navigator.clipboard) {
+              await navigator.clipboard.writeText(selText);
+              showToast(`Copied selection: "${selText.slice(0, 36)}${selText.length > 36 ? '…' : ''}"`);
+              return;
+            }
+            let bodyText = msgObj.fullText || '';
+            if (!bodyText) {
+              try {
+                const fullRes = await browser.runtime.sendMessage({ type: 'FETCH_FULL_EMAIL', message: msgObj });
+                if (fullRes && fullRes.plainText) {
+                  bodyText = fullRes.plainText;
+                  msgObj.fullText = bodyText;
+                }
+              } catch (_) {}
+            }
+            const toCopy = `${msgObj.subject || ''}\n${bodyText || msgObj.snippet || ''}`.trim();
+            if (toCopy && navigator.clipboard) {
+              await navigator.clipboard.writeText(toCopy);
+              showToast('Copied message text to clipboard!');
+            }
+            return;
+          }
           await triggerCardAction(msgObj, action);
         });
       });
 
       cardEl.addEventListener('click', () => {
+        const sel = window.getSelection && window.getSelection();
+        if (sel && sel.toString().trim().length > 0) return;
         openReaderView(msgObj);
       });
     });
@@ -619,6 +677,97 @@
   }
 
   /**
+   * Scan any email for useful copyable items (Codes, Commit/Build/Order IDs, Links, Emails, Subject, Sender)
+   * and render 1-click Copy Chips inside the Reader View
+   */
+  function renderReaderSmartCopyChips(msgObj, bodyEl, detectedOtp = '') {
+    const barEl = document.getElementById('pm-reader-smart-chips');
+    if (!barEl || !msgObj) return;
+    barEl.replaceChildren();
+
+    const items = [];
+    const seenVals = new Set();
+    const addChip = (label, value, title) => {
+      const val = String(value || '').trim();
+      if (!val || seenVals.has(val)) return;
+      seenVals.add(val);
+      items.push({ label, value: val, title: title || `Click to copy: ${val}` });
+    };
+
+    if (detectedOtp) {
+      addChip(`Code: ${detectedOtp}`, detectedOtp, `Copy verification code: ${detectedOtp}`);
+    }
+
+    const fullStr = `${msgObj.subject || ''} ${msgObj.fullText || msgObj.snippet || ''}`;
+
+    // Extract commit hashes (e.g. 2925f54), ticket/order/PR IDs (#1234), or hyphenated run/branch tokens (e.g. night-audit-058-096)
+    const parenHexMatch = (msgObj.subject || '').match(/\(([a-f0-9]{7,12})\)/i);
+    if (parenHexMatch && parenHexMatch[1]) {
+      addChip(`Commit: ${parenHexMatch[1]}`, parenHexMatch[1]);
+    }
+    const idTokens = fullStr.match(/(?:#\d{3,10}|\b[a-z]+-[a-z0-9]+-\d{2,6}(?:-\d{2,6})?\b|\b[A-Z]{2,5}-\d{3,10}\b)/g) || [];
+    idTokens.slice(0, 2).forEach((tok) => {
+      addChip(`ID: ${tok}`, tok);
+    });
+
+    // Extract clean links from the rendered HTML body or text
+    const urlSet = new Set();
+    if (bodyEl) {
+      bodyEl.querySelectorAll('a[href^="http"]').forEach((a) => {
+        const href = (a.getAttribute('href') || '').trim();
+        if (href && !/unsubscribe|optout|opt-out|preferences|mailto:/i.test(href)) {
+          urlSet.add(href);
+        }
+      });
+    }
+    const textUrls = fullStr.match(/https?:\/\/[^\s"'<>)]+/gi) || [];
+    textUrls.forEach((u) => {
+      if (!/unsubscribe|optout|opt-out|preferences/i.test(u)) {
+        urlSet.add(u);
+      }
+    });
+    Array.from(urlSet)
+      .slice(0, 2)
+      .forEach((urlStr) => {
+        let shortHost = urlStr;
+        try {
+          const u = new URL(urlStr);
+          const cleanPath = u.pathname && u.pathname !== '/' ? u.pathname.slice(0, 18) : '';
+          shortHost = `${u.hostname.replace(/^www\./, '')}${cleanPath}${u.pathname.length > 18 ? '…' : ''}`;
+        } catch (_) {}
+        addChip(`Link: ${shortHost}`, urlStr, `Copy URL: ${urlStr}`);
+      });
+
+    if (msgObj.subject) {
+      addChip('Copy Subject', msgObj.subject, `Copy subject: ${msgObj.subject}`);
+    }
+    if (msgObj.senderEmail) {
+      addChip(`Sender: ${msgObj.senderEmail}`, msgObj.senderEmail, `Copy sender email: ${msgObj.senderEmail}`);
+    }
+
+    if (items.length === 0) {
+      barEl.classList.add('hidden');
+      return;
+    }
+
+    barEl.classList.remove('hidden');
+    items.forEach((item) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pm-smart-copy-chip';
+      btn.title = item.title;
+      setSafeHtml(btn, `${SVGS.copy}<span>${escapeHtml(item.label)}</span>`);
+      btn.addEventListener('click', async () => {
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(item.value);
+          showToast(`Copied: ${item.value.slice(0, 42)}${item.value.length > 42 ? '…' : ''}`);
+        }
+      });
+      barEl.appendChild(btn);
+    });
+  }
+
+  /**
    * Open In-Popup Full Email Reader Drawer
    */
   async function openReaderView(msgObj) {
@@ -674,6 +823,7 @@
     bodyEl.style.zoom = '1';
     setSafeHtml(bodyEl, `<p style="color:var(--text-muted)">Loading full message content locally…</p>`);
     document.getElementById('reader-reply-input').value = '';
+    renderReaderSmartCopyChips(msgObj, null, initialOtp);
 
     try {
       const fullContent = await browser.runtime.sendMessage({
@@ -694,6 +844,7 @@
         if (fullContent.unsubscribeUrl && unsubBtn) {
           unsubBtn.classList.remove('hidden');
         }
+        renderReaderSmartCopyChips(activeReaderMessage, bodyEl, detectedOtp);
 
         // Re-calculate Auto-Fit scale immediately and as images finish loading
         requestAnimationFrame(applyEmailReaderScale);
@@ -703,10 +854,12 @@
         });
       } else {
         bodyEl.textContent = msgObj.snippet || 'No additional content.';
+        renderReaderSmartCopyChips(activeReaderMessage, bodyEl, initialOtp);
         applyEmailReaderScale();
       }
     } catch (e) {
       bodyEl.textContent = msgObj.snippet || 'Could not load full thread.';
+      renderReaderSmartCopyChips(activeReaderMessage, bodyEl, initialOtp);
       applyEmailReaderScale();
     }
   }
@@ -1049,6 +1202,8 @@
     });
   }
 
+  let pendingGmailAutoSendResolver = null;
+
   /**
    * Open Quick Compose Drawer (100% Local Direct Compose + Embedded Gmail View)
    */
@@ -1064,17 +1219,35 @@
     embedBtn?.classList.toggle('active', isEmbed);
     nativePane?.classList.toggle('hidden', isEmbed);
     embedPane?.classList.toggle('hidden', !isEmbed);
+    if (embedPane) {
+      embedPane.style.cssText = '';
+    }
 
     if (isEmbed && gmailFrame) {
-      const slot = document.getElementById('compose-from')?.value || '0';
+      const fromSelect = document.getElementById('compose-from');
+      const slot = fromSelect?.value || '0';
+      const selectedOpt = fromSelect?.options?.[fromSelect.selectedIndex];
+      const accountEmail = (selectedOpt?.getAttribute('data-email') || '').trim();
+      const authUserParam = encodeURIComponent(accountEmail || String(slot));
       const to = (document.getElementById('compose-to')?.value || '').trim();
       const cc = (document.getElementById('compose-cc')?.value || '').trim();
       const bcc = (document.getElementById('compose-bcc')?.value || '').trim();
       const su = (document.getElementById('compose-subject')?.value || '').trim();
       const body = (document.getElementById('compose-body')?.value || '').trim();
 
+      gmailFrame.name =
+        'pm-gmail-compose:' +
+        JSON.stringify({
+          pmMode: 'embed',
+          to,
+          cc,
+          bcc,
+          su,
+          body,
+          ts: Date.now()
+        });
       const embedUrl =
-        `https://mail.google.com/mail/u/${slot}/?view=cm&fs=1&tf=1` +
+        `https://mail.google.com/mail/u/${slot}/?view=cm&fs=1&tf=1&authuser=${authUserParam}` +
         (to ? `&to=${encodeURIComponent(to)}` : '') +
         (cc ? `&cc=${encodeURIComponent(cc)}` : '') +
         (bcc ? `&bcc=${encodeURIComponent(bcc)}` : '') +
@@ -1086,6 +1259,82 @@
         gmailFrame.src = embedUrl;
       }
     }
+  }
+
+  /**
+   * Executes a genuine first-party Gmail send inside #pm-compose-gmail-frame
+   * using ?view=cm&fs=1&tf=1&...&pm_autosend=1 so Gmail's own web composer
+   * dispatches the message with valid first-party CSRF tokens and saves to Sent Mail.
+   */
+  function sendEmailViaFirstPartyGmailFrame(payload) {
+    return new Promise((resolve) => {
+      const gmailFrame = document.getElementById('pm-compose-gmail-frame');
+      const embedPane = document.getElementById('pm-compose-embed-pane');
+      if (!gmailFrame) {
+        resolve({ ok: false, reason: 'no_frame' });
+        return;
+      }
+
+      const slot = payload.slotIndex || 0;
+      const accountEmail = (payload.accountEmail || '').trim();
+      const authUserParam = encodeURIComponent(accountEmail || String(slot));
+      const to = (payload.to || '').trim();
+      const cc = (payload.cc || '').trim();
+      const bcc = (payload.bcc || '').trim();
+      const su = (payload.subject || '').trim();
+      const body = (payload.body || '').trim();
+
+      // Keep the frame laid out off-screen if the user is on the Native Form tab so Gmail's composer initializes at full speed
+      const wasHidden = embedPane ? embedPane.classList.contains('hidden') : false;
+      if (wasHidden && embedPane) {
+        embedPane.classList.remove('hidden');
+        embedPane.style.cssText =
+          'position:fixed !important;left:-9999px !important;top:0 !important;width:480px !important;height:520px !important;opacity:0 !important;pointer-events:none !important;z-index:-1 !important;';
+      }
+
+      let finished = false;
+      const finish = (result) => {
+        if (finished) return;
+        finished = true;
+        if (pendingGmailAutoSendResolver === finish) {
+          pendingGmailAutoSendResolver = null;
+        }
+        if (wasHidden && embedPane && result && result.ok) {
+          embedPane.style.cssText = '';
+          embedPane.classList.add('hidden');
+        }
+        resolve(result || { ok: false, reason: 'unknown' });
+      };
+
+      pendingGmailAutoSendResolver = finish;
+
+      gmailFrame.name =
+        'pm-gmail-compose:' +
+        JSON.stringify({
+          pmMode: 'autosend',
+          to,
+          cc,
+          bcc,
+          su,
+          body,
+          ts: Date.now()
+        });
+      const autoSendUrl =
+        `https://mail.google.com/mail/u/${slot}/?view=cm&fs=1&tf=1&authuser=${authUserParam}` +
+        (to ? `&to=${encodeURIComponent(to)}` : '') +
+        (cc ? `&cc=${encodeURIComponent(cc)}` : '') +
+        (bcc ? `&bcc=${encodeURIComponent(bcc)}` : '') +
+        (su ? `&su=${encodeURIComponent(su)}` : '') +
+        (body ? `&body=${encodeURIComponent(body)}` : '') +
+        `&pm_autosend=1&_t=${Date.now()}`;
+
+      gmailFrame.dataset.loadedUrl = autoSendUrl;
+      gmailFrame.src = autoSendUrl;
+
+      setTimeout(() => {
+        finish({ ok: false, reason: 'timeout' });
+      }, 13500);
+    });
   }
 
   function openComposeDrawer(prefill = {}) {
@@ -1130,18 +1379,73 @@
     }, 60);
   }
 
+  const THEME_OR_LAYOUT_KEYS = new Set([
+    'theme',
+    'wallpaper',
+    'customWallpaperData',
+    'wallpaperOpacity',
+    'wallpaperBlur',
+    'accentColor',
+    'fontFamily',
+    'cardRadius',
+    'density',
+    'popupWidth',
+    'popupHeight',
+    'customColorBg',
+    'customColorCard',
+    'customColorText',
+    'customColorAccent'
+  ]);
+  const ACCOUNT_SYNC_KEYS = new Set([
+    'demoMode',
+    'accountConfigs',
+    'maxAccounts',
+    'maxEmailsPerAccount',
+    'oauthAccounts'
+  ]);
+
   async function saveSettingsPatch(patch) {
+    if (!patch || typeof patch !== 'object') return;
     appSettings = { ...appSettings, ...patch };
-    PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
-    syncStudioControlsState();
-    const res = await browser.runtime.sendMessage({
-      type: 'UPDATE_SETTINGS',
-      settings: patch
-    });
-    if (res && res.state) {
-      appState = res.state;
-      appSettings = res.settings;
-      renderAll();
+    const patchKeys = Object.keys(patch);
+    const touchesTheme = patchKeys.some((k) => THEME_OR_LAYOUT_KEYS.has(k));
+    const touchesAccounts = patchKeys.some((k) => ACCOUNT_SYNC_KEYS.has(k));
+
+    if (touchesTheme) {
+      PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
+    }
+    if (themeDrawer && !themeDrawer.classList.contains('hidden')) {
+      syncStudioControlsState();
+      renderStudioLivePreview();
+    }
+    if (
+      patch.enabledMediaApps !== undefined ||
+      patch.mediaAppsOrder !== undefined ||
+      patch.customMediaApps !== undefined
+    ) {
+      renderOperaRail();
+    }
+
+    const sendPromise = browser.runtime
+      .sendMessage({
+        type: 'UPDATE_SETTINGS',
+        settings: patch
+      })
+      .then((res) => {
+        if (res && res.state) {
+          appState = res.state;
+        }
+        if (touchesAccounts) {
+          renderHeaderStatus();
+          renderAccountsBar();
+          renderEmailList();
+        }
+        return res;
+      })
+      .catch(() => null);
+
+    if (touchesAccounts) {
+      await sendPromise;
     }
   }
 
@@ -1266,12 +1570,45 @@
       headerSidebarBtn?.classList.add('hidden');
     }
 
+    const isAppPlayingAudioNow = (appId) => {
+      if (!appId) return false;
+      if (appId === currentAudibleBgAppId) return true;
+      if (pendingSidebarAudioTakeoverSet.has(appId) || sidebarMsePlayers.has(appId)) return true;
+      const pb = framePlaybackStates.get(appId);
+      return Boolean(pb && pb.isPlaying && Date.now() - (pb.updatedAt || 0) < 15000);
+    };
+
+    const anyAudioPlaying =
+      Boolean(currentAudibleBgAppId) ||
+      pendingSidebarAudioTakeoverSet.size > 0 ||
+      sidebarMsePlayers.size > 0 ||
+      Array.from(framePlaybackStates.keys()).some((id) => isAppPlayingAudioNow(id));
+
+    [openSidebarBtn, headerSidebarBtn].forEach((sBtn) => {
+      if (!sBtn) return;
+      sBtn.classList.toggle('is-playing-audio', anyAudioPlaying);
+      sBtn.title = anyAudioPlaying
+        ? '▶ Audio playing in Left Sidebar — Click to open Left Sidebar (Alt+Shift+M)'
+        : 'Dock to Firefox Left Sidebar (Alt+Shift+M)';
+      let badgeEl = sBtn.querySelector('.pm-rail-playing-badge');
+      if (anyAudioPlaying) {
+        if (!badgeEl) {
+          badgeEl = document.createElement('span');
+          badgeEl.className = 'pm-rail-playing-badge';
+          badgeEl.textContent = '▶';
+          sBtn.style.position = 'relative';
+          sBtn.appendChild(badgeEl);
+        }
+      } else if (badgeEl) {
+        badgeEl.remove();
+      }
+    });
+
     if (!appsListEl) return;
-    appsListEl.replaceChildren();
 
     let draggedAppId = null;
 
-    const handleAppReorderDrop = async (sourceId, targetId) => {
+    const handleAppReorderDrop = (sourceId, targetId) => {
       if (!sourceId || !targetId || sourceId === targetId) return;
       const allBuiltIn = mediaApi.getOrderedBuiltInApps
         ? mediaApi.getOrderedBuiltInApps(appSettings)
@@ -1288,49 +1625,115 @@
       uniqueOrder.splice(fromIdx, 1);
       uniqueOrder.splice(toIdx, 0, sourceId);
 
-      await saveSettingsPatch({ mediaAppsOrder: uniqueOrder });
+      // Instant 0ms optimistic DOM update
+      appSettings = { ...appSettings, mediaAppsOrder: uniqueOrder };
       renderOperaRail();
       if (mediaAppsDrawer && !mediaAppsDrawer.classList.contains('hidden')) {
         renderMediaAppsManager();
       }
+      saveSettingsPatch({ mediaAppsOrder: uniqueOrder });
       showToast('Updated pinned app order');
     };
 
     const activeApps = mediaApi.getActiveMediaApps(appSettings);
-    activeApps.forEach((app) => {
-      const btn = document.createElement('button');
+    const orderSignature = activeApps.map((a) => a.id).join(',');
+
+    const syncRailItemButtonState = (btn, app, isInitialCreate) => {
       const isActive = activeRailAppId === app.id;
-      const isAliveInPool = mediaFramePool.has(app.id) || pendingSidebarAudioTakeoverSet.has(app.id);
+      const isPlayingAudio = isAppPlayingAudioNow(app.id);
+      const isAliveInPool =
+        mediaFramePool.has(app.id) || pendingSidebarAudioTakeoverSet.has(app.id) || isPlayingAudio;
       const unreadInfo = socialAppUnreadMap.get(app.id);
       const unreadCount = unreadInfo?.unreadCount || 0;
       const hasUnread = Boolean(unreadInfo?.hasUnread || unreadCount > 0);
 
-      btn.className = `pm-rail-item ${isActive ? 'active' : ''}`;
-      btn.draggable = true;
-      btn.dataset.appId = app.id;
+      btn.classList.toggle('active', isActive);
+      btn.classList.toggle('is-playing-audio', isPlayingAudio);
       btn.style.setProperty('--rail-app-grad', app.gradient || app.color);
-      if (!isActive) {
-        btn.style.color = app.color || 'var(--text-primary)';
-      }
-      btn.title = isAliveInPool
+      btn.style.color = isActive ? '' : app.color || 'var(--text-primary)';
+      btn.title = isPlayingAudio
+        ? `▶ ${app.name} — Playing Audio | Click to switch, Drag to reorder, Right-click to stop & close`
+        : isAliveInPool
         ? `${app.name}${unreadCount > 0 ? ` (${unreadCount} new)` : ''} | Active in background (Click to switch, Drag to reorder, Right-click to close)`
         : `${app.name} | Click to open (Drag to reorder)`;
-      btn.appendChild(mediaApi.createAppSvgIcon(app.id, 17));
 
+      // Update notification badge IN-PLACE so it never flashes or re-runs entry animation during audio ticks or app switches!
+      let unreadBadge = btn.querySelector('.pm-rail-social-badge');
+      const prevCount = Number(btn.dataset.lastUnreadCount || 0);
+      const hadUnread = btn.dataset.hadUnread === '1';
       if (hasUnread) {
-        const unreadBadge = document.createElement('span');
-        unreadBadge.className = `pm-rail-social-badge ${unreadCount <= 0 ? 'dot-only' : ''}`;
-        if (unreadCount > 0) {
-          unreadBadge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
+        const nextBadgeText = unreadCount > 0 ? (unreadCount > 99 ? '99+' : String(unreadCount)) : '';
+        if (!unreadBadge) {
+          unreadBadge = document.createElement('span');
+          unreadBadge.className = `pm-rail-social-badge ${unreadCount <= 0 ? 'dot-only' : ''} ${!isInitialCreate && !hadUnread ? 'is-badge-pop' : ''}`.trim();
+          unreadBadge.textContent = nextBadgeText;
+          btn.appendChild(unreadBadge);
+        } else {
+          unreadBadge.classList.toggle('dot-only', unreadCount <= 0);
+          if (unreadBadge.textContent !== nextBadgeText) {
+            unreadBadge.textContent = nextBadgeText;
+          }
+          if (unreadCount > prevCount) {
+            unreadBadge.classList.remove('is-badge-pop');
+            void unreadBadge.offsetWidth;
+            unreadBadge.classList.add('is-badge-pop');
+          }
         }
-        btn.appendChild(unreadBadge);
+        btn.dataset.hadUnread = '1';
+        btn.dataset.lastUnreadCount = String(unreadCount);
+      } else {
+        if (unreadBadge) {
+          unreadBadge.remove();
+        }
+        btn.dataset.hadUnread = '0';
+        btn.dataset.lastUnreadCount = '0';
       }
 
-      if (isAliveInPool) {
-        const liveDot = document.createElement('span');
-        liveDot.className = 'pm-rail-live-dot';
-        btn.appendChild(liveDot);
+      // Update playing badge & live dot in-place
+      let playingBadge = btn.querySelector('.pm-rail-playing-badge');
+      let liveDot = btn.querySelector('.pm-rail-live-dot');
+      if (isPlayingAudio) {
+        if (liveDot) liveDot.remove();
+        if (!playingBadge) {
+          playingBadge = document.createElement('span');
+          playingBadge.className = 'pm-rail-playing-badge';
+          playingBadge.textContent = '▶';
+          btn.appendChild(playingBadge);
+        }
+      } else {
+        if (playingBadge) playingBadge.remove();
+        if (isAliveInPool) {
+          if (!liveDot) {
+            liveDot = document.createElement('span');
+            liveDot.className = 'pm-rail-live-dot';
+            btn.appendChild(liveDot);
+          }
+        } else if (liveDot) {
+          liveDot.remove();
+        }
       }
+    };
+
+    if (appsListEl.dataset.renderedOrder === orderSignature && appsListEl.children.length === activeApps.length) {
+      activeApps.forEach((app, idx) => {
+        const existingBtn = appsListEl.children[idx];
+        if (existingBtn) {
+          syncRailItemButtonState(existingBtn, app, false);
+        }
+      });
+      return;
+    }
+
+    appsListEl.dataset.renderedOrder = orderSignature;
+    appsListEl.replaceChildren();
+
+    activeApps.forEach((app) => {
+      const btn = document.createElement('button');
+      btn.className = 'pm-rail-item';
+      btn.draggable = true;
+      btn.dataset.appId = app.id;
+      btn.appendChild(mediaApi.createAppSvgIcon(app.id, 17));
+      syncRailItemButtonState(btn, app, true);
 
       // Drag-and-drop reordering directly on the Left Sidebar Rail
       btn.addEventListener('dragstart', (e) => {
@@ -1346,7 +1749,7 @@
 
       btn.addEventListener('dragover', (e) => {
         e.preventDefault();
-        if (draggedAppId && draggedAppId !== app.id) {
+        if (draggedAppId && draggedAppId !== app.id && !btn.classList.contains('drag-over-target')) {
           btn.classList.add('drag-over-target');
         }
       });
@@ -1447,11 +1850,12 @@
 
     // 1. TikTok special route normalization
     if (curHost.includes('tiktok.com')) {
-      if (curPath.startsWith('/@') || curPath === '/profile' || curUrlObj.searchParams.has('pm_goto_profile')) {
+      const isTikTokVideoItem = curPath.includes('/video/') || curPath.includes('/photo/');
+      if ((!isTikTokVideoItem && curPath.startsWith('/@')) || curPath === '/profile' || curUrlObj.searchParams.has('pm_goto_profile')) {
         const profIdx = subViews.findIndex((sv) => sv && (sv.icon === 'profile' || sv.url.endsWith('/profile')));
         if (profIdx >= 0) return profIdx;
       }
-      if (curPath === '/' || curPath === '/foryou' || curPath.startsWith('/foryou/')) {
+      if (isTikTokVideoItem || curPath === '/' || curPath === '/foryou' || curPath.startsWith('/foryou/')) {
         const fyIdx = subViews.findIndex(
           (sv) => sv && (sv.url.endsWith('/foryou') || sv.label.toLowerCase() === 'for you')
         );
@@ -1491,7 +1895,7 @@
         const dmIdx = subViews.findIndex((sv) => sv && sv.url.includes('/direct'));
         if (dmIdx >= 0) return dmIdx;
       }
-      if (curPath.startsWith('/reels') || curPath.startsWith('/reel/')) {
+      if (curPath === '/reels' || curPath.startsWith('/reels/')) {
         const rIdx = subViews.findIndex((sv) => sv && sv.url.includes('/reels'));
         if (rIdx >= 0) return rIdx;
       }
@@ -1505,10 +1909,8 @@
         (curPath !== '/' &&
           !curPath.startsWith('/direct') &&
           !curPath.startsWith('/reels') &&
-          !curPath.startsWith('/reel/') &&
           !curPath.startsWith('/explore') &&
-          !curPath.startsWith('/stories') &&
-          !curPath.startsWith('/p/'))
+          !curPath.startsWith('/stories'))
       ) {
         const profIdx = subViews.findIndex((sv) => sv && (sv.icon === 'profile' || sv.url.endsWith('/profile')));
         if (profIdx >= 0) return profIdx;
@@ -1602,7 +2004,7 @@
     }
   }
 
-  function showMediaBrandLoader(app, frameEl) {
+  function showMediaBrandLoader(app, frameEl, isFastCachedRestore = false) {
     const loaderEl = document.getElementById('pm-media-loader');
     const loaderIconEl = document.getElementById('pm-media-loader-icon');
     const loaderTitleEl = document.getElementById('pm-media-loader-title');
@@ -1618,10 +2020,12 @@
       loaderIconEl.replaceChildren(window.PocketMailMediaApps.createAppSvgIcon(app.id, 22));
     }
     if (loaderTitleEl && app) {
-      loaderTitleEl.textContent = `Loading ${app.name}…`;
+      loaderTitleEl.textContent = isFastCachedRestore ? `Restoring ${app.name}…` : `Loading ${app.name}…`;
     }
     if (loaderSubEl) {
-      loaderSubEl.textContent = 'Connecting your local Firefox session';
+      loaderSubEl.textContent = isFastCachedRestore
+        ? 'Instant persistent memory'
+        : 'Connecting your local Firefox session';
     }
     if (targetFrame) {
       targetFrame.classList.add('is-loading');
@@ -1630,7 +2034,7 @@
     clearTimeout(mediaLoaderSafetyTimer);
     mediaLoaderSafetyTimer = setTimeout(() => {
       hideMediaBrandLoader(targetFrame);
-    }, 1500);
+    }, isFastCachedRestore ? 520 : 1400);
   }
 
   function hideMediaBrandLoader(frameEl) {
@@ -1643,11 +2047,78 @@
 
   const framePlaybackStates = new Map(); // appId -> { isPlaying, currentTime, resumeUrl, title, updatedAt }
   const pendingSidebarAudioTakeoverSet = new Set();
+  const knownOpenPersistentIds = new Set();
   const sidebarMsePlayers = new Map(); // appId -> { ms, audioEl, sb, queue, objUrl }
-  const sidebarSpEmePlayers = new Map(); // appId -> { videoEl, ms, sb, queue, mk, mkReadyPromise, serverCert, licAuth, pendingGenReqs, objUrl, targetTime }
+  let currentAudibleBgAppId = null;
   let sidebarLifecyclePort = null;
   let sidebarInitCompleted = false;
   let lastDetectedAutoplayPolicy = 'allowed';
+  let lastPersistentPlaybackSyncAt = 0;
+
+  function isTransientAuthOrBootUrl(url) {
+    if (!url || typeof url !== 'string') return true;
+    if (url.includes('pm_boot=1')) return true;
+    try {
+      const u = new URL(url);
+      const p = (u.pathname || '/').toLowerCase();
+      const h = (u.hostname || '').toLowerCase();
+      if (
+        p === '/login' ||
+        p.startsWith('/login/') ||
+        p === '/signin' ||
+        p.startsWith('/signin/') ||
+        p.startsWith('/i/flow/login') ||
+        p.startsWith('/accounts/login') ||
+        h === 'accounts.google.com' ||
+        h === 'accounts.spotify.com' ||
+        (h.includes('tiktok.com') && (p.includes('/video/') || p.includes('/photo/')))
+      ) {
+        return true;
+      }
+    } catch (_) {
+      return true;
+    }
+    return false;
+  }
+
+  function saveFastBootCache(overrideActiveId = '') {
+    try {
+      const savedUrls = {};
+      Object.entries(appSettings.persistentSavedAppUrls || {}).forEach(([id, u]) => {
+        if (u && !isTransientAuthOrBootUrl(u)) savedUrls[id] = u;
+      });
+      hibernatedAppUrls.forEach((u, id) => {
+        if (u && !isTransientAuthOrBootUrl(u)) savedUrls[id] = u;
+      });
+      mediaFramePool.forEach((entry, id) => {
+        const bestUrl =
+          entry.currentUrl && !isTransientAuthOrBootUrl(entry.currentUrl)
+            ? entry.currentUrl
+            : entry.restoredUrl && !isTransientAuthOrBootUrl(entry.restoredUrl)
+              ? entry.restoredUrl
+              : '';
+        if (bestUrl) savedUrls[id] = bestUrl;
+        if (isAppPersistent(id)) knownOpenPersistentIds.add(id);
+      });
+      const openPersistentAppIds = Array.from(knownOpenPersistentIds).filter((id) => isAppPersistent(id));
+      const effectiveActiveId = overrideActiveId || activeRailAppId || appSettings.persistentLastActiveAppId || 'pocketmail';
+      window.localStorage.setItem(
+        'pm_fast_boot_v1',
+        JSON.stringify({
+          activeAppId: effectiveActiveId,
+          openPersistentAppIds,
+          savedUrls,
+          settings: {
+            ...appSettings,
+            persistentLastActiveAppId: effectiveActiveId,
+            persistentOpenAppIds: openPersistentAppIds,
+            persistentSavedAppUrls: savedUrls
+          },
+          ts: Date.now()
+        })
+      );
+    } catch (_) {}
+  }
 
   function cleanupSidebarMsePlayer(appId) {
     const player = sidebarMsePlayers.get(appId);
@@ -1664,255 +2135,88 @@
     } catch (_) {}
   }
 
-  const sidebarSpCachedMeta = new Map(); // appId -> { serverCert, licAuth }
-
-  function cleanupSidebarSpEmePlayer(appId) {
-    const sp = sidebarSpEmePlayers.get(appId);
-    if (!sp) return;
-    if (sp.serverCert || sp.licAuth) {
-      const prev = sidebarSpCachedMeta.get(appId) || {};
-      sidebarSpCachedMeta.set(appId, {
-        serverCert: sp.serverCert || prev.serverCert || null,
-        licAuth: sp.licAuth || prev.licAuth || null
-      });
-    }
-    sidebarSpEmePlayers.delete(appId);
-    try {
-      if (sp.videoEl) {
-        sp.videoEl.pause();
-        sp.videoEl.removeAttribute('src');
-        sp.videoEl.load();
-        sp.videoEl.remove();
-      }
-    } catch (_) {}
-    try {
-      if (sp.objUrl) URL.revokeObjectURL(sp.objUrl);
-    } catch (_) {}
-  }
-
-  function getOrCreateSidebarSpState(appId) {
-    let sp = sidebarSpEmePlayers.get(appId);
-    if (!sp) {
-      const cached = sidebarSpCachedMeta.get(appId) || {};
-      sp = {
-        videoEl: null,
-        ms: null,
-        sb: null,
-        queue: [],
-        mk: null,
-        mkReadyPromise: null,
-        serverCert: cached.serverCert || null,
-        licAuth: cached.licAuth || null,
-        pendingGenReqs: [],
-        objUrl: null,
-        targetTime: 0,
-        remotePaused: false,
-        msId: 0
-      };
-      sidebarSpEmePlayers.set(appId, sp);
-    }
-    return sp;
-  }
-
-  function syncSidebarSpVideoTimeAndPlay(sp) {
-    if (!sp || !sp.videoEl) return;
-    try {
-      if (sp.sb && sp.sb.buffered && sp.sb.buffered.length > 0) {
-        const ct = sp.videoEl.currentTime || 0;
-        let inBuffered = false;
-        for (let i = 0; i < sp.sb.buffered.length; i++) {
-          if (ct >= sp.sb.buffered.start(i) - 0.25 && ct <= sp.sb.buffered.end(i) + 0.25) {
-            inBuffered = true;
-            break;
-          }
-        }
-        if (!inBuffered) {
-          const bStart = sp.sb.buffered.start(0);
-          const bEnd = sp.sb.buffered.end(sp.sb.buffered.length - 1);
-          if (sp.targetTime >= bStart && sp.targetTime <= bEnd) {
-            sp.videoEl.currentTime = sp.targetTime;
-          } else {
-            sp.videoEl.currentTime = bStart + 0.05;
-          }
-        } else if (sp.targetTime > 0 && Math.abs(ct - sp.targetTime) > 1.8) {
-          sp.videoEl.currentTime = sp.targetTime;
-        }
-      } else if (
-        sp.targetTime > 0 &&
-        Math.abs((sp.videoEl.currentTime || 0) - sp.targetTime) > 1.8 &&
-        sp.videoEl.readyState >= 1
-      ) {
-        sp.videoEl.currentTime = sp.targetTime;
-      }
-      if (!sp.remotePaused && sp.videoEl.paused) {
-        sp.videoEl.play().catch(() => {});
-      }
-    } catch (_) {}
-  }
-
-  function drainSidebarSpQueue(appId) {
-    const sp = sidebarSpEmePlayers.get(appId);
-    if (!sp || !sp.sb || sp.sb.updating || sp.queue.length === 0) return;
-    const item = sp.queue.shift();
-    try {
-      if (item.type === 'abort') {
-        sp.sb.abort();
-        drainSidebarSpQueue(appId);
-      } else if (item.type === 'remove') {
-        sp.sb.remove(item.start, item.end);
-      } else if (item.chunk) {
-        if (
-          typeof item.timestampOffset === 'number' &&
-          Math.abs((sp.sb.timestampOffset || 0) - item.timestampOffset) > 0.01
-        ) {
-          sp.sb.timestampOffset = item.timestampOffset;
-        }
-        sp.sb.appendBuffer(item.chunk);
-      }
-    } catch (_) {}
-  }
-
-  async function processPendingSidebarSpGenReqs(appId) {
-    const sp = sidebarSpEmePlayers.get(appId);
-    if (!sp || !sp.mk || !sp.licAuth || sp.pendingGenReqs.length === 0) return;
-    while (sp.pendingGenReqs.length > 0) {
-      const req = sp.pendingGenReqs.shift();
-      try {
-        const sess = sp.mk.createSession();
-        sess.addEventListener('message', async (ev) => {
-          try {
-            const resp = await fetch(sp.licAuth.url, {
-              method: 'POST',
-              headers: sp.licAuth.headers,
-              body: ev.message
-            });
-            const licBuf = await resp.arrayBuffer();
-            await sess.update(licBuf);
-            const curSp = sidebarSpEmePlayers.get(appId);
-            if (curSp) {
-              syncSidebarSpVideoTimeAndPlay(curSp);
-            }
-          } catch (_) {}
-        });
-        await sess.generateRequest(req.initDataType, req.initData);
-      } catch (_) {}
-    }
-  }
-
-  function attachFreshSidebarMediaSource(appId, sp, effectiveMime) {
-    try {
-      if (sp.objUrl) URL.revokeObjectURL(sp.objUrl);
-    } catch (_) {}
-    sp.sb = null;
-    const ms = new MediaSource();
-    sp.ms = ms;
-    sp.objUrl = URL.createObjectURL(ms);
-    sp.videoEl.src = sp.objUrl;
-    return new Promise((resolve) => {
-      ms.addEventListener(
-        'sourceopen',
-        () => {
-          try {
-            const sb = ms.addSourceBuffer(effectiveMime);
-            sp.sb = sb;
-            sb.addEventListener('updateend', () => {
-              drainSidebarSpQueue(appId);
-              syncSidebarSpVideoTimeAndPlay(sp);
-            });
-          } catch (_) {}
-          resolve();
-        },
-        { once: true }
-      );
-    });
-  }
-
-  function ensureSidebarSpEmePlayer(appId, mime, newMsId = 0) {
-    const sp = getOrCreateSidebarSpState(appId);
-    const effectiveMime = mime || 'audio/mp4; codecs="mp4a.40.2"';
-    if (newMsId && sp.msId && newMsId !== sp.msId && sp.videoEl && sp.mk) {
-      sp.msId = newMsId;
-      sp.queue = [];
-      sp.mkReadyPromise = attachFreshSidebarMediaSource(appId, sp, effectiveMime).then(() => {
-        drainSidebarSpQueue(appId);
-        processPendingSidebarSpGenReqs(appId);
-      });
-      return sp.mkReadyPromise;
-    }
-    if (newMsId && !sp.msId) {
-      sp.msId = newMsId;
-    }
-    if (sp.mkReadyPromise) return sp.mkReadyPromise;
-    sp.mkReadyPromise = (async () => {
-      try {
-        const v = document.createElement('video');
-        v.autoplay = true;
-        v.muted = false;
-        v.volume = 1.0;
-        document.body.appendChild(v);
-        sp.videoEl = v;
-
-        const acc = await navigator.requestMediaKeySystemAccess('com.widevine.alpha', [
-          {
-            initDataTypes: ['cenc'],
-            audioCapabilities: [{ contentType: effectiveMime, robustness: 'SW_SECURE_CRYPTO' }]
-          }
-        ]);
-        const mk = await acc.createMediaKeys();
-        if (sp.serverCert) {
-          await mk.setServerCertificate(sp.serverCert).catch(() => {});
-        }
-        await v.setMediaKeys(mk);
-        sp.mk = mk;
-
-        await attachFreshSidebarMediaSource(appId, sp, effectiveMime);
-        drainSidebarSpQueue(appId);
-        processPendingSidebarSpGenReqs(appId);
-      } catch (_) {}
-    })();
-    return sp.mkReadyPromise;
-  }
+  function cleanupSidebarSpEmePlayer() {}
 
   function isAppPersistent(appId) {
     if (!appId || appId === 'pocketmail') return false;
     const mode = appSettings.persistenceMode || 'selected';
     if (mode === 'all') return true;
     if (mode === 'selected') {
-      const list = Array.isArray(appSettings.persistentAppIds)
-        ? appSettings.persistentAppIds
-        : ['spotify', 'youtube', 'discord'];
+      const list = Array.isArray(appSettings.persistentAppIds) ? appSettings.persistentAppIds : [];
       return list.includes(appId);
     }
     return false;
   }
 
-  function syncPersistentSessionToBackground(appId, url, playback = null) {
-    if (IS_POPOUT_VIEW || !sidebarInitCompleted) return;
+  function isAppAllowedForBgAudio(appId) {
+    if (!appId || appId === 'pocketmail') return false;
+    if ((appSettings.persistenceMode || 'selected') === 'eco') return false;
+    if (appSettings.keepAudioPlayingWhenClosed === false) return false;
+    const allowedList = Array.isArray(appSettings.bgAudioAppIds)
+      ? appSettings.bgAudioAppIds
+      : ['spotify', 'youtube'];
+    return allowedList.includes(appId);
+  }
+
+  function isPlayableYouTubeUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    try {
+      const u = new URL(url);
+      const h = u.hostname.toLowerCase();
+      if (h.includes('music.youtube.com')) return true;
+      if (!h.includes('youtube.com')) return true;
+      const p = u.pathname || '/';
+      return (
+        p.startsWith('/watch') ||
+        p.startsWith('/shorts') ||
+        p.startsWith('/live') ||
+        p.startsWith('/embed')
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function syncPersistentSessionToBackground(appId, url, playback = null, explicitMailClick = false) {
+    if (IS_POPOUT_VIEW) return;
     if ((appSettings.persistenceMode || 'selected') === 'eco') return;
+    if (appId && isAppPersistent(appId)) {
+      knownOpenPersistentIds.add(appId);
+      if (url && !isTransientAuthOrBootUrl(url)) {
+        hibernatedAppUrls.set(appId, url);
+      }
+    }
+    if (activeRailAppId && activeRailAppId !== 'pocketmail' && isAppPersistent(activeRailAppId)) {
+      appSettings.persistentLastActiveAppId = activeRailAppId;
+    } else if (activeRailAppId === 'pocketmail' && explicitMailClick) {
+      appSettings.persistentLastActiveAppId = 'pocketmail';
+    }
+    saveFastBootCache();
+    if (!sidebarInitCompleted) return;
+    const safePlayback =
+      playback && appId && !isAppAllowedForBgAudio(appId)
+        ? { ...playback, isPlaying: false }
+        : playback;
     const payload = {
       type: 'UPDATE_PERSISTENT_SESSION',
       activeAppId: activeRailAppId,
+      explicitMailClick: explicitMailClick || undefined,
+      openPersistentAppIds: Array.from(knownOpenPersistentIds).filter((id) => isAppPersistent(id)),
       appId: appId || undefined,
       url: url || undefined,
-      playback: playback || undefined
+      playback: safePlayback || undefined
     };
     if (sidebarLifecyclePort) {
       try {
         sidebarLifecyclePort.postMessage(payload);
+        return;
       } catch (_) {}
     }
     browser.runtime.sendMessage(payload).catch(() => {});
   }
 
   function enforceMediaPoolMemoryCap(protectedAppId) {
-    const mode = appSettings.persistenceMode || 'selected';
-    const selectedCount = Array.isArray(appSettings.persistentAppIds) ? appSettings.persistentAppIds.length : 3;
-    const effectiveCap =
-      mode === 'all'
-        ? 12
-        : mode === 'selected'
-        ? Math.max(MAX_KEEPALIVE_FRAMES, selectedCount + 2)
-        : MAX_KEEPALIVE_FRAMES;
+    const effectiveCap = MAX_KEEPALIVE_FRAMES;
 
     while (mediaFramePool.size >= effectiveCap) {
       let oldestId = null;
@@ -1920,9 +2224,13 @@
 
       mediaFramePool.forEach((entry, id) => {
         if (id === protectedAppId || id === activeRailAppId) return;
-        if (isAppPersistent(id)) return;
-        const audioBonus = id === 'spotify' || id === 'youtube' ? 180000 : 0;
-        const score = (entry.lastUsedAt || 0) + audioBonus;
+        const st = framePlaybackStates.get(id);
+        const isActivelyPlayingAudio =
+          isAppAllowedForBgAudio(id) &&
+          ((st && st.isPlaying) || pendingSidebarAudioTakeoverSet.has(id) || currentAudibleBgAppId === id);
+        const persistBonus = isAppPersistent(id) ? 60000 : 0;
+        const audioBonus = isActivelyPlayingAudio ? 600000 : 0;
+        const score = (entry.lastUsedAt || 0) + persistBonus + audioBonus;
         if (score < oldestScore) {
           oldestScore = score;
           oldestId = id;
@@ -1948,6 +2256,13 @@
   function getOrCreateMediaFrame(app) {
     let entry = mediaFramePool.get(app.id);
     if (!entry && mediaFramePoolEl) {
+      if (!IS_POPOUT_VIEW && !sidebarLifecyclePort) {
+        try {
+          if (browser.runtime && typeof browser.runtime.connect === 'function') {
+            sidebarLifecyclePort = browser.runtime.connect({ name: 'foxhub-sidebar-lifecycle' });
+          }
+        } catch (_) {}
+      }
       enforceMediaPoolMemoryCap(app.id);
       const iframe = document.createElement('iframe');
       iframe.className = 'pm-media-frame';
@@ -1967,6 +2282,7 @@
         currentUrl: '',
         hasNavigated: false,
         loaded: false,
+        autoResumeSentAt: 0,
         zoom: 1.0,
         lastUsedAt: Date.now(),
         lastNavAt: Date.now()
@@ -1985,6 +2301,30 @@
 
       mediaFramePoolEl.appendChild(iframe);
       mediaFramePool.set(app.id, entry);
+
+      if ((app.id === 'spotify' || app.id === 'youtube') && !IS_POPOUT_VIEW) {
+        // Only one player per app may exist: retire the hidden bg player and auto-resume here if music was playing
+        const takeoverAppId = app.id;
+        browser.runtime
+          .sendMessage({ type: 'SIDEBAR_SP_TAKEOVER_BEGIN', appId: takeoverAppId })
+          .then((res) => {
+            if (res && res.resume) {
+              pendingSidebarAudioTakeoverSet.add(takeoverAppId);
+              if (entry.loaded && (!entry.autoResumeSentAt || Date.now() - entry.autoResumeSentAt > 4000)) {
+                entry.autoResumeSentAt = Date.now();
+                try {
+                  iframe.contentWindow?.postMessage(
+                    { target: 'pocketmail-media-frame', cmd: 'AUTO_RESUME_PLAYBACK' },
+                    '*'
+                  );
+                } catch (_) {}
+              }
+            } else {
+              pendingSidebarAudioTakeoverSet.delete(takeoverAppId);
+            }
+          })
+          .catch(() => {});
+      }
     } else if (entry) {
       entry.lastUsedAt = Date.now();
     }
@@ -1993,10 +2333,17 @@
 
   function pauseOtherSidebarMediaFrames(activeAudioAppId) {
     mediaFramePool.forEach((entry, id) => {
-      if (id === activeAudioAppId) return;
+      if (id === activeAudioAppId) {
+        entry.suppressedWhileInactive = false;
+        return;
+      }
+      entry.suppressedWhileInactive = true;
       cleanupSidebarMsePlayer(id);
       cleanupSidebarSpEmePlayer(id);
       pendingSidebarAudioTakeoverSet.delete(id);
+      if (currentAudibleBgAppId === id) {
+        currentAudibleBgAppId = null;
+      }
       const st = framePlaybackStates.get(id);
       if (st && st.isPlaying) {
         st.isPlaying = false;
@@ -2014,11 +2361,36 @@
   }
 
   function switchActiveMediaFrame(appId) {
-    const isMediaApp = ['spotify', 'youtube', 'tiktok', 'twitch'].includes(appId);
+    const isMediaApp = ['spotify', 'youtube', 'tiktok', 'twitch'].includes(appId) || isAppAllowedForBgAudio(appId);
     if (isMediaApp) {
       pauseOtherSidebarMediaFrames(appId);
+    } else {
+      // Switching to a non-media app (e.g. Discord, WhatsApp): pause any background frame not allowed for bg audio, or any frame that wasn't already playing when we switched away
+      mediaFramePool.forEach((entry, id) => {
+        if (id === appId) {
+          entry.suppressedWhileInactive = false;
+          return;
+        }
+        const st = framePlaybackStates.get(id);
+        const wasAlreadyPlaying = Boolean(
+          (st && st.isPlaying) || pendingSidebarAudioTakeoverSet.has(id) || currentAudibleBgAppId === id
+        );
+        if (!isAppAllowedForBgAudio(id) || !wasAlreadyPlaying) {
+          entry.suppressedWhileInactive = true;
+          if (st && st.isPlaying) st.isPlaying = false;
+          try {
+            entry.frame.contentWindow?.postMessage(
+              { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+              '*'
+            );
+          } catch (_) {}
+        }
+      });
     }
     mediaFramePool.forEach((entry, id) => {
+      if (id === appId) {
+        entry.suppressedWhileInactive = false;
+      }
       entry.frame.classList.toggle('is-active', id === appId);
     });
   }
@@ -2026,8 +2398,12 @@
   function closeMediaAppFrame(appId) {
     const entry = mediaFramePool.get(appId);
     mediaFramePool.delete(appId);
+    knownOpenPersistentIds.delete(appId);
     framePlaybackStates.delete(appId);
     pendingSidebarAudioTakeoverSet.delete(appId);
+    if (currentAudibleBgAppId === appId) {
+      currentAudibleBgAppId = null;
+    }
     cleanupSidebarMsePlayer(appId);
     cleanupSidebarSpEmePlayer(appId);
     browser.runtime
@@ -2043,11 +2419,29 @@
       activeRailAppId = 'pocketmail';
       hideMediaWorkspaceKeepAlive();
     }
+    saveFastBootCache();
     renderOperaRail();
   }
 
   function hideMediaWorkspaceKeepAlive() {
     if (!mediaWorkspace) return;
+    // Pause any frame in the pool that is not configured for background audio or wasn't already playing
+    mediaFramePool.forEach((entry, id) => {
+      const st = framePlaybackStates.get(id);
+      const wasAlreadyPlaying = Boolean(
+        (st && st.isPlaying) || pendingSidebarAudioTakeoverSet.has(id) || currentAudibleBgAppId === id
+      );
+      if (!isAppAllowedForBgAudio(id) || !wasAlreadyPlaying) {
+        entry.suppressedWhileInactive = true;
+        if (st && st.isPlaying) st.isPlaying = false;
+        try {
+          entry.frame.contentWindow?.postMessage(
+            { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+            '*'
+          );
+        } catch (_) {}
+      }
+    });
     if (mediaFramePool.size > 0) {
       mediaWorkspace.classList.remove('hidden');
       mediaWorkspace.classList.add('pm-workspace-keepalive');
@@ -2153,7 +2547,11 @@
     const entry = getOrCreateMediaFrame(app);
     if (!entry) return;
 
-    const rawTargetUrl = customUrl || entry.currentUrl || entry.restoredUrl || app.defaultUrl;
+    const validCurrentUrl =
+      entry.currentUrl && !isTransientAuthOrBootUrl(entry.currentUrl) ? entry.currentUrl : '';
+    const validRestoredUrl =
+      entry.restoredUrl && !isTransientAuthOrBootUrl(entry.restoredUrl) ? entry.restoredUrl : '';
+    const rawTargetUrl = customUrl || validCurrentUrl || validRestoredUrl || app.defaultUrl;
     const isWarmAndNavigated = Boolean(entry.hasNavigated && entry.loaded && entry.currentUrl);
     activeMediaUrl = rawTargetUrl;
 
@@ -2260,6 +2658,7 @@
 
     renderMediaBottomBar(app);
     maybeShowFirstTimeTopBarHint();
+    maybeShowPersistentMemoryHint();
 
     if (canUseSmoothSpaNav) {
       // Smooth 0ms in-app SPA navigation without reloading the iframe!
@@ -2275,19 +2674,60 @@
       return;
     }
 
+    const normCurUrl = (entry.currentUrl || '').replace(/\/+$/, '');
+    const normTargetUrl = (targetUrl || '').replace(/\/+$/, '');
+    const isAlreadyNavigatingSameUrl =
+      Boolean(entry.hasNavigated && normCurUrl && normCurUrl === normTargetUrl) && !subViewMeta;
+
+    if (isAlreadyNavigatingSameUrl) {
+      if (entry.loaded) {
+        hideMediaBrandLoader(entry.frame);
+        broadcastSocialAppTheme();
+      }
+      return;
+    }
+
     if (!isWarmAndNavigated || Boolean(customUrl)) {
       if (isWarmAndNavigated && app.id === 'tiktok') {
         // Free active video decoders & MSE buffers before switching between TikTok video feed and Messages
         sendCommandToMediaFrame('FREE_HEAVY_MEDIA');
       }
+      const isFastCachedRestore = Boolean(
+        !isWarmAndNavigated && isAppPersistent(app.id) && (entry.restoredUrl || hibernatedAppUrls.has(app.id))
+      );
       entry.loaded = false;
       entry.hasNavigated = true;
       entry.currentUrl = rawTargetUrl;
       entry.pendingSpaUrl = '';
       entry.pendingSpaUntil = 0;
       entry.lastNavAt = Date.now();
-      showMediaBrandLoader(app, entry.frame);
-      entry.frame.src = targetUrl;
+      showMediaBrandLoader(app, entry.frame, isFastCachedRestore);
+      // Bypass & unregister any pre-existing Service Worker (sw.js / serviceworker.js) once per profile on X and WhatsApp
+      // so cached X-Frame-Options: DENY / CSP frame-ancestors 'none' in Service Worker CacheStorage never blocks embedding,
+      // while avoiding re-running robots.txt?pm_boot=1 on subsequent popup reopens!
+      const swStorageKey = `pm_sw_cleaned_v1_${app.id}`;
+      let alreadyCleanedInProfile = Boolean(entry.swCleaned);
+      if (!alreadyCleanedInProfile) {
+        try {
+          alreadyCleanedInProfile = window.localStorage.getItem(swStorageKey) === '1';
+        } catch (_) {}
+      }
+      const needsSwBootClean = !alreadyCleanedInProfile && (app.id === 'x' || app.id === 'whatsapp');
+      if (needsSwBootClean) {
+        entry.swCleaned = true;
+        try {
+          window.localStorage.setItem(swStorageKey, '1');
+        } catch (_) {}
+        try {
+          const origin = new URL(targetUrl).origin;
+          entry.frame.src = `${origin}/robots.txt?pm_boot=1&pm_target=${encodeURIComponent(targetUrl)}`;
+        } catch (_) {
+          entry.frame.src = targetUrl;
+        }
+      } else {
+        entry.swCleaned = true;
+        entry.frame.src = targetUrl;
+      }
     } else {
       // Already warm in Keep-Alive Pool — 0ms instant switch!
       hideMediaBrandLoader(entry.frame);
@@ -2318,6 +2758,26 @@
         hintEl.classList.add('hidden');
       }, 7500);
     }, 1250);
+  }
+
+  let hasShownPersistHintThisSession = false;
+  function maybeShowPersistentMemoryHint() {
+    if (hasShownPersistHintThisSession) return;
+    const mode = appSettings.persistenceMode || 'selected';
+    const picked = Array.isArray(appSettings.persistentAppIds) ? appSettings.persistentAppIds : [];
+    if (mode === 'all' || picked.length > 0) return;
+
+    const shownCount = Number(appSettings.persistentMemoryHintCount) || 0;
+    if (shownCount >= 2) return;
+
+    hasShownPersistHintThisSession = true;
+    const nextCount = shownCount + 1;
+    appSettings.persistentMemoryHintCount = nextCount;
+    saveSettingsPatch({ persistentMemoryHintCount: nextCount });
+
+    setTimeout(() => {
+      showToast('Tip: Persistent Memory is off by default — you can enable it per app in the + Hub anytime.');
+    }, 1600);
   }
 
   function syncMediaTopBarAutoHideState() {
@@ -2378,23 +2838,29 @@
     const resNoteEl = document.getElementById('pm-persistence-resource-note');
     if (resNoteEl) {
       resNoteEl.replaceChildren();
+      const iconKey = pMode === 'eco' ? 'bolt' : pMode === 'selected' ? 'music' : 'rocket';
+      const noteSvg = mediaApi.createSubViewIcon(iconKey, 14);
+      noteSvg.style.cssText = 'flex-shrink:0;margin-top:1px;color:var(--accent);';
+      const textWrap = document.createElement('div');
       const strongEl = document.createElement('strong');
       const descSpan = document.createElement('span');
       if (pMode === 'eco') {
-        strongEl.textContent = '⚡ Resource Impact (Eco Mode): ';
+        strongEl.textContent = 'Resource Impact (Eco Mode): ';
         descSpan.textContent =
           'Uses 0 MB extra RAM and zero CPU/GPU when closed. Closing the sidebar unloads apps and resets to Mail Inbox.';
       } else if (pMode === 'selected') {
-        strongEl.textContent = '🎵 Resource Impact (Selected Apps): ';
+        strongEl.textContent = 'Resource Impact (Selected Apps): ';
         descSpan.textContent =
-          'Keeps only your chosen apps below in persistent memory & background audio when closed so music keeps playing while you work in full screen, and restores your exact page on reopen. Uses extra RAM (~150–300 MB per active app) and moderate CPU/GPU.';
+          'Keeps only your chosen apps below in persistent memory & background audio when closed so music keeps playing while you work in full screen, and restores your exact page & scroll position on reopen.';
       } else {
-        strongEl.textContent = '🚀 Resource Impact (All Apps Persistent): ';
+        strongEl.textContent = 'Resource Impact (All Apps Persistent): ';
         descSpan.textContent =
           'Keeps all opened apps in persistent memory & background audio across sidebar close/reopen. Highest RAM, CPU, and GPU usage.';
       }
-      resNoteEl.appendChild(strongEl);
-      resNoteEl.appendChild(descSpan);
+      textWrap.appendChild(strongEl);
+      textWrap.appendChild(descSpan);
+      resNoteEl.appendChild(noteSvg);
+      resNoteEl.appendChild(textWrap);
     }
 
     const pickerWrap = document.getElementById('pm-persistent-apps-picker-wrap');
@@ -2404,7 +2870,7 @@
       pickerEl.replaceChildren();
       const pickedIds = Array.isArray(appSettings.persistentAppIds)
         ? appSettings.persistentAppIds
-        : ['spotify', 'youtube', 'discord'];
+        : [];
       const allApps = [
         ...(mediaApi.getOrderedBuiltInApps ? mediaApi.getOrderedBuiltInApps(appSettings) : mediaApi.BUILTIN_MEDIA_APPS),
         ...(Array.isArray(appSettings.customMediaApps) ? appSettings.customMediaApps : [])
@@ -2413,12 +2879,30 @@
         const isPicked = pickedIds.includes(app.id);
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = `pm-opt-pill ${isPicked ? 'active' : ''}`;
-        chip.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-size:11px;';
-        chip.appendChild(mediaApi.createAppSvgIcon(app.id, 12));
+        chip.className = `pm-bgaudio-app-card ${isPicked ? 'is-active' : ''}`;
+        const leftWrap = document.createElement('span');
+        leftWrap.className = 'pm-bgaudio-app-left';
+        const iconBadge = document.createElement('span');
+        iconBadge.className = 'pm-bgaudio-app-icon';
+        iconBadge.style.background = app.gradient || app.color || 'var(--accent)';
+        iconBadge.appendChild(mediaApi.createAppSvgIcon(app.id, 12));
         const lbl = document.createElement('span');
-        lbl.textContent = `${app.name}${isPicked ? ' ✓' : ''}`;
-        chip.appendChild(lbl);
+        lbl.className = 'pm-bgaudio-app-name';
+        lbl.textContent = app.name;
+        leftWrap.appendChild(iconBadge);
+        leftWrap.appendChild(lbl);
+
+        const statusBadge = document.createElement('span');
+        statusBadge.className = 'pm-bgaudio-status-badge';
+        if (isPicked) {
+          statusBadge.appendChild(mediaApi.createSubViewIcon('check', 10));
+        }
+        const statusTxt = document.createElement('span');
+        statusTxt.textContent = isPicked ? 'ON' : 'OFF';
+        statusBadge.appendChild(statusTxt);
+
+        chip.appendChild(leftWrap);
+        chip.appendChild(statusBadge);
         chip.addEventListener('click', async () => {
           const nextPicked = isPicked ? pickedIds.filter((id) => id !== app.id) : [...pickedIds, app.id];
           await saveSettingsPatch({ persistentAppIds: nextPicked });
@@ -2429,16 +2913,72 @@
       });
     }
 
+    const bgAudioPickerWrap = document.getElementById('pm-bgaudio-apps-picker-wrap');
+    const bgAudioPickerEl = document.getElementById('pm-bgaudio-apps-picker');
+    const pickedBgAudioIds = Array.isArray(appSettings.bgAudioAppIds)
+      ? appSettings.bgAudioAppIds
+      : ['spotify', 'youtube'];
+    if (bgAudioPickerWrap && bgAudioPickerEl) {
+      const showBgAudioPicker = pMode !== 'eco' && appSettings.keepAudioPlayingWhenClosed !== false;
+      bgAudioPickerWrap.classList.toggle('hidden', !showBgAudioPicker);
+      bgAudioPickerEl.replaceChildren();
+      const allAppsForBg = [
+        ...(mediaApi.getOrderedBuiltInApps ? mediaApi.getOrderedBuiltInApps(appSettings) : mediaApi.BUILTIN_MEDIA_APPS),
+        ...(Array.isArray(appSettings.customMediaApps) ? appSettings.customMediaApps : [])
+      ];
+      allAppsForBg.forEach((app) => {
+        const isAllowed = pickedBgAudioIds.includes(app.id);
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = `pm-bgaudio-app-card ${isAllowed ? 'is-bgaudio-on' : ''}`;
+        const leftWrap = document.createElement('span');
+        leftWrap.className = 'pm-bgaudio-app-left';
+        const iconBadge = document.createElement('span');
+        iconBadge.className = 'pm-bgaudio-app-icon';
+        iconBadge.style.background = app.gradient || app.color || 'var(--accent)';
+        iconBadge.appendChild(mediaApi.createAppSvgIcon(app.id, 12));
+        const lbl = document.createElement('span');
+        lbl.className = 'pm-bgaudio-app-name';
+        lbl.textContent = app.name;
+        leftWrap.appendChild(iconBadge);
+        leftWrap.appendChild(lbl);
+
+        const statusBadge = document.createElement('span');
+        statusBadge.className = 'pm-bgaudio-status-badge';
+        statusBadge.appendChild(mediaApi.createSubViewIcon(isAllowed ? 'speaker-play' : 'speaker-mute', 11));
+        const statusTxt = document.createElement('span');
+        statusTxt.textContent = isAllowed ? 'ON' : 'OFF';
+        statusBadge.appendChild(statusTxt);
+
+        chip.appendChild(leftWrap);
+        chip.appendChild(statusBadge);
+        chip.addEventListener('click', async () => {
+          const nextBgAudioIds = isAllowed
+            ? pickedBgAudioIds.filter((id) => id !== app.id)
+            : [...pickedBgAudioIds, app.id];
+          await saveSettingsPatch({ bgAudioAppIds: nextBgAudioIds });
+          renderMediaAppsManager();
+          showToast(
+            isAllowed
+              ? `${app.name}: Background audio when closed turned OFF`
+              : `${app.name}: Background audio when closed turned ON`
+          );
+        });
+        bgAudioPickerEl.appendChild(chip);
+      });
+    }
+
     const spAutoplayTipEl = document.getElementById('pm-spotify-bg-autoplay-tip');
     if (spAutoplayTipEl) {
       const pickedIdsForTip = Array.isArray(appSettings.persistentAppIds)
         ? appSettings.persistentAppIds
-        : ['spotify', 'youtube', 'discord'];
+        : [];
       const isSpotifyPersistent = pMode === 'all' || (pMode === 'selected' && pickedIdsForTip.includes('spotify'));
       const showSpTip =
         pMode !== 'eco' &&
         appSettings.keepAudioPlayingWhenClosed !== false &&
-        isSpotifyPersistent;
+        isSpotifyPersistent &&
+        pickedBgAudioIds.includes('spotify');
       spAutoplayTipEl.classList.toggle('hidden', !showSpTip);
     }
 
@@ -2465,7 +3005,7 @@
     ];
 
     let draggedGridAppId = null;
-    const reorderAppsInManager = async (sourceId, targetId) => {
+    const reorderAppsInManager = (sourceId, targetId) => {
       if (!sourceId || !targetId || sourceId === targetId) return;
       const orderedBuiltIn = mediaApi.getOrderedBuiltInApps
         ? mediaApi.getOrderedBuiltInApps(appSettings)
@@ -2482,9 +3022,11 @@
       uniqueOrder.splice(fromIdx, 1);
       uniqueOrder.splice(toIdx, 0, sourceId);
 
-      await saveSettingsPatch({ mediaAppsOrder: uniqueOrder });
+      // Instant 0ms optimistic DOM update
+      appSettings = { ...appSettings, mediaAppsOrder: uniqueOrder };
       renderMediaAppsManager();
       renderOperaRail();
+      saveSettingsPatch({ mediaAppsOrder: uniqueOrder });
       showToast('Updated pinned app order');
     };
 
@@ -2494,9 +3036,19 @@
       const orderedBuiltIns = mediaApi.getOrderedBuiltInApps
         ? mediaApi.getOrderedBuiltInApps(appSettings)
         : mediaApi.BUILTIN_MEDIA_APPS;
+      const customAppItems = (Array.isArray(appSettings.customMediaApps) ? appSettings.customMediaApps : []).map(
+        (c, idx) => ({
+          ...c,
+          id: c.id || `custom-${idx}`,
+          color: c.color || '#4E82EE',
+          isCustom: true,
+          customIdx: idx
+        })
+      );
+      const allGridApps = [...orderedBuiltIns, ...customAppItems];
 
-      orderedBuiltIns.forEach((app) => {
-        const isEnabled = enabledIds.includes(app.id);
+      allGridApps.forEach((app) => {
+        const isEnabled = app.isCustom ? app.enabled !== false : enabledIds.includes(app.id);
         const card = document.createElement('div');
         card.className = `pm-media-toggle-card ${isEnabled ? 'enabled' : ''}`;
         card.draggable = true;
@@ -2514,7 +3066,7 @@
         });
         card.addEventListener('dragover', (e) => {
           e.preventDefault();
-          if (draggedGridAppId && draggedGridAppId !== app.id) {
+          if (draggedGridAppId && draggedGridAppId !== app.id && !card.classList.contains('drag-over-target')) {
             card.classList.add('drag-over-target');
           }
         });
@@ -2557,18 +3109,59 @@
         info.appendChild(iconBox);
         info.appendChild(nameSpan);
 
+        const isBgAudioAllowed = pickedBgAudioIds.includes(app.id);
+        const bgAudioBtn = document.createElement('button');
+        bgAudioBtn.type = 'button';
+        bgAudioBtn.className = `pm-btn-xs ${isBgAudioAllowed ? 'pm-btn-primary' : 'pm-btn-secondary'}`;
+        bgAudioBtn.style.cssText = isBgAudioAllowed
+          ? 'background:#1db954;border-color:#1db954;color:#fff;padding:2px 7px;font-size:10.5px;display:inline-flex;align-items:center;gap:4px;'
+          : 'opacity:0.75;padding:2px 7px;font-size:10.5px;display:inline-flex;align-items:center;gap:4px;';
+        bgAudioBtn.appendChild(mediaApi.createSubViewIcon(isBgAudioAllowed ? 'speaker-play' : 'speaker-mute', 11));
+        const bgBtnTxt = document.createElement('span');
+        bgBtnTxt.textContent = isBgAudioAllowed ? 'Bg Audio: ON' : 'Bg Audio: OFF';
+        bgAudioBtn.appendChild(bgBtnTxt);
+        bgAudioBtn.title = isBgAudioAllowed
+          ? `${app.name} is allowed to keep playing audio when the extension is closed (Click to turn OFF)`
+          : `${app.name} will NOT play audio when the extension is closed (Click to turn ON)`;
+        bgAudioBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const nextBgAudioIds = isBgAudioAllowed
+            ? pickedBgAudioIds.filter((id) => id !== app.id)
+            : [...pickedBgAudioIds, app.id];
+          await saveSettingsPatch({ bgAudioAppIds: nextBgAudioIds });
+          renderMediaAppsManager();
+          showToast(
+            isBgAudioAllowed
+              ? `${app.name}: Background audio when closed turned OFF`
+              : `${app.name}: Background audio when closed turned ON`
+          );
+        });
+
         const statusBtn = document.createElement('button');
         statusBtn.className = `pm-btn-xs ${isEnabled ? 'pm-btn-primary' : 'pm-btn-secondary'}`;
         statusBtn.textContent = isEnabled ? 'Pinned' : 'Hidden';
 
+        const rightBtnsWrap = document.createElement('div');
+        rightBtnsWrap.style.cssText = 'display:inline-flex;align-items:center;gap:5px;';
+        rightBtnsWrap.appendChild(bgAudioBtn);
+        rightBtnsWrap.appendChild(statusBtn);
+
         topRow.appendChild(info);
-        topRow.appendChild(statusBtn);
+        topRow.appendChild(rightBtnsWrap);
 
         topRow.addEventListener('click', async () => {
-          const nextIds = isEnabled
-            ? enabledIds.filter((id) => id !== app.id)
-            : [...enabledIds, app.id];
-          await saveSettingsPatch({ enabledMediaApps: nextIds });
+          if (app.isCustom) {
+            const customs = Array.isArray(appSettings.customMediaApps) ? [...appSettings.customMediaApps] : [];
+            if (customs[app.customIdx]) {
+              customs[app.customIdx] = { ...customs[app.customIdx], enabled: !isEnabled };
+              await saveSettingsPatch({ customMediaApps: customs });
+            }
+          } else {
+            const nextIds = isEnabled
+              ? enabledIds.filter((id) => id !== app.id)
+              : [...enabledIds, app.id];
+            await saveSettingsPatch({ enabledMediaApps: nextIds });
+          }
           renderMediaAppsManager();
           renderOperaRail();
         });
@@ -2613,7 +3206,7 @@
           } else {
             delete nextMap[app.id];
           }
-          await saveSettingsPatch({ socialAppSoundMap: nextMap });
+          saveSettingsPatch({ socialAppSoundMap: nextMap });
           renderMediaAppsManager();
           const chosen = soundSelect.value || appSettings.soundId || 'bamboo-pop';
           if (chosen !== 'none' && window.PocketMailSound) {
@@ -2639,7 +3232,7 @@
         muteBtn.className = `pm-media-sound-mute-btn ${isAppMuted ? 'is-muted' : ''}`;
         muteBtn.title = isAppMuted ? `Unmute ${app.name} notifications` : `Mute ${app.name} notifications`;
         muteBtn.appendChild(mediaApi.createSubViewIcon(isAppMuted ? 'speaker-mute' : 'alerts', 12));
-        muteBtn.addEventListener('click', async () => {
+        muteBtn.addEventListener('click', () => {
           const nextMap = { ...(appSettings.socialAppSoundMap || {}) };
           if (isAppMuted) {
             if (isMediaStreamApp) {
@@ -2652,7 +3245,7 @@
             nextMap[app.id] = 'none';
             showToast(`Muted ${app.name} notifications`);
           }
-          await saveSettingsPatch({ socialAppSoundMap: nextMap });
+          saveSettingsPatch({ socialAppSoundMap: nextMap });
           renderMediaAppsManager();
         });
 
@@ -2690,7 +3283,7 @@
         });
         row.addEventListener('dragover', (e) => {
           e.preventDefault();
-          if (draggedGridAppId && draggedGridAppId !== appId) {
+          if (draggedGridAppId && draggedGridAppId !== appId && !row.classList.contains('drag-over-target')) {
             row.classList.add('drag-over-target');
           }
         });
@@ -2732,9 +3325,9 @@
         const delBtn = document.createElement('button');
         delBtn.className = 'pm-btn-xs pm-btn-secondary';
         delBtn.textContent = 'Remove';
-        delBtn.addEventListener('click', async () => {
+        delBtn.addEventListener('click', () => {
           const nextCustoms = customs.filter((_, i) => i !== idx);
-          await saveSettingsPatch({ customMediaApps: nextCustoms });
+          saveSettingsPatch({ customMediaApps: nextCustoms });
           renderMediaAppsManager();
           renderOperaRail();
         });
@@ -2949,7 +3542,7 @@
       hideMediaWorkspaceKeepAlive();
       mediaAppsDrawer?.classList.add('hidden');
       renderOperaRail();
-      syncPersistentSessionToBackground('pocketmail', '');
+      syncPersistentSessionToBackground('pocketmail', '', null, true);
     });
 
     const openFirefoxLeftSidebar = () => {
@@ -3037,6 +3630,7 @@
     document.getElementById('chk-keep-audio-closed')?.addEventListener('change', async (e) => {
       const enabled = Boolean(e.target.checked);
       await saveSettingsPatch({ keepAudioPlayingWhenClosed: enabled });
+      renderMediaAppsManager();
       showToast(
         enabled
           ? 'Background audio keep-alive enabled when sidebar closes'
@@ -3358,7 +3952,11 @@
           } else {
             sourceEntry.frame.classList.remove('is-loading');
           }
-          if (pendingSidebarAudioTakeoverSet.has(sourceEntry.appId)) {
+          if (
+            pendingSidebarAudioTakeoverSet.has(sourceEntry.appId) &&
+            (!sourceEntry.autoResumeSentAt || Date.now() - sourceEntry.autoResumeSentAt > 4000)
+          ) {
+            sourceEntry.autoResumeSentAt = Date.now();
             try {
               sourceEntry.frame.contentWindow?.postMessage(
                 { target: 'pocketmail-media-frame', cmd: 'AUTO_RESUME_PLAYBACK' },
@@ -3378,7 +3976,11 @@
           } else {
             sourceEntry.frame.classList.remove('is-loading');
           }
-          if (pendingSidebarAudioTakeoverSet.has(sourceEntry.appId)) {
+          if (
+            pendingSidebarAudioTakeoverSet.has(sourceEntry.appId) &&
+            (!sourceEntry.autoResumeSentAt || Date.now() - sourceEntry.autoResumeSentAt > 4000)
+          ) {
+            sourceEntry.autoResumeSentAt = Date.now();
             try {
               sourceEntry.frame.contentWindow?.postMessage(
                 { target: 'pocketmail-media-frame', cmd: 'AUTO_RESUME_PLAYBACK' },
@@ -3401,6 +4003,7 @@
           cleanupSidebarMsePlayer(appId);
           cleanupSidebarSpEmePlayer(appId);
           browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
+          renderOperaRail();
         }
       } else if (data.type === 'PM_SP_SIDEBAR_PLAYPAUSE_CLICK') {
         const appId =
@@ -3418,36 +4021,147 @@
             ? data.flatFrameName.replace('pm-media-frame-', '')
             : '');
         if (appId) {
-          // Route all Spotify EME + MSE bridge streams directly to persistent background.html player so closing the sidebar has 0.0ms gap!
-          try {
-            const bgWin =
-              browser.extension && typeof browser.extension.getBackgroundPage === 'function'
-                ? browser.extension.getBackgroundPage()
-                : null;
-            if (bgWin && typeof bgWin.__pmHandleSpEmeBridge === 'function') {
-              bgWin.__pmHandleSpEmeBridge(appId, data, 'sidebar');
-            } else if (sidebarLifecyclePort) {
-              sidebarLifecyclePort.postMessage({ type: 'FORWARD_SP_EME_BRIDGE', appId, data });
-            }
-          } catch (_) {
-            if (sidebarLifecyclePort) {
-              try {
+          // Only forward to background.html if media-frame-optimizer's direct emeBridgePort didn't already deliver it!
+          if (!data.alreadyRoutedToBg) {
+            try {
+              const bgWin =
+                browser.extension && typeof browser.extension.getBackgroundPage === 'function'
+                  ? browser.extension.getBackgroundPage()
+                  : null;
+              if (bgWin && typeof bgWin.__pmHandleSpEmeBridge === 'function') {
+                bgWin.__pmHandleSpEmeBridge(appId, data, 'sidebar');
+              } else if (sidebarLifecyclePort) {
                 sidebarLifecyclePort.postMessage({ type: 'FORWARD_SP_EME_BRIDGE', appId, data });
-              } catch (__) {}
+              }
+            } catch (_) {
+              if (sidebarLifecyclePort) {
+                try {
+                  sidebarLifecyclePort.postMessage({ type: 'FORWARD_SP_EME_BRIDGE', appId, data });
+                } catch (__) {}
+              }
             }
           }
 
-          if (data.bridgeType === 'SYNC_TIME' && !data.paused) {
+          if (data.bridgeType === 'STOP_PLAYBACK') {
             pendingSidebarAudioTakeoverSet.delete(appId);
+            const prevPb = framePlaybackStates.get(appId);
+            const nextUrl =
+              (data.href && !data.href.includes('pm_boot=1') ? data.href : '') ||
+              sourceEntry?.currentUrl ||
+              prevPb?.resumeUrl ||
+              '';
+            if (sourceEntry && nextUrl) {
+              sourceEntry.currentUrl = nextUrl;
+            }
             const pb = {
-              isPlaying: true,
-              currentTime: Math.floor(Number(data.currentTime) || 0),
-              resumeUrl: sourceEntry?.currentUrl || 'https://open.spotify.com/',
-              title: 'Spotify',
+              isPlaying: false,
+              currentTime: 0,
+              resumeUrl: nextUrl,
+              title: prevPb?.title || '',
               updatedAt: Date.now()
             };
             framePlaybackStates.set(appId, pb);
-            syncPersistentSessionToBackground(appId, pb.resumeUrl, pb);
+            if (currentAudibleBgAppId === appId) {
+              currentAudibleBgAppId = null;
+            }
+            renderOperaRail();
+            syncPersistentSessionToBackground(appId, nextUrl, pb);
+          } else if (data.bridgeType === 'SYNC_TIME') {
+            const targetEntry = sourceEntry || mediaFramePool.get(appId);
+            const isSuppressedInactive =
+              appId !== activeRailAppId &&
+              Boolean(targetEntry?.suppressedWhileInactive || !isAppAllowedForBgAudio(appId));
+            if (isSuppressedInactive && !data.paused) {
+              try {
+                targetEntry?.frame?.contentWindow?.postMessage(
+                  { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+                  '*'
+                );
+              } catch (_) {}
+              browser.runtime
+                .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId, clearPlaybackState: true })
+                .catch(() => {});
+              return;
+            }
+            const isNonPlayableYt =
+              appId === 'youtube' &&
+              (data.href || sourceEntry?.currentUrl) &&
+              !isPlayableYouTubeUrl(data.href || sourceEntry?.currentUrl);
+            if (!data.paused && !isNonPlayableYt) {
+              pendingSidebarAudioTakeoverSet.delete(appId);
+              const prevPb = framePlaybackStates.get(appId);
+              const prevWasPlaying = Boolean(prevPb?.isPlaying);
+              const prevAudible = currentAudibleBgAppId;
+              const liveSec = Math.floor(Number(data.currentTime) || 0);
+              let nextResumeUrl =
+                (data.href && !data.href.includes('pm_boot=1') ? data.href : '') ||
+                sourceEntry?.currentUrl ||
+                prevPb?.resumeUrl ||
+                (appId === 'youtube' ? 'https://www.youtube.com/' : 'https://open.spotify.com/');
+              if (appId === 'youtube' && nextResumeUrl) {
+                try {
+                  const u = new URL(nextResumeUrl);
+                  if (u.pathname.startsWith('/watch') && liveSec >= 1) {
+                    u.searchParams.set('t', `${liveSec}s`);
+                    nextResumeUrl = u.href;
+                  }
+                } catch (_) {}
+              }
+              if (sourceEntry && nextResumeUrl) {
+                sourceEntry.currentUrl = nextResumeUrl;
+              }
+              const pb = {
+                isPlaying: true,
+                currentTime: liveSec,
+                resumeUrl: nextResumeUrl,
+                title: prevPb?.title || (appId === 'youtube' ? 'YouTube' : 'Spotify'),
+                updatedAt: Date.now()
+              };
+              framePlaybackStates.set(appId, pb);
+              if (currentAudibleBgAppId !== appId) {
+                currentAudibleBgAppId = appId;
+              }
+              if (!prevWasPlaying || prevAudible !== currentAudibleBgAppId) {
+                renderOperaRail();
+              }
+              if (
+                !prevWasPlaying ||
+                pb.resumeUrl !== prevPb?.resumeUrl ||
+                Date.now() - lastPersistentPlaybackSyncAt > 4000
+              ) {
+                lastPersistentPlaybackSyncAt = Date.now();
+                syncPersistentSessionToBackground(appId, pb.resumeUrl, pb);
+              }
+            } else {
+              // Ignore passive paused ticks while background takeover is still in progress unless explicitly paused or on a non-playable YT route
+              if (pendingSidebarAudioTakeoverSet.has(appId) && !data.explicitPause && !isNonPlayableYt) {
+                return;
+              }
+              pendingSidebarAudioTakeoverSet.delete(appId);
+              const prevPb = framePlaybackStates.get(appId);
+              const prevWasPlaying = Boolean(prevPb?.isPlaying);
+              const prevAudible = currentAudibleBgAppId;
+              const nextUrl =
+                (data.href && !data.href.includes('pm_boot=1') ? data.href : '') ||
+                sourceEntry?.currentUrl ||
+                prevPb?.resumeUrl ||
+                '';
+              const pb = {
+                isPlaying: false,
+                currentTime: Math.floor(Number(data.currentTime) || prevPb?.currentTime || 0),
+                resumeUrl: nextUrl,
+                title: prevPb?.title || '',
+                updatedAt: Date.now()
+              };
+              framePlaybackStates.set(appId, pb);
+              if (currentAudibleBgAppId === appId) {
+                currentAudibleBgAppId = null;
+              }
+              if (prevWasPlaying || prevAudible !== currentAudibleBgAppId) {
+                renderOperaRail();
+                syncPersistentSessionToBackground(appId, nextUrl, pb);
+              }
+            }
           }
         }
       } else if (data.type === 'PM_BG_AUDIO_CHUNK' && data.chunk) {
@@ -3457,6 +4171,17 @@
             ? data.flatFrameName.replace('pm-media-frame-', '')
             : '');
         if (appId) {
+          const targetEntry = sourceEntry || mediaFramePool.get(appId);
+          if (appId !== activeRailAppId && (targetEntry?.suppressedWhileInactive || !isAppAllowedForBgAudio(appId))) {
+            cleanupSidebarMsePlayer(appId);
+            try {
+              targetEntry?.frame?.contentWindow?.postMessage(
+                { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+                '*'
+              );
+            } catch (_) {}
+            return;
+          }
           if (pendingSidebarAudioTakeoverSet.has(appId)) {
             pendingSidebarAudioTakeoverSet.delete(appId);
             browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
@@ -3588,7 +4313,29 @@
           }
           sourceEntry.currentUrl = data.url;
           sourceEntry.lastNavAt = Date.now();
-          syncPersistentSessionToBackground(sourceEntry.appId, data.url);
+          const prevPb = framePlaybackStates.get(sourceEntry.appId);
+          if (sourceEntry.appId === 'youtube' && !isPlayableYouTubeUrl(data.url)) {
+            pendingSidebarAudioTakeoverSet.delete('youtube');
+            if (currentAudibleBgAppId === 'youtube') {
+              currentAudibleBgAppId = null;
+            }
+            const stoppedPb = {
+              isPlaying: false,
+              currentTime: 0,
+              resumeUrl: data.url,
+              title: data.title || prevPb?.title || 'YouTube',
+              updatedAt: Date.now()
+            };
+            framePlaybackStates.set('youtube', stoppedPb);
+            renderOperaRail();
+            syncPersistentSessionToBackground('youtube', data.url, stoppedPb);
+          } else {
+            if (prevPb) {
+              prevPb.resumeUrl = data.url;
+              if (data.title) prevPb.title = data.title;
+            }
+            syncPersistentSessionToBackground(sourceEntry.appId, data.url, prevPb || null);
+          }
         }
         if (!sourceEntry || sourceEntry.appId === activeRailAppId) {
           activeMediaUrl = data.url;
@@ -3616,7 +4363,35 @@
             ? data.flatFrameName.replace('pm-media-frame-', '')
             : '');
         if (appId) {
-          if (data.isPlaying) {
+          const targetEntry = sourceEntry || mediaFramePool.get(appId);
+          const candidateUrl = data.resumeUrl || targetEntry?.currentUrl || '';
+          const isNonPlayableYt = appId === 'youtube' && candidateUrl && !isPlayableYouTubeUrl(candidateUrl);
+          const isDisallowedInactiveFrame =
+            appId !== activeRailAppId &&
+            Boolean(targetEntry?.suppressedWhileInactive || !isAppAllowedForBgAudio(appId));
+          if (isDisallowedInactiveFrame && data.isPlaying) {
+            cleanupSidebarMsePlayer(appId);
+            if (currentAudibleBgAppId === appId) {
+              currentAudibleBgAppId = null;
+            }
+            try {
+              targetEntry?.frame?.contentWindow?.postMessage(
+                { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+                '*'
+              );
+            } catch (_) {}
+            browser.runtime
+              .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId, clearPlaybackState: true })
+              .catch(() => {});
+          }
+          const effectivePlaying = isNonPlayableYt || isDisallowedInactiveFrame ? false : Boolean(data.isPlaying);
+          if (isNonPlayableYt) {
+            pendingSidebarAudioTakeoverSet.delete('youtube');
+            if (currentAudibleBgAppId === 'youtube') {
+              currentAudibleBgAppId = null;
+            }
+          }
+          if (effectivePlaying) {
             pauseOtherSidebarMediaFrames(appId);
             if (pendingSidebarAudioTakeoverSet.size > 0) {
               Array.from(pendingSidebarAudioTakeoverSet).forEach((otherId) => {
@@ -3629,18 +4404,23 @@
               });
             }
           }
+          const prevIsPlaying = Boolean(framePlaybackStates.get(appId)?.isPlaying);
           const isTakeoverOrMse =
-            sidebarMsePlayers.has(appId) ||
-            sidebarSpEmePlayers.has(appId) ||
-            pendingSidebarAudioTakeoverSet.has(appId);
+            !isNonPlayableYt && (sidebarMsePlayers.has(appId) || pendingSidebarAudioTakeoverSet.has(appId));
+          if (!effectivePlaying && !isTakeoverOrMse && currentAudibleBgAppId === appId) {
+            currentAudibleBgAppId = null;
+          }
           const pb = {
-            isPlaying: Boolean(data.isPlaying || isTakeoverOrMse),
-            currentTime: Number(data.currentTime) || 0,
-            resumeUrl: data.resumeUrl || sourceEntry?.currentUrl || '',
+            isPlaying: Boolean(effectivePlaying || isTakeoverOrMse),
+            currentTime: isNonPlayableYt ? 0 : Number(data.currentTime) || 0,
+            resumeUrl: candidateUrl,
             title: data.title || '',
             updatedAt: Date.now()
           };
           framePlaybackStates.set(appId, pb);
+          if (prevIsPlaying !== pb.isPlaying || isNonPlayableYt) {
+            renderOperaRail();
+          }
           if (pb.resumeUrl && sourceEntry) {
             sourceEntry.currentUrl = pb.resumeUrl;
           }
@@ -3651,6 +4431,39 @@
       } else if (data.type === 'PM_FRAME_ZOOM_UPDATED' && typeof data.zoom === 'number') {
         if (sourceEntry) {
           applyFrameViewportZoom(sourceEntry, data.zoom);
+        }
+      } else if (data.type === 'PM_GMAIL_AUTOSEND_RESULT') {
+        if (typeof pendingGmailAutoSendResolver === 'function') {
+          pendingGmailAutoSendResolver({
+            ok: Boolean(data.ok),
+            reason: data.reason || '',
+            method: data.method || 'first-party-gmail-composer'
+          });
+        } else if (data.ok && composeDrawer && !composeDrawer.classList.contains('hidden')) {
+          // User clicked Send manually inside the Embedded "Gmail UI" tab
+          const fromSelect = document.getElementById('compose-from');
+          const selectedOpt = fromSelect?.options?.[fromSelect.selectedIndex];
+          const slot = parseInt(fromSelect?.value || '0', 10) || 0;
+          const accountEmail = selectedOpt?.getAttribute('data-email') || '';
+          const to = (document.getElementById('compose-to')?.value || '').trim();
+          const cc = (document.getElementById('compose-cc')?.value || '').trim();
+          const bcc = (document.getElementById('compose-bcc')?.value || '').trim();
+          const su = (document.getElementById('compose-subject')?.value || '').trim();
+          const body = (document.getElementById('compose-body')?.value || '').trim();
+          browser.runtime
+            .sendMessage({
+              type: 'RECORD_SENT_EMAIL',
+              payload: { slotIndex: slot, accountEmail, to: to || 'Recipient', cc, bcc, subject: su, body }
+            })
+            .then((res) => {
+              if (res && res.state) {
+                appState = res.state;
+                renderAll();
+              }
+            })
+            .catch(() => {});
+          composeDrawer.classList.add('hidden');
+          showToast(`✓ Email sent via Gmail${to ? ` to ${to}` : ''}!`);
         }
       }
     });
@@ -3900,14 +4713,90 @@
       }
     });
 
-    document.getElementById('btn-reader-copy-text')?.addEventListener('click', async () => {
+    const copyReaderSelectionOrBody = async () => {
+      const selText = (window.getSelection && window.getSelection().toString().trim()) || lastHighlightedMailText || '';
+      if (selText && navigator.clipboard) {
+        await navigator.clipboard.writeText(selText);
+        showToast(`Copied selection: "${selText.slice(0, 36)}${selText.length > 36 ? '…' : ''}"`);
+        document.getElementById('pm-selection-copy-pill')?.classList.add('hidden');
+        lastHighlightedMailText = '';
+        return;
+      }
       if (!activeReaderMessage) return;
-      const text = `${activeReaderMessage.subject}\nFrom: ${activeReaderMessage.senderName} <${activeReaderMessage.senderEmail}>\n\n${activeReaderMessage.fullText || activeReaderMessage.snippet || ''}`;
+      const renderedBodyText = (document.getElementById('reader-body')?.innerText || '').trim();
+      const bodyContent = renderedBodyText || activeReaderMessage.fullText || activeReaderMessage.snippet || '';
+      const text = `${activeReaderMessage.subject}\nFrom: ${activeReaderMessage.senderName} <${activeReaderMessage.senderEmail}>\n\n${bodyContent}`;
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(text);
-        showToast('Copied email text to clipboard!');
+        showToast('Copied full email text to clipboard!');
       }
+    };
+
+    document.getElementById('btn-reader-copy-text')?.addEventListener('click', copyReaderSelectionOrBody);
+    document.getElementById('btn-reader-header-copy')?.addEventListener('click', copyReaderSelectionOrBody);
+
+    let lastHighlightedMailText = '';
+    const selectionCopyPill = document.getElementById('pm-selection-copy-pill');
+    const selectionCopyLbl = document.getElementById('lbl-selection-copy-pill');
+    const readerCopyTextBtn = document.getElementById('btn-reader-copy-text');
+
+    selectionCopyPill?.addEventListener('mousedown', (e) => {
+      // Keep current selection alive when clicking the floating Copy Selection pill
+      e.preventDefault();
+      e.stopPropagation();
     });
+
+    selectionCopyPill?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const textToCopy = (window.getSelection && window.getSelection().toString().trim()) || lastHighlightedMailText;
+      if (textToCopy && navigator.clipboard) {
+        await navigator.clipboard.writeText(textToCopy);
+        showToast(`Copied: "${textToCopy.slice(0, 40)}${textToCopy.length > 40 ? '…' : ''}"`);
+      }
+      selectionCopyPill.classList.add('hidden');
+      lastHighlightedMailText = '';
+    });
+
+    const updateSelectionCopyPill = () => {
+      if (!selectionCopyPill) return;
+      const sel = window.getSelection ? window.getSelection() : null;
+      const text = sel ? sel.toString().trim() : '';
+      if (!text || !sel || sel.rangeCount === 0) {
+        selectionCopyPill.classList.add('hidden');
+        if (readerCopyTextBtn) readerCopyTextBtn.textContent = 'Copy Text';
+        return;
+      }
+      const anchorNode = sel.anchorNode;
+      const anchorEl = anchorNode && anchorNode.nodeType === 1 ? anchorNode : anchorNode?.parentElement;
+      if (!anchorEl || (!anchorEl.closest('#pm-reader-drawer') && !anchorEl.closest('#pm-email-list'))) {
+        selectionCopyPill.classList.add('hidden');
+        if (readerCopyTextBtn) readerCopyTextBtn.textContent = 'Copy Text';
+        return;
+      }
+
+      lastHighlightedMailText = text;
+      if (readerCopyTextBtn && anchorEl.closest('#pm-reader-drawer')) {
+        readerCopyTextBtn.textContent = 'Copy Selection';
+      }
+      if (selectionCopyLbl) {
+        const preview = text.length > 18 ? `${text.slice(0, 18)}…` : text;
+        selectionCopyLbl.textContent = `Copy "${preview}"`;
+      }
+
+      try {
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        if (rect && (rect.width > 0 || rect.height > 0)) {
+          const topPos = Math.max(8, rect.top - 36);
+          const leftPos = Math.max(54, Math.min(window.innerWidth - 170, rect.left + rect.width / 2 - 65));
+          selectionCopyPill.style.top = `${Math.round(topPos)}px`;
+          selectionCopyPill.style.left = `${Math.round(leftPos)}px`;
+          selectionCopyPill.classList.remove('hidden');
+        }
+      } catch (_) {}
+    };
+
+    document.addEventListener('selectionchange', updateSelectionCopyPill);
 
     document.getElementById('btn-reader-translate')?.addEventListener('click', () => {
       if (!activeReaderMessage) return;
@@ -3916,8 +4805,10 @@
       browser.tabs.create({ url: translateUrl });
     });
 
-    // Make all links & buttons inside the email body open reliably in a new browser tab
+    // Make all links & buttons inside the email body open reliably in a new browser tab (unless user is highlighting text!)
     document.getElementById('reader-body')?.addEventListener('click', (e) => {
+      const sel = window.getSelection && window.getSelection();
+      if (sel && sel.toString().trim().length > 0) return;
       const link = e.target.closest('a[href]');
       if (!link) return;
       const href = link.getAttribute('href') || '';
@@ -4032,19 +4923,39 @@
       if (sendBtn) sendBtn.disabled = true;
       if (sendLbl) sendLbl.textContent = 'Sending…';
 
+      const replyPayload = {
+        slotIndex: slot,
+        accountEmail: activeReaderMessage.accountEmail || '',
+        to: activeReaderMessage.senderEmail,
+        subject: replySubject,
+        body: replyBody,
+        threadId: activeReaderMessage.threadId || '',
+        isDemo: Boolean(activeReaderMessage.isDemo)
+      };
+
       try {
-        const res = await browser.runtime.sendMessage({
+        let res = await browser.runtime.sendMessage({
           type: 'SEND_EMAIL',
-          payload: {
-            slotIndex: slot,
-            accountEmail: activeReaderMessage.accountEmail || '',
-            to: activeReaderMessage.senderEmail,
-            subject: replySubject,
-            body: replyBody,
-            threadId: activeReaderMessage.threadId || '',
-            isDemo: Boolean(activeReaderMessage.isDemo)
-          }
+          payload: replyPayload
         });
+
+        if (!res || !res.ok) {
+          if (sendLbl) sendLbl.textContent = 'Sending via Gmail…';
+          res = await sendEmailViaFirstPartyGmailFrame(replyPayload);
+          if (res && res.ok) {
+            const rec = await browser.runtime.sendMessage({
+              type: 'RECORD_SENT_EMAIL',
+              payload: replyPayload
+            });
+            if (rec && rec.state) {
+              appState = rec.state;
+              renderAll();
+            }
+          }
+        } else if (res.state) {
+          appState = res.state;
+          renderAll();
+        }
 
         if (res && res.ok) {
           if (replyInput) replyInput.value = '';
@@ -4247,22 +5158,41 @@
       const sendBtn = document.getElementById('btn-compose-send');
       const sendLbl = document.getElementById('lbl-compose-send');
       if (sendBtn) sendBtn.disabled = true;
-      if (sendLbl) sendLbl.textContent = 'Sending Locally…';
+      if (sendLbl) sendLbl.textContent = 'Sending via Gmail…';
+
+      const composePayload = {
+        slotIndex: slot,
+        accountEmail,
+        to,
+        cc,
+        bcc,
+        subject: su,
+        body,
+        isDemo
+      };
 
       try {
-        const res = await browser.runtime.sendMessage({
+        let res = await browser.runtime.sendMessage({
           type: 'SEND_EMAIL',
-          payload: {
-            slotIndex: slot,
-            accountEmail,
-            to,
-            cc,
-            bcc,
-            subject: su,
-            body,
-            isDemo
-          }
+          payload: composePayload
         });
+
+        if (!res || !res.ok) {
+          res = await sendEmailViaFirstPartyGmailFrame(composePayload);
+          if (res && res.ok) {
+            const rec = await browser.runtime.sendMessage({
+              type: 'RECORD_SENT_EMAIL',
+              payload: composePayload
+            });
+            if (rec && rec.state) {
+              appState = rec.state;
+              renderAll();
+            }
+          }
+        } else if (res.state) {
+          appState = res.state;
+          renderAll();
+        }
 
         if (res && res.ok) {
           document.getElementById('compose-to').value = '';
@@ -4291,6 +5221,17 @@
         appState = msg.state;
         appSettings = msg.settings;
         renderAll();
+      } else if (msg.type === 'BG_AUDIO_STATUS_CHANGED') {
+        currentAudibleBgAppId = msg.audibleAppId || null;
+        renderOperaRail();
+      } else if (msg.type === 'PM_SEEK_SIDEBAR_SP') {
+        const spEntry = mediaFramePool.get(msg.appId || 'spotify');
+        try {
+          spEntry?.frame?.contentWindow?.postMessage(
+            { target: 'pocketmail-media-frame', cmd: 'SEEK_SP_MEDIA', currentTime: msg.currentTime },
+            '*'
+          );
+        } catch (_) {}
       }
     });
 
@@ -4298,11 +5239,13 @@
     if (!IS_POPOUT_VIEW) {
       window.addEventListener('pagehide', () => {
         const activeMseIds = new Set(sidebarMsePlayers.keys());
-        const activeSpEmeIds = new Set(sidebarSpEmePlayers.keys());
         sidebarMsePlayers.forEach((_, id) => cleanupSidebarMsePlayer(id));
-        sidebarSpEmePlayers.forEach((_, id) => cleanupSidebarSpEmePlayer(id));
         if (!sidebarInitCompleted) return;
-        const mode = appSettings.persistenceMode || 'eco';
+        // If this was just the top-right Mail popup with no media frames opened, do not disturb background audio
+        if (!IS_SIDEBAR_VIEW && mediaFramePool.size === 0 && pendingSidebarAudioTakeoverSet.size === 0) {
+          return;
+        }
+        const mode = appSettings.persistenceMode || 'selected';
         if (mode === 'eco') return;
 
         const savedUrls = {};
@@ -4310,14 +5253,41 @@
         const addedPlayingIds = new Set();
         mediaFramePool.forEach((entry, id) => {
           const pb = framePlaybackStates.get(id);
-          const bestUrl = pb?.resumeUrl || entry.currentUrl || entry.restoredUrl || '';
-          if (bestUrl && !bestUrl.includes('pm_boot=1') && isAppPersistent(id)) {
+          let bestUrl = entry.currentUrl || pb?.resumeUrl || entry.restoredUrl || '';
+          if (id === 'youtube' && bestUrl && pb?.resumeUrl) {
+            try {
+              const curU = new URL(bestUrl);
+              const pbU = new URL(pb.resumeUrl);
+              if (
+                curU.pathname.startsWith('/watch') &&
+                pbU.pathname.startsWith('/watch') &&
+                curU.searchParams.get('v') === pbU.searchParams.get('v') &&
+                pbU.searchParams.get('t')
+              ) {
+                bestUrl = pb.resumeUrl;
+              }
+            } catch (_) {}
+          }
+          if (bestUrl && !isTransientAuthOrBootUrl(bestUrl) && isAppPersistent(id)) {
             savedUrls[id] = bestUrl;
+            hibernatedAppUrls.set(id, bestUrl);
+            knownOpenPersistentIds.add(id);
+          }
+          if (!isAppAllowedForBgAudio(id)) {
+            try {
+              entry.frame.contentWindow?.postMessage(
+                { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+                '*'
+              );
+            } catch (_) {}
+            return;
+          }
+          if (id === 'youtube' && !isPlayableYouTubeUrl(bestUrl)) {
+            return;
           }
           const wasPlayingOrTakeover =
             (pb && pb.isPlaying && Date.now() - pb.updatedAt < 60000) ||
             activeMseIds.has(id) ||
-            activeSpEmeIds.has(id) ||
             pendingSidebarAudioTakeoverSet.has(id);
           if (wasPlayingOrTakeover && bestUrl) {
             addedPlayingIds.add(id);
@@ -4331,7 +5301,7 @@
 
         // Also include any app still playing in background.html (when the user opened onto Mail/Instagram and closed without switching to the media app)
         pendingSidebarAudioTakeoverSet.forEach((bgId) => {
-          if (!addedPlayingIds.has(bgId)) {
+          if (!addedPlayingIds.has(bgId) && isAppAllowedForBgAudio(bgId)) {
             const bgUrl = hibernatedAppUrls.get(bgId) || appSettings.persistentSavedAppUrls?.[bgId] || '';
             if (bgUrl) {
               playingApps.push({
@@ -4343,10 +5313,13 @@
           }
         });
 
+        saveFastBootCache();
+
         browser.runtime
           .sendMessage({
             type: 'SIDEBAR_CLOSED_HANDOFF',
             activeAppId: activeRailAppId,
+            openPersistentAppIds: Array.from(knownOpenPersistentIds).filter((id) => isAppPersistent(id)),
             savedUrls,
             playingApps
           })
@@ -4355,83 +5328,184 @@
     }
   }
 
+  function schedulePrewarmPersistentApps() {
+    if (IS_POPOUT_VIEW || (appSettings.persistenceMode || 'selected') === 'eco') return;
+    const candidates = Array.from(knownOpenPersistentIds).filter(
+      (id) =>
+        id &&
+        id !== activeRailAppId &&
+        isAppPersistent(id) &&
+        !mediaFramePool.has(id) &&
+        !pendingSidebarAudioTakeoverSet.has(id) &&
+        currentAudibleBgAppId !== id
+    );
+    if (candidates.length === 0) return;
+
+    // Only preconnect DNS/TLS origins for persistent apps — never boot hidden (visibility: hidden) iframes in the background,
+    // because Firefox throttles requestAnimationFrame to 0fps inside hidden iframes which stalls SPA hydration on splash screens!
+    candidates.slice(0, 4).forEach((appId) => {
+      if (!window.PocketMailMediaApps) return;
+      const app = window.PocketMailMediaApps.getAppById(appId, appSettings);
+      if (!app) return;
+      const savedUrl = hibernatedAppUrls.get(appId) || appSettings.persistentSavedAppUrls?.[appId] || app.defaultUrl;
+      ensureOriginPreconnected(savedUrl, appId);
+    });
+  }
+
   async function init() {
     bindEvents();
-    const res = await browser.runtime.sendMessage({ type: 'GET_STATE' });
+
+    const params = new URLSearchParams(window.location.search || '');
+    const initialAppId = params.get('app');
+    let fastBootMountedAppId = '';
+
+    // 0ms Synchronous Fast-Boot Cache for previously loaded persistent apps & themes
+    try {
+      const rawFast = window.localStorage.getItem('pm_fast_boot_v1');
+      if (rawFast) {
+        const fast = JSON.parse(rawFast);
+        if (fast && fast.settings && Date.now() - (fast.ts || 0) < 7 * 24 * 3600 * 1000) {
+          appSettings = { ...appSettings, ...fast.settings };
+          if (fast.savedUrls && typeof fast.savedUrls === 'object') {
+            Object.entries(fast.savedUrls).forEach(([k, v]) => {
+              if (v && !isTransientAuthOrBootUrl(v) && !hibernatedAppUrls.has(k)) hibernatedAppUrls.set(k, v);
+            });
+          }
+          const openList = Array.isArray(fast.openPersistentAppIds)
+            ? fast.openPersistentAppIds
+            : Array.isArray(appSettings.persistentOpenAppIds)
+              ? appSettings.persistentOpenAppIds
+              : [];
+          openList.forEach((id) => {
+            if (id && isAppPersistent(id)) knownOpenPersistentIds.add(id);
+          });
+          if (window.PocketMailThemes) {
+            window.PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
+          }
+          const fastLastActiveId = initialAppId || fast.activeAppId || appSettings.persistentLastActiveAppId;
+          const canFastRestoreLastApp =
+            !IS_POPOUT_VIEW &&
+            fastLastActiveId &&
+            fastLastActiveId !== 'pocketmail' &&
+            (Boolean(initialAppId) || isAppPersistent(fastLastActiveId));
+          if (canFastRestoreLastApp && window.PocketMailMediaApps) {
+            const fastApp = window.PocketMailMediaApps.getAppById(fastLastActiveId, appSettings);
+            if (fastApp) {
+              activeRailAppId = fastApp.id;
+              fastBootMountedAppId = fastApp.id;
+              if (!IS_SIDEBAR_VIEW) {
+                document.documentElement.classList.add('show-popup-rail');
+              }
+              renderOperaRail();
+              openMediaWorkspace(fastApp, hibernatedAppUrls.get(fastApp.id) || undefined);
+            } else {
+              renderOperaRail();
+            }
+          } else {
+            renderOperaRail();
+          }
+        }
+      }
+    } catch (_) {}
+
+    if (IS_SIDEBAR_VIEW && !IS_POPOUT_VIEW) {
+      try {
+        if (browser.runtime && typeof browser.runtime.connect === 'function') {
+          sidebarLifecyclePort = browser.runtime.connect({ name: 'foxhub-sidebar-lifecycle' });
+        }
+      } catch (_) {}
+    }
+
+    const [res, handoffRes] = await Promise.all([
+      browser.runtime.sendMessage({ type: 'GET_STATE' }).catch(() => null),
+      IS_SIDEBAR_VIEW && !IS_POPOUT_VIEW
+        ? browser.runtime.sendMessage({ type: 'STOP_BG_AUDIO_HANDOFF' }).catch(() => null)
+        : Promise.resolve(null)
+    ]);
+
     if (res) {
       appState = res.state || appState;
       appSettings = res.settings || appSettings;
       snoozedMap = res.snoozed || {};
+      currentAudibleBgAppId = res.audibleAppId || null;
 
-      // If Sidebar or Popup is opening, connect the lifecycle port (for 0ms close handoff) and query active background audio apps!
-      if (!IS_POPOUT_VIEW) {
-        try {
-          if (browser.runtime && typeof browser.runtime.connect === 'function') {
-            sidebarLifecyclePort = browser.runtime.connect({ name: 'foxhub-sidebar-lifecycle' });
-          }
-        } catch (_) {}
-
-        try {
-          const handoffRes = await browser.runtime.sendMessage({ type: 'STOP_BG_AUDIO_HANDOFF' });
-          if (handoffRes && handoffRes.settings) {
-            appSettings = handoffRes.settings;
-          }
-          if (handoffRes && Array.isArray(handoffRes.activeBgApps)) {
-            handoffRes.activeBgApps.forEach((bgApp) => {
-              if (bgApp && bgApp.appId) {
-                pendingSidebarAudioTakeoverSet.add(bgApp.appId);
-                if (bgApp.url) {
-                  hibernatedAppUrls.set(bgApp.appId, bgApp.url);
-                }
+      if (IS_SIDEBAR_VIEW && !IS_POPOUT_VIEW && handoffRes) {
+        if (handoffRes.settings) {
+          appSettings = handoffRes.settings;
+        }
+        if (handoffRes.audibleAppId !== undefined) {
+          currentAudibleBgAppId = handoffRes.audibleAppId || currentAudibleBgAppId;
+        }
+        if (Array.isArray(handoffRes.activeBgApps)) {
+          handoffRes.activeBgApps.forEach((bgApp) => {
+            if (bgApp && bgApp.appId && isAppAllowedForBgAudio(bgApp.appId)) {
+              pendingSidebarAudioTakeoverSet.add(bgApp.appId);
+              if (bgApp.url) {
+                hibernatedAppUrls.set(bgApp.appId, bgApp.url);
               }
-            });
-          }
-        } catch (_) {}
+            }
+          });
+        }
       }
 
-      // Pre-seed hibernatedAppUrls for all persistent apps so clicking them or auto-restoring resumes their exact saved URL/timestamp!
+      // Pre-seed hibernatedAppUrls & knownOpenPersistentIds for all persistent apps so clicking them or auto-restoring resumes their exact saved URL/timestamp!
       const savedMap = appSettings.persistentSavedAppUrls || {};
       Object.entries(savedMap).forEach(([id, savedUrl]) => {
-        if (savedUrl && isAppPersistent(id) && !hibernatedAppUrls.has(id)) {
+        if (savedUrl && !isTransientAuthOrBootUrl(savedUrl) && isAppPersistent(id) && !hibernatedAppUrls.has(id)) {
           hibernatedAppUrls.set(id, savedUrl);
         }
       });
+      if (Array.isArray(appSettings.persistentOpenAppIds)) {
+        appSettings.persistentOpenAppIds.forEach((id) => {
+          if (id && isAppPersistent(id)) knownOpenPersistentIds.add(id);
+        });
+      }
 
-      const params = new URLSearchParams(window.location.search || '');
-      const initialAppId = params.get('app');
       const firstBgPlayingId =
         pendingSidebarAudioTakeoverSet.size > 0 ? Array.from(pendingSidebarAudioTakeoverSet)[0] : '';
-      const rawLastActiveId = appSettings.persistentLastActiveAppId;
+      const rawLastActiveId = appSettings.persistentLastActiveAppId || fastBootMountedAppId;
       const lastActiveId =
         rawLastActiveId && rawLastActiveId !== 'pocketmail' && isAppPersistent(rawLastActiveId)
           ? rawLastActiveId
           : firstBgPlayingId && isAppPersistent(firstBgPlayingId)
             ? firstBgPlayingId
             : rawLastActiveId;
-      if (IS_SIDEBAR_VIEW && !initialAppId && lastActiveId && lastActiveId !== 'pocketmail' && isAppPersistent(lastActiveId)) {
+      const shouldAutoRestoreApp =
+        !IS_POPOUT_VIEW &&
+        !initialAppId &&
+        lastActiveId &&
+        lastActiveId !== 'pocketmail' &&
+        isAppPersistent(lastActiveId);
+      if (shouldAutoRestoreApp) {
         activeRailAppId = lastActiveId;
       }
 
       renderAll();
       sidebarInitCompleted = true;
+      saveFastBootCache();
 
       if (initialAppId && window.PocketMailMediaApps) {
         const app = window.PocketMailMediaApps.getAppById(initialAppId, appSettings);
         if (app) {
-          openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
+          if (fastBootMountedAppId !== app.id) {
+            openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
+          }
+          schedulePrewarmPersistentApps();
           return;
         }
       }
 
-      // If Persistent App Memory ('selected' or 'all') is enabled in Sidebar, restore the last active persistent app automatically!
-      if (IS_SIDEBAR_VIEW && window.PocketMailMediaApps) {
-        if (lastActiveId && lastActiveId !== 'pocketmail' && isAppPersistent(lastActiveId)) {
-          const app = window.PocketMailMediaApps.getAppById(lastActiveId, appSettings);
-          if (app) {
-            openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
+      // Restore the last active persistent app automatically (if not already mounted at 0ms by fast-boot) and pre-warm other persistent apps!
+      if (shouldAutoRestoreApp && window.PocketMailMediaApps) {
+        const app = window.PocketMailMediaApps.getAppById(lastActiveId, appSettings);
+        if (app && fastBootMountedAppId !== app.id) {
+          if (!IS_SIDEBAR_VIEW) {
+            document.documentElement.classList.add('show-popup-rail');
           }
+          openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
         }
       }
+      schedulePrewarmPersistentApps();
     }
   }
 

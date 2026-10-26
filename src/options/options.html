@@ -83,6 +83,29 @@
         </div>
 
         <div class="opt-card" style="margin-top:20px;">
+          <div class="opt-row-between" style="margin-bottom:14px;">
+            <div>
+              <h4>Emails Displayed Per Account</h4>
+              <p class="opt-muted">Number of recent unread and read inbox items fetched per connected Gmail account.</p>
+            </div>
+            <select id="opt-max-emails-per-account" class="opt-select" style="width:210px;">
+              <option value="10">Up to 10 emails per account</option>
+              <option value="15">Up to 15 emails per account</option>
+              <option value="20">Up to 20 emails per account</option>
+            </select>
+          </div>
+
+          <div class="opt-row-between" style="margin-bottom:14px;">
+            <div>
+              <h4>Toolbar Unread Badge Counter Mode</h4>
+              <p class="opt-muted">Show either the count of recent visible feed emails or your all-time unread inbox total.</p>
+            </div>
+            <select id="opt-badge-count-mode" class="opt-select" style="width:210px;">
+              <option value="feed">Recent Feed Count (Clean)</option>
+              <option value="total">Total All-Time Unread</option>
+            </select>
+          </div>
+
           <div class="opt-row-between">
             <div>
               <h4>Sample Preview Inbox (Demo Mode)</h4>
@@ -228,6 +251,27 @@
                 <option value="none">None (Clean)</option>
               </select>
             </div>
+
+            <div>
+              <label for="opt-font-style" style="display:block;font-weight:600;margin-bottom:6px;">Typography Style</label>
+              <select id="opt-font-style" class="opt-select">
+                <option value="editorial">Editorial Mix</option>
+                <option value="modern-sans">Modern Sans</option>
+                <option value="literary-serif">Bookish Serif</option>
+                <option value="rounded-cozy">Rounded Cozy</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="opt-social-theme-mode" style="display:block;font-weight:600;margin-bottom:6px;">Social &amp; Media App Theme Palette</label>
+              <select id="opt-social-theme-mode" class="opt-select">
+                <option value="native">Native App Default</option>
+                <option value="theme-adaptive">Match FoxHub Palette</option>
+                <option value="cozy-amber">Warm Eye-Care</option>
+                <option value="midnight-oled">Midnight OLED</option>
+                <option value="rose-quartz">Rose Velvet</option>
+              </select>
+            </div>
           </div>
         </div>
       </section>
@@ -239,7 +283,7 @@
         <header class="opt-panel-header">
           <div>
             <h2>Notifications, Chimes &amp; Voice Reader</h2>
-            <p>Customize how FoxHub alerts you and reads your emails aloud.</p>
+            <p>Customize how FoxHub alerts you for new inbox arrivals and social messages.</p>
           </div>
           <button id="opt-btn-test-notif" class="opt-btn opt-btn-primary">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -251,17 +295,25 @@
           <div class="opt-row-between" style="margin-bottom:16px;">
             <div>
               <h4>Desktop Popup Notifications</h4>
-              <p class="opt-muted">Show a native Firefox notification when new unread mail arrives.</p>
+              <p class="opt-muted">Show a native Firefox notification when brand-new unread mail arrives in your FoxHub feed.</p>
             </div>
             <input type="checkbox" id="opt-desktop-notif" class="opt-toggle">
           </div>
 
-          <div class="opt-row-between">
+          <div class="opt-row-between" style="margin-bottom:16px;">
             <div>
               <h4>Speak New Emails Aloud Automatically</h4>
-              <p class="opt-muted">Automatically announce sender and subject when a new email arrives.</p>
+              <p class="opt-muted">Automatically announce sender and subject only for brand-new unread emails visible in your FoxHub inbox (never reads spam or older unread emails).</p>
             </div>
             <input type="checkbox" id="opt-voice-notif" class="opt-toggle">
+          </div>
+
+          <div class="opt-row-between">
+            <div>
+              <h4>Social &amp; Messenger App Notification Chimes</h4>
+              <p class="opt-muted">Play custom acoustic chimes when unread DMs or mentions arrive in pinned sidebar apps (Instagram, WhatsApp, Discord, Telegram, X, Messenger).</p>
+            </div>
+            <input type="checkbox" id="opt-social-notif-sounds" class="opt-toggle" checked>
           </div>
         </div>
 
@@ -287,6 +339,12 @@
               <input type="range" id="opt-sound-volume" min="0" max="1" step="0.05" value="0.75" style="width:100%;">
             </div>
           </div>
+        </div>
+
+        <div class="opt-card" style="margin-top:16px;">
+          <h3>Per-App Social Notification Sound Overrides</h3>
+          <p class="opt-muted" style="margin-bottom:14px;">Assign a distinct chime to each social &amp; messenger app, or mute specific apps.</p>
+          <div id="opt-social-app-sounds-grid" class="opt-social-sounds-grid"></div>
         </div>
 
         <div class="opt-card" style="margin-top:16px;">
@@ -321,7 +379,7 @@
         <header class="opt-panel-header">
           <div>
             <h2>General &amp; 100% Local Privacy Guarantee</h2>
-            <p>Everything stays between your Firefox browser and your Gmail account.</p>
+            <p>Configure background sync, persistent app memory, background audio, and local-first privacy controls.</p>
           </div>
         </header>
 
@@ -331,7 +389,7 @@
               <h4>Background Check Interval</h4>
               <p class="opt-muted">How frequently FoxHub checks your accounts for unread emails.</p>
             </div>
-            <select id="opt-poll-interval" class="opt-select" style="width:200px;">
+            <select id="opt-poll-interval" class="opt-select" style="width:220px;">
               <option value="15">Every 15 seconds</option>
               <option value="30">Every 30 seconds</option>
               <option value="60">Every 1 minute</option>
@@ -340,17 +398,90 @@
             </select>
           </div>
 
-          <div class="opt-row-between">
+          <div class="opt-row-between" style="margin-bottom:16px;">
             <div>
               <h4>Maximum Multi-Login Session Slots to Scan</h4>
               <p class="opt-muted">Number of Google session slots (<code>u/0</code> through <code>u/N</code>) scanned automatically.</p>
             </div>
-            <select id="opt-max-slots" class="opt-select" style="width:200px;">
+            <select id="opt-max-slots" class="opt-select" style="width:220px;">
               <option value="3">Up to 3 accounts (u/0 to u/2)</option>
               <option value="5">Up to 5 accounts (u/0 to u/4)</option>
               <option value="8">Up to 8 accounts (u/0 to u/7)</option>
             </select>
           </div>
+
+          <div class="opt-row-between" style="margin-bottom:16px;">
+            <div>
+              <h4>Social &amp; Media Sidebar Open Mode</h4>
+              <p class="opt-muted">Choose how social and media apps open when clicked on the left rail.</p>
+            </div>
+            <select id="opt-sidebar-open-mode" class="opt-select" style="width:220px;">
+              <option value="auto">Docked Inside Sidebar / Popup</option>
+              <option value="window">Floating Companion Window</option>
+            </select>
+          </div>
+
+          <div class="opt-row-between" style="margin-bottom:14px;">
+            <div>
+              <h4>Auto-Hide Media Top Bar on Hover</h4>
+              <p class="opt-muted">Automatically collapse the top shortcut bar inside social &amp; video apps for full-height viewing; hover the top edge to reveal.</p>
+            </div>
+            <input type="checkbox" id="opt-autohide-top-bar" class="opt-toggle" checked>
+          </div>
+
+          <div class="opt-row-between">
+            <div>
+              <h4>Show Quick Sub-View Bottom Bar in Media Apps</h4>
+              <p class="opt-muted">Show the bottom navigation bar for switching sub-views (DMs, Reels, Shorts, Library, Profile).</p>
+            </div>
+            <input type="checkbox" id="opt-show-bottom-bar" class="opt-toggle" checked>
+          </div>
+        </div>
+
+        <!-- BACKGROUND AUDIO WHEN EXTENSION IS CLOSED -->
+        <div class="opt-card" style="margin-top:16px;">
+          <div class="opt-row-between" style="margin-bottom:14px;">
+            <div>
+              <h4 style="display:flex;align-items:center;gap:8px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+                <span>Background Audio When Extension is Closed</span>
+              </h4>
+              <p class="opt-muted">Choose which apps are allowed to keep playing audio after you close the sidebar (Off by default for X / Twitter, TikTok, Instagram, and other non-music apps to save RAM &amp; CPU).</p>
+            </div>
+            <label class="opt-master-switch">
+              <input type="checkbox" id="opt-keep-audio-closed" class="opt-toggle" checked>
+              <span>Enable</span>
+            </label>
+          </div>
+          <div id="opt-bgaudio-apps-picker" class="opt-app-toggle-grid"></div>
+        </div>
+
+        <!-- SESSION & PAGE MEMORY (PERSISTENT MEMORY) -->
+        <div class="opt-card" style="margin-top:16px;">
+          <div class="opt-row-between" style="margin-bottom:12px;flex-wrap:wrap;">
+            <div>
+              <h4 style="display:flex;align-items:center;gap:8px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span>Session &amp; Page Memory (Instant Restore)</span>
+              </h4>
+              <p class="opt-muted">Remember your exact open page, video timestamp, active Reel/Short, and scroll position when FoxHub closes and reopens.</p>
+            </div>
+            <div id="opt-persistence-mode-group" class="opt-mode-pill-group">
+              <button type="button" class="opt-mode-pill" data-persist-mode="none">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></svg>
+                <span>Eco Mode (0 MB)</span>
+              </button>
+              <button type="button" class="opt-mode-pill active" data-persist-mode="custom">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                <span>Selected Apps</span>
+              </button>
+              <button type="button" class="opt-mode-pill" data-persist-mode="all">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span>All Apps</span>
+              </button>
+            </div>
+          </div>
+          <div id="opt-persistent-apps-picker" class="opt-app-toggle-grid"></div>
         </div>
 
         <div class="opt-card opt-privacy-card" style="margin-top:16px;">
@@ -359,12 +490,14 @@
             <span>Local-First Privacy Architecture</span>
           </h3>
           <ul class="opt-privacy-list">
-            <li><strong>Zero External Servers:</strong> FoxHub has no backend server, no developer database, and no analytics scripts.</li>
-            <li><strong>Direct Browser-to-Gmail Connection:</strong> All requests go directly from your Firefox browser to <code>mail.google.com</code> or <code>googleapis.com</code>.</li>
-            <li><strong>100% Local Storage:</strong> Your preferences, custom backgrounds, and snoozed reminders live exclusively in your local <code>browser.storage.local</code> container.</li>
+            <li><strong>Zero External Servers:</strong> FoxHub has no backend server, no developer database, and no analytics or telemetry scripts.</li>
+            <li><strong>Direct Browser-to-Service Connection:</strong> All Gmail, OAuth, and social web requests go directly from your Firefox browser to the official service (<code>mail.google.com</code>, <code>googleapis.com</code>, etc.).</li>
+            <li><strong>First-Party Local Compose &amp; Sent History:</strong> Emails sent from FoxHub are dispatched directly through your signed-in Gmail session and cached locally under your <strong>Sent</strong> filter.</li>
+            <li><strong>100% Local Storage:</strong> Your preferences, custom backgrounds, snoozed reminders, and saved video/scroll positions live exclusively in your local <code>browser.storage.local</code> container.</li>
           </ul>
           <div class="opt-inline-form" style="margin-top:14px;">
-            <button id="opt-btn-clear-cache" class="opt-btn opt-btn-secondary">Reset Local Read/Snooze Cache</button>
+            <button id="opt-btn-clear-cache" class="opt-btn opt-btn-secondary">Reset Local Read / Snooze / Sent Cache</button>
+            <button id="opt-btn-clear-page-memory" class="opt-btn opt-btn-secondary">Clear Saved Page &amp; Reel Positions</button>
           </div>
         </div>
       </section>
@@ -376,6 +509,7 @@
   <script src="../shared/themes.js"></script>
   <script src="../shared/sender-icons.js"></script>
   <script src="../shared/sound-engine.js"></script>
+  <script src="../shared/media-apps.js"></script>
   <script src="../shared/gmail-client.js"></script>
   <script src="options.js"></script>
 </body>

@@ -480,6 +480,17 @@
       }
     });
 
+    // Ensure no email element or <style> tag disables text selection
+    bodyContainer.querySelectorAll('[style*="user-select"]').forEach((el) => {
+      const st = el.getAttribute('style') || '';
+      el.setAttribute('style', st.replace(/(-webkit-|-moz-|-ms-)?user-select\s*:\s*none\s*;?/gi, ''));
+    });
+    bodyContainer.querySelectorAll('style').forEach((styleEl) => {
+      if (styleEl.textContent) {
+        styleEl.textContent = styleEl.textContent.replace(/(-webkit-|-moz-|-ms-)?user-select\s*:\s*none\s*(!important)?\s*;?/gi, '');
+      }
+    });
+
     const plainText = (bodyContainer.innerText || bodyContainer.textContent || '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -768,84 +779,12 @@
       }
     }
 
-    // 2. Direct Local Gmail Session Send (ui=2&act=sm)
-    const { at, ik } = await getSessionTokens(slotIndex, accountEmail);
-    if (at) {
-      try {
-        const query = new URLSearchParams();
-        query.set('ui', '2');
-        if (ik) query.set('ik', ik);
-        query.set('view', 'up');
-        query.set('act', 'sm');
-        query.set('at', at);
-        query.set('rt', 'j');
-
-        const form = new URLSearchParams();
-        if (accountEmail) form.set('from', accountEmail);
-        form.set('to', to.trim());
-        form.set('cc', (cc || '').trim());
-        form.set('bcc', (bcc || '').trim());
-        form.set('subject', subject || '');
-        form.set('body', body || '');
-        form.set('ishtml', '0');
-        if (threadId) {
-          form.set('th', threadId);
-          form.set('rm', threadId);
-        }
-
-        const sendUrl = `https://mail.google.com/mail/u/${slotIndex}/?${query.toString()}`;
-        const resp = await fetch(sendUrl, {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-          },
-          body: form.toString()
-        });
-
-        if (resp.ok) {
-          const text = await resp.text();
-          // Verify response didn't return an auth redirect page
-          if (!text.includes('accounts.google.com/ServiceLogin')) {
-            return { ok: true, method: 'session-ui2' };
-          }
-        }
-      } catch (e) {
-        console.warn('Session ui=2 send warning:', e);
-      }
-
-      // 3. Fallback: Gmail Basic HTML Session POST (/mail/u/{slot}/h/?v=b&pv=tl&cs=b)
-      try {
-        const basicForm = new URLSearchParams();
-        basicForm.set('at', at);
-        basicForm.set('to', to.trim());
-        basicForm.set('cc', (cc || '').trim());
-        basicForm.set('bcc', (bcc || '').trim());
-        basicForm.set('subject', subject || '');
-        basicForm.set('body', body || '');
-        basicForm.set('nvp_bu_send', 'Send');
-
-        const basicUrl = `https://mail.google.com/mail/u/${slotIndex}/h/${Math.random().toString(36).slice(2, 10)}/?v=b&pv=tl&cs=b`;
-        const basicResp = await fetch(basicUrl, {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-          },
-          body: basicForm.toString()
-        });
-        if (basicResp.ok) {
-          return { ok: true, method: 'session-basic' };
-        }
-      } catch (e) {
-        console.warn('Basic HTML send fallback warning:', e);
-      }
-    }
-
+    // 2. For session accounts, delegate immediately (0ms) to the first-party Gmail Compose engine (?view=cm&fs=1&tf=1)
+    // without touching deprecated ?ui=2&act=sm (which mutates COMPASS cookies and delays sending)
     return {
       ok: false,
-      reason: 'session_token_unavailable',
-      error: 'Could not verify Gmail action token. Switch to "Embedded Gmail" tab above to send directly inside this drawer!'
+      reason: 'use_first_party_composer',
+      error: 'Delegating to first-party Gmail Compose engine'
     };
   }
 

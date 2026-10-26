@@ -35,16 +35,16 @@
   async function saveSettings(patch, toastMsg) {
     appSettings = { ...appSettings, ...patch };
     PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
+    renderAll();
+    if (toastMsg) showToast(toastMsg);
     const res = await browser.runtime.sendMessage({
       type: 'UPDATE_SETTINGS',
       settings: patch
     });
-    if (res && res.state) {
+    if (res && res.state && (patch.demoMode !== undefined || patch.accountConfigs !== undefined || patch.maxAccounts !== undefined || patch.maxEmailsPerAccount !== undefined)) {
       appState = res.state;
-      appSettings = res.settings;
-      renderAll();
+      renderAccountsTab();
     }
-    if (toastMsg) showToast(toastMsg);
   }
 
   /**
@@ -55,6 +55,10 @@
     const accounts = appState.accounts || [];
 
     document.getElementById('opt-demo-mode').value = appSettings.demoMode || 'auto';
+    const maxEmailsEl = document.getElementById('opt-max-emails-per-account');
+    if (maxEmailsEl) maxEmailsEl.value = String(appSettings.maxEmailsPerAccount || 15);
+    const badgeModeEl = document.getElementById('opt-badge-count-mode');
+    if (badgeModeEl) badgeModeEl.value = appSettings.badgeCountMode || 'feed';
     document.getElementById('opt-oauth-client-id').value = appSettings.oauthClientId || '';
 
     if (accounts.length === 0) {
@@ -233,6 +237,10 @@
     document.getElementById('opt-tab-style').value = appSettings.tabStyle || 'glass-pills';
     document.getElementById('opt-card-density').value = appSettings.cardDensity || 'cozy';
     document.getElementById('opt-ambient-effect').value = appSettings.ambientEffect || 'sunbeams';
+    const fontStyleEl = document.getElementById('opt-font-style');
+    if (fontStyleEl) fontStyleEl.value = appSettings.fontStyle || 'editorial';
+    const socialThemeEl = document.getElementById('opt-social-theme-mode');
+    if (socialThemeEl) socialThemeEl.value = appSettings.socialAppThemeMode || 'native';
 
     const previewEl = document.getElementById('opt-preview-content');
     const summaryEl = document.getElementById('opt-preview-summary');
@@ -270,6 +278,10 @@
   function renderNotificationsTab() {
     document.getElementById('opt-desktop-notif').checked = Boolean(appSettings.desktopNotifications);
     document.getElementById('opt-voice-notif').checked = Boolean(appSettings.voiceNotifications);
+    const socialNotifEl = document.getElementById('opt-social-notif-sounds');
+    if (socialNotifEl) {
+      socialNotifEl.checked = appSettings.socialAppNotifySounds !== false;
+    }
 
     const soundGrid = document.getElementById('opt-sound-grid');
     const currentSound = appSettings.soundId || 'marimba';
@@ -314,6 +326,72 @@
     document.getElementById('opt-sound-volume').value = vol;
     document.getElementById('opt-sound-volume-val').textContent = `${Math.round(vol * 100)}%`;
 
+    // Per-app social notification chimes grid
+    const socialSoundsGrid = document.getElementById('opt-social-app-sounds-grid');
+    const mediaApi = window.PocketMailMediaApps;
+    if (socialSoundsGrid && mediaApi && window.PocketMailSound) {
+      socialSoundsGrid.replaceChildren();
+      const soundMap = appSettings.socialAppSoundMap || {};
+      const builtInApps = mediaApi.getOrderedBuiltInApps
+        ? mediaApi.getOrderedBuiltInApps(appSettings)
+        : mediaApi.BUILTIN_MEDIA_APPS;
+      const customApps = (Array.isArray(appSettings.customMediaApps) ? appSettings.customMediaApps : []).map(
+        (c, idx) => ({
+          ...c,
+          id: c.id || `custom-${idx}`,
+          color: c.color || '#4E82EE'
+        })
+      );
+      const allSoundApps = [...builtInApps, ...customApps];
+
+      allSoundApps.forEach((app) => {
+        const isMediaStream = ['spotify', 'youtube', 'tiktok', 'twitch', 'chatgpt', 'gemini'].includes(app.id);
+        const curChoice = soundMap[app.id] || (isMediaStream ? 'none' : 'default');
+        const row = document.createElement('div');
+        row.className = 'opt-social-sound-row';
+
+        const left = document.createElement('div');
+        left.style.cssText = 'display:flex;align-items:center;gap:9px;min-width:0;';
+        const iconBox = document.createElement('span');
+        iconBox.className = 'opt-app-toggle-icon';
+        iconBox.style.cssText = `width:28px;height:28px;border-radius:8px;background:${app.gradient || app.color || 'var(--accent)'};`;
+        iconBox.appendChild(mediaApi.createAppSvgIcon(app.id, 14));
+        const nameEl = document.createElement('strong');
+        nameEl.style.fontSize = '13px';
+        nameEl.textContent = app.name;
+        left.appendChild(iconBox);
+        left.appendChild(nameEl);
+
+        const sel = document.createElement('select');
+        sel.className = 'opt-select';
+        sel.style.cssText = 'width:155px;padding:6px 9px;font-size:12px;';
+        const opts = [
+          { val: 'default', label: 'Default Chime' },
+          { val: 'none', label: 'Muted (Silent)' },
+          ...Object.values(window.PocketMailSound.SOUND_PRESETS).map((s) => ({ val: s.id, label: s.name }))
+        ];
+        opts.forEach((o) => {
+          const optEl = document.createElement('option');
+          optEl.value = o.val;
+          optEl.textContent = o.label;
+          if (curChoice === o.val) optEl.selected = true;
+          sel.appendChild(optEl);
+        });
+        sel.addEventListener('change', async () => {
+          const nextMap = { ...(appSettings.socialAppSoundMap || {}), [app.id]: sel.value };
+          await saveSettings({ socialAppSoundMap: nextMap }, `Updated notification sound for ${app.name}`);
+          if (sel.value !== 'none') {
+            const previewId = sel.value === 'default' ? appSettings.soundId || 'bamboo-pop' : sel.value;
+            window.PocketMailSound.playNotificationSound(previewId, appSettings.soundVolume, appSettings.customAudioData);
+          }
+        });
+
+        row.appendChild(left);
+        row.appendChild(sel);
+        socialSoundsGrid.appendChild(row);
+      });
+    }
+
     const rate = appSettings.ttsRate || 1.0;
     document.getElementById('opt-tts-rate').value = rate;
     document.getElementById('opt-tts-rate-val').textContent = `${rate.toFixed(2)}x`;
@@ -348,6 +426,160 @@
   function renderPrivacyTab() {
     document.getElementById('opt-poll-interval').value = String(appSettings.pollIntervalSeconds || 30);
     document.getElementById('opt-max-slots').value = String(appSettings.maxSessionSlots || 5);
+
+    const openModeEl = document.getElementById('opt-sidebar-open-mode');
+    if (openModeEl) openModeEl.value = appSettings.sidebarOpenMode || 'auto';
+
+    const autoHideTopEl = document.getElementById('opt-autohide-top-bar');
+    if (autoHideTopEl) autoHideTopEl.checked = appSettings.autoHideMediaTopBar !== false;
+
+    const showBottomBarEl = document.getElementById('opt-show-bottom-bar');
+    if (showBottomBarEl) showBottomBarEl.checked = !appSettings.hideMediaBottomBar;
+
+    const chkKeepAudio = document.getElementById('opt-keep-audio-closed');
+    if (chkKeepAudio) {
+      chkKeepAudio.checked = appSettings.keepAudioPlayingWhenClosed !== false;
+    }
+
+    const mediaApi = window.PocketMailMediaApps;
+    const allApps = mediaApi
+      ? [
+          ...(mediaApi.getOrderedBuiltInApps ? mediaApi.getOrderedBuiltInApps(appSettings) : mediaApi.BUILTIN_MEDIA_APPS),
+          ...(Array.isArray(appSettings.customMediaApps) ? appSettings.customMediaApps : [])
+        ]
+      : [];
+
+    // 1. Background Audio When Extension is Closed (2-column SVG card grid)
+    const bgPicker = document.getElementById('opt-bgaudio-apps-picker');
+    if (bgPicker && mediaApi) {
+      bgPicker.replaceChildren();
+      const pickedBgAudioIds = Array.isArray(appSettings.bgAudioAppIds)
+        ? appSettings.bgAudioAppIds
+        : ['spotify', 'youtube'];
+
+      allApps.forEach((app) => {
+        const isAllowed = pickedBgAudioIds.includes(app.id);
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = `opt-app-toggle-card ${isAllowed ? 'is-active' : ''}`;
+
+        const left = document.createElement('div');
+        left.className = 'opt-app-toggle-left';
+
+        const iconWrap = document.createElement('span');
+        iconWrap.className = 'opt-app-toggle-icon';
+        iconWrap.style.background = app.gradient || app.color || 'var(--accent)';
+        iconWrap.appendChild(mediaApi.createAppSvgIcon(app.id, 17));
+
+        const info = document.createElement('div');
+        info.className = 'opt-app-toggle-info';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'opt-app-toggle-name';
+        nameEl.textContent = app.name;
+        const subEl = document.createElement('div');
+        subEl.className = 'opt-app-toggle-sub';
+        subEl.textContent = isAllowed ? 'Plays in background' : 'Muted when closed';
+        info.appendChild(nameEl);
+        info.appendChild(subEl);
+
+        left.appendChild(iconWrap);
+        left.appendChild(info);
+
+        const pill = document.createElement('span');
+        pill.className = 'opt-app-toggle-pill';
+        pill.appendChild(mediaApi.createSubViewIcon(isAllowed ? 'speaker-play' : 'speaker-mute', 12));
+        const pillTxt = document.createElement('span');
+        pillTxt.textContent = isAllowed ? 'ON' : 'OFF';
+        pill.appendChild(pillTxt);
+
+        card.appendChild(left);
+        card.appendChild(pill);
+
+        card.addEventListener('click', async () => {
+          const nextIds = isAllowed
+            ? pickedBgAudioIds.filter((id) => id !== app.id)
+            : [...pickedBgAudioIds, app.id];
+          await saveSettings(
+            { bgAudioAppIds: nextIds },
+            isAllowed
+              ? `${app.name}: Background audio when closed turned OFF`
+              : `${app.name}: Background audio when closed turned ON`
+          );
+        });
+        bgPicker.appendChild(card);
+      });
+    }
+
+    // 2. Session & Page Memory (Persistent Memory) Mode + 2-column SVG card grid
+    const persistMode = appSettings.mediaPersistenceMode || 'custom';
+    document.querySelectorAll('#opt-persistence-mode-group [data-persist-mode]').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-persist-mode') === persistMode);
+    });
+
+    const persistPicker = document.getElementById('opt-persistent-apps-picker');
+    if (persistPicker && mediaApi) {
+      persistPicker.replaceChildren();
+      const pickedPersistIds = Array.isArray(appSettings.persistentAppIds)
+        ? appSettings.persistentAppIds
+        : [];
+
+      allApps.forEach((app) => {
+        const isPersist =
+          persistMode === 'all' ? true : persistMode === 'none' ? false : pickedPersistIds.includes(app.id);
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = `opt-app-toggle-card ${isPersist ? 'is-active' : ''}`;
+
+        const left = document.createElement('div');
+        left.className = 'opt-app-toggle-left';
+
+        const iconWrap = document.createElement('span');
+        iconWrap.className = 'opt-app-toggle-icon';
+        iconWrap.style.background = app.gradient || app.color || 'var(--accent)';
+        iconWrap.appendChild(mediaApi.createAppSvgIcon(app.id, 17));
+
+        const info = document.createElement('div');
+        info.className = 'opt-app-toggle-info';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'opt-app-toggle-name';
+        nameEl.textContent = app.name;
+        const subEl = document.createElement('div');
+        subEl.className = 'opt-app-toggle-sub';
+        subEl.textContent = isPersist ? 'Remembers page & reel' : 'Fresh start on open';
+        info.appendChild(nameEl);
+        info.appendChild(subEl);
+
+        left.appendChild(iconWrap);
+        left.appendChild(info);
+
+        const pill = document.createElement('span');
+        pill.className = 'opt-app-toggle-pill';
+        pill.appendChild(mediaApi.createSubViewIcon(isPersist ? 'bolt' : 'eco-leaf', 12));
+        const pillTxt = document.createElement('span');
+        pillTxt.textContent = isPersist ? 'ON' : 'ECO';
+        pill.appendChild(pillTxt);
+
+        card.appendChild(left);
+        card.appendChild(pill);
+
+        card.addEventListener('click', async () => {
+          const baseIds =
+            persistMode === 'all'
+              ? allApps.map((a) => a.id)
+              : persistMode === 'none'
+                ? []
+                : pickedPersistIds;
+          const nextIds = isPersist ? baseIds.filter((id) => id !== app.id) : [...baseIds, app.id];
+          await saveSettings(
+            { mediaPersistenceMode: 'custom', persistentAppIds: nextIds },
+            isPersist
+              ? `${app.name}: Persistent page memory turned OFF`
+              : `${app.name}: Persistent page & video memory turned ON`
+          );
+        });
+        persistPicker.appendChild(card);
+      });
+    }
   }
 
   function renderAll() {
@@ -389,6 +621,14 @@
 
     document.getElementById('opt-demo-mode').addEventListener('change', async (e) => {
       await saveSettings({ demoMode: e.target.value }, 'Updated Preview Mode setting');
+    });
+
+    document.getElementById('opt-max-emails-per-account')?.addEventListener('change', async (e) => {
+      await saveSettings({ maxEmailsPerAccount: parseInt(e.target.value, 10) }, 'Updated emails displayed per account');
+    });
+
+    document.getElementById('opt-badge-count-mode')?.addEventListener('change', async (e) => {
+      await saveSettings({ badgeCountMode: e.target.value }, 'Updated toolbar unread counter mode');
     });
 
     document.getElementById('opt-btn-oauth-connect').addEventListener('click', async () => {
@@ -475,6 +715,14 @@
       saveSettings({ ambientEffect: e.target.value }, 'Updated Ambient Atmosphere');
     });
 
+    document.getElementById('opt-font-style')?.addEventListener('change', (e) => {
+      saveSettings({ fontStyle: e.target.value }, 'Updated Typography Style');
+    });
+
+    document.getElementById('opt-social-theme-mode')?.addEventListener('change', (e) => {
+      saveSettings({ socialAppThemeMode: e.target.value }, 'Updated Social & Media App Theme Palette');
+    });
+
     // Notifications & Sound controls
     document.getElementById('opt-desktop-notif').addEventListener('change', (e) => {
       saveSettings({ desktopNotifications: e.target.checked }, 'Updated desktop notifications');
@@ -482,6 +730,10 @@
 
     document.getElementById('opt-voice-notif').addEventListener('change', (e) => {
       saveSettings({ voiceNotifications: e.target.checked }, 'Updated automatic voice announcements');
+    });
+
+    document.getElementById('opt-social-notif-sounds')?.addEventListener('change', (e) => {
+      saveSettings({ socialAppNotifySounds: e.target.checked }, 'Updated social app notification chimes');
     });
 
     document.getElementById('opt-sound-volume').addEventListener('input', async (e) => {
@@ -540,13 +792,58 @@
       saveSettings({ maxSessionSlots: parseInt(e.target.value, 10) }, 'Updated multi-account slot scan count');
     });
 
+    document.getElementById('opt-sidebar-open-mode')?.addEventListener('change', (e) => {
+      saveSettings({ sidebarOpenMode: e.target.value }, 'Updated sidebar open mode');
+    });
+
+    document.getElementById('opt-autohide-top-bar')?.addEventListener('change', (e) => {
+      saveSettings({ autoHideMediaTopBar: Boolean(e.target.checked) }, 'Updated media top bar behavior');
+    });
+
+    document.getElementById('opt-show-bottom-bar')?.addEventListener('change', (e) => {
+      saveSettings({ hideMediaBottomBar: !e.target.checked }, 'Updated quick sub-view bottom bar');
+    });
+
+    document.getElementById('opt-keep-audio-closed')?.addEventListener('change', (e) => {
+      saveSettings(
+        { keepAudioPlayingWhenClosed: Boolean(e.target.checked) },
+        e.target.checked
+          ? 'Background audio keep-alive enabled when closed'
+          : 'Background audio will pause when closed'
+      );
+    });
+
+    document.querySelectorAll('#opt-persistence-mode-group [data-persist-mode]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const mode = btn.getAttribute('data-persist-mode');
+        const label =
+          mode === 'none'
+            ? 'Eco Mode (0 MB background memory)'
+            : mode === 'all'
+              ? 'All Apps persistent memory enabled'
+              : 'Selected Apps persistent memory enabled';
+        await saveSettings({ mediaPersistenceMode: mode }, label);
+      });
+    });
+
     document.getElementById('opt-btn-clear-cache').addEventListener('click', async () => {
       const res = await browser.runtime.sendMessage({ type: 'CLEAR_LOCAL_CACHE' });
       if (res && res.state) {
         appState = res.state;
         renderAll();
-        showToast('Cleared local read/snooze cache');
+        showToast('Cleared local read, snooze & sent cache');
       }
+    });
+
+    document.getElementById('opt-btn-clear-page-memory')?.addEventListener('click', async () => {
+      try {
+        localStorage.removeItem('pm_fast_boot_v1');
+      } catch (_) {}
+      try {
+        await browser.storage.local.remove('pm_page_memory_v1');
+      } catch (_) {}
+      await browser.runtime.sendMessage({ type: 'CLEAR_PERSISTENT_SESSIONS' }).catch(() => {});
+      showToast('Cleared saved page, video & reel positions');
     });
 
     if (window.speechSynthesis) {

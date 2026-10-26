@@ -497,6 +497,34 @@ function createSubViewIcon(iconKey = 'home', size = 15) {
       svg.appendChild(createSvgElement('line', { x1: 23, y1: 9, x2: 17, y2: 15 }));
       svg.appendChild(createSvgElement('line', { x1: 17, y1: 9, x2: 23, y2: 15 }));
       break;
+    case 'headphones':
+      svg.appendChild(createSvgElement('path', { d: 'M3 18v-6a9 9 0 0 1 18 0v6' }));
+      svg.appendChild(createSvgElement('path', { d: 'M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z' }));
+      break;
+    case 'audio-wave':
+      svg.appendChild(createSvgElement('line', { x1: 4, y1: 10, x2: 4, y2: 14 }));
+      svg.appendChild(createSvgElement('line', { x1: 8, y1: 6, x2: 8, y2: 18 }));
+      svg.appendChild(createSvgElement('line', { x1: 12, y1: 3, x2: 12, y2: 21 }));
+      svg.appendChild(createSvgElement('line', { x1: 16, y1: 7, x2: 16, y2: 17 }));
+      svg.appendChild(createSvgElement('line', { x1: 20, y1: 10, x2: 20, y2: 14 }));
+      break;
+    case 'check':
+      svg.appendChild(createSvgElement('polyline', { points: '20 6 9 17 4 12' }));
+      break;
+    case 'bolt':
+      svg.appendChild(createSvgElement('polygon', { points: '13 2 3 14 12 14 11 22 21 10 12 10 13 2' }));
+      break;
+    case 'eco-leaf':
+    case 'leaf':
+      svg.appendChild(createSvgElement('path', { d: 'M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z' }));
+      svg.appendChild(createSvgElement('path', { d: 'M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12' }));
+      break;
+    case 'rocket':
+      svg.appendChild(createSvgElement('path', { d: 'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z' }));
+      svg.appendChild(createSvgElement('path', { d: 'm12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z' }));
+      svg.appendChild(createSvgElement('path', { d: 'M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0' }));
+      svg.appendChild(createSvgElement('path', { d: 'M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5' }));
+      break;
     case 'drag-grip':
       [
         [9, 5],
@@ -530,6 +558,7 @@ function mapCustomApps(settings = {}) {
         iconUrl: c.iconUrl || '',
         preferFullSession: true,
         isCustom: true,
+        enabled: c.enabled !== false,
         subViews: [{ label: 'Home', url: c.url || 'https://', icon: 'home' }]
       }))
     : [];
@@ -562,7 +591,7 @@ function getActiveMediaApps(settings = {}) {
     : DEFAULT_ENABLED_APP_IDS;
 
   const builtInActive = BUILTIN_MEDIA_APPS.filter((app) => enabledIds.includes(app.id));
-  const customApps = mapCustomApps(settings);
+  const customApps = mapCustomApps(settings).filter((app) => app.enabled !== false);
 
   return sortAppsByUserOrder([...builtInActive, ...customApps], settings);
 }

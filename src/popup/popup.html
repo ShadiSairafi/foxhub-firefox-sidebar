@@ -125,6 +125,10 @@
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           <span>Codes</span>
         </button>
+        <button class="pm-filter-chip" data-filter="sent" id="chip-sent" title="View emails sent from FoxHub">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          <span id="chip-sent-label">Sent</span>
+        </button>
         <button class="pm-filter-chip" data-filter="snoozed" id="chip-snoozed">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           <span id="chip-snoozed-label">Snoozed</span>
@@ -184,6 +188,9 @@
         </div>
 
         <div class="pm-reader-actions">
+          <button id="btn-reader-header-copy" class="pm-icon-btn" title="Copy Selected Text or Full Email Body (Ctrl+C)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
           <button id="btn-reader-star" class="pm-icon-btn" title="Star / Unstar (S)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
           </button>
@@ -249,10 +256,13 @@
             <button id="btn-zoom-in" class="pm-util-pill" title="Zoom In">+</button>
           </div>
           <div class="pm-zoom-controls">
-            <button id="btn-reader-copy-text" class="pm-util-pill" title="Copy email text to clipboard">Copy Text</button>
+            <button id="btn-reader-copy-text" class="pm-util-pill" title="Copy selected text or full email text to clipboard">Copy Text</button>
             <button id="btn-reader-translate" class="pm-util-pill" title="Translate this email in Google Translate">Translate</button>
           </div>
         </div>
+
+        <!-- Smart Quick-Copy Bar: surfaces copyable items (Codes, IDs/Hashes, Links, Emails, Subject) from any email -->
+        <div id="pm-reader-smart-chips" class="pm-reader-smart-chips hidden"></div>
 
         <div id="reader-body-viewport" class="pm-reader-body-viewport">
           <article class="pm-reader-body" id="reader-body">
@@ -770,15 +780,28 @@
               <button class="pm-opt-pill" data-persistence-mode="selected" title="Keep only your chosen apps (e.g. Spotify, YouTube, Discord) persistent across close/reopen">Selected Apps</button>
               <button class="pm-opt-pill" data-persistence-mode="all" title="Keep all opened apps persistent and restore exact state on reopen">All Apps</button>
             </div>
-            <div id="pm-persistence-resource-note" style="font-size:10.8px;line-height:1.4;color:var(--text-secondary);background:rgba(128,128,128,0.09);border-radius:8px;padding:7px 9px;margin-bottom:6px;">
-              <strong>⚡ Resource Impact (Eco Mode):</strong> Uses <strong>0 MB extra RAM</strong> and zero CPU/GPU when closed. Closing the sidebar unloads apps and resets to Mail.
+            <div id="pm-persistence-resource-note" style="font-size:10.8px;line-height:1.4;color:var(--text-secondary);background:rgba(128,128,128,0.09);border-radius:8px;padding:7px 9px;margin-bottom:6px;display:flex;align-items:flex-start;gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <div><strong>Resource Impact (Eco Mode):</strong> Uses <strong>0 MB extra RAM</strong> and zero CPU/GPU when closed. Closing the sidebar unloads apps and resets to Mail.</div>
             </div>
-            <div id="pm-persistent-apps-picker-wrap" class="hidden" style="margin-top:6px;">
-              <div style="font-size:11px;font-weight:600;color:var(--text-primary);margin-bottom:5px;">Choose Apps to Keep Persistent &amp; Playing When Closed:</div>
-              <div id="pm-persistent-apps-picker" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+            <div id="pm-persistent-apps-picker-wrap" class="hidden" style="margin-top:8px;">
+              <div class="pm-bgaudio-section-title">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                <span>Choose Apps to Keep in Persistent Memory (Save Page, Scroll &amp; State):</span>
+              </div>
+              <div id="pm-persistent-apps-picker" class="pm-bgaudio-cards-grid"></div>
             </div>
-            <div id="pm-spotify-bg-autoplay-tip" class="hidden" style="font-size:10.7px;line-height:1.42;color:var(--text-secondary);background:rgba(29,185,84,0.1);border:1px solid rgba(29,185,84,0.32);border-radius:8px;padding:7px 9px;margin-top:6px;">
-              <strong style="color:#1DB954;">🎧 Background Audio Note:</strong> <strong>YouTube</strong> &amp; video apps keep playing automatically when you close FoxHub! Because <strong>Spotify</strong> uses Widevine DRM, Firefox mutes hidden DRM frames unless Autoplay is allowed: in Firefox click <strong>☰ → Settings → search "Autoplay" → Settings… → set Default for all websites to "Allow Audio and Video"</strong>.
+            <div id="pm-bgaudio-apps-picker-wrap" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color);">
+              <div class="pm-bgaudio-section-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+                <span>Choose Which Apps Keep Playing Audio When Closed:</span>
+              </div>
+              <div style="font-size:10.3px;color:var(--text-muted);margin-bottom:7px;">Off by default for X/Twitter, TikTok, Instagram, Reddit &amp; social apps so they never waste resources in the background.</div>
+              <div id="pm-bgaudio-apps-picker" class="pm-bgaudio-cards-grid"></div>
+            </div>
+            <div id="pm-spotify-bg-autoplay-tip" class="hidden" style="font-size:10.7px;line-height:1.42;color:var(--text-secondary);background:rgba(29,185,84,0.1);border:1px solid rgba(29,185,84,0.32);border-radius:8px;padding:7px 9px;margin-top:8px;display:flex;align-items:flex-start;gap:7px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+              <div><strong style="color:#1DB954;">Background Audio Note:</strong> <strong>YouTube</strong> &amp; video apps keep playing automatically when you close FoxHub! Because <strong>Spotify</strong> uses Widevine DRM, Firefox mutes hidden DRM frames unless Autoplay is allowed: in Firefox click <strong>Menu → Settings → search "Autoplay" → Settings… → set Default for all websites to "Allow Audio and Video"</strong>.</div>
             </div>
           </div>
 
@@ -831,6 +854,12 @@
       <!-- Drag-to-Resize Corner Grips -->
       <div id="pm-resize-left" class="pm-resize-grip pm-resize-grip-left" title="Drag corner to resize popup width/height"></div>
       <div id="pm-resize-right" class="pm-resize-grip pm-resize-grip-right" title="Drag corner to resize popup width/height"></div>
+
+      <!-- Floating Copy Selection Pill when text is highlighted -->
+      <button id="pm-selection-copy-pill" type="button" class="pm-selection-copy-pill hidden" title="Copy highlighted text to clipboard">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        <span id="lbl-selection-copy-pill">Copy Selection</span>
+      </button>
 
       <!-- Toast Notification Pill -->
       <div id="pm-toast" class="pm-toast hidden"></div>

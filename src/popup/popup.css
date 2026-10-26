@@ -1554,6 +1554,9 @@ html[data-sidebar="true"] .pm-resize-grip {
 }
 
 .pm-reader-utility-bar {
+  position: sticky;
+  top: -6px;
+  z-index: 6;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1561,8 +1564,68 @@ html[data-sidebar="true"] .pm-resize-grip {
   margin-bottom: 8px;
   padding: 5px 8px;
   border-radius: 10px;
-  background: var(--card-bg);
+  background: var(--header-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border-color);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
+}
+
+.pm-reader-smart-chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.pm-smart-copy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8.5px;
+  border-radius: 99px;
+  border: 1px solid var(--border-strong);
+  background: var(--card-bg-solid);
+  color: var(--text-primary);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.14s ease;
+}
+
+.pm-smart-copy-chip:hover {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.pm-selection-copy-pill {
+  position: fixed;
+  z-index: 120;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 99px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+
+.pm-selection-copy-pill:hover {
+  background: var(--accent-hover);
+  transform: scale(1.04);
 }
 
 .pm-zoom-controls {
@@ -1618,6 +1681,21 @@ html[data-sidebar="true"] .pm-resize-grip {
   color: var(--text-primary);
   transform-origin: top left;
   word-break: break-word;
+  user-select: text !important;
+  -moz-user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text;
+}
+
+.pm-reader-body *,
+.pm-reader-meta,
+.pm-reader-meta *,
+.pm-card-subject,
+.pm-card-snippet,
+.pm-sender-name {
+  user-select: text !important;
+  -moz-user-select: text !important;
+  -webkit-user-select: text !important;
 }
 
 .pm-reader-body a {
@@ -2427,6 +2505,35 @@ html[data-sidebar="true"] .pm-resize-grip {
   pointer-events: none;
 }
 
+/* Music Playing ▶ indicator on Left Sidebar Rail icons & Open Left Sidebar button */
+.pm-rail-playing-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #1DB954;
+  color: #FFFFFF;
+  font-size: 7.5px;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--bg-base);
+  box-shadow: 0 0 8px rgba(29, 185, 84, 0.9);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.pm-rail-item.is-playing-audio,
+.pm-icon-btn.is-playing-audio,
+.pm-rail-util-btn.is-playing-audio {
+  position: relative;
+  box-shadow: 0 0 0 1.8px #1DB954, 0 0 10px rgba(29, 185, 84, 0.45) !important;
+}
+
 .pm-media-mini-btn-danger:hover {
   background: var(--danger) !important;
   border-color: var(--danger) !important;
@@ -2748,6 +2855,9 @@ html[data-sidebar="true"] .pm-card-actions {
   box-shadow: 0 2px 6px rgba(255, 71, 87, 0.55);
   pointer-events: none;
   z-index: 3;
+}
+
+.pm-rail-social-badge.is-badge-pop {
   animation: pmSocialBadgePop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -2950,28 +3060,59 @@ html[data-sidebar="true"] .pm-card-actions {
 }
 
 /* Drag & Drop Reordering Styles for Left Rail & Pinned Apps Grid */
+.pm-rail-item,
+.pm-media-toggle-card,
+.pm-opt-pill,
+.pm-btn,
+.pm-btn-xs,
+.pm-icon-btn,
+.pm-rail-util-btn,
+.pm-media-mini-btn,
+.pm-theme-card,
+.pm-wallpaper-card {
+  transition: transform 0.08s cubic-bezier(0.2, 0, 0, 1), background 0.08s ease, border-color 0.08s ease, box-shadow 0.08s ease, color 0.08s ease !important;
+  will-change: transform;
+}
+
+.pm-rail-item:active,
+.pm-opt-pill:active,
+.pm-btn:active,
+.pm-btn-xs:active,
+.pm-icon-btn:active,
+.pm-rail-util-btn:active,
+.pm-media-mini-btn:active,
+.pm-theme-card:active,
+.pm-wallpaper-card:active {
+  transform: scale(0.95) !important;
+}
+
 .pm-rail-item[draggable="true"] {
   cursor: grab;
+  user-select: none;
 }
 
 .pm-rail-item.is-dragging,
 .pm-media-toggle-card.is-dragging {
   opacity: 0.42;
   transform: scale(0.95);
+  cursor: grabbing;
 }
 
 .pm-rail-item.drag-over-target {
   outline: 2px dashed var(--accent);
   outline-offset: 2px;
+  transform: scale(1.06);
 }
 
 .pm-media-toggle-card[draggable="true"] {
   cursor: grab;
+  user-select: none;
 }
 
 .pm-media-toggle-card.drag-over-target {
   border-color: var(--accent) !important;
   box-shadow: 0 0 0 2px var(--accent-soft) !important;
+  transform: translateY(-1px);
 }
 
 .pm-drag-grip-icon {
@@ -2987,4 +3128,111 @@ html[data-sidebar="true"] .pm-card-actions {
 .pm-media-toggle-card:hover .pm-drag-grip-icon {
   opacity: 1;
   color: var(--text-secondary);
+}
+
+/* Redesigned SVG App Picker Cards for Background Audio & Persistent Memory */
+.pm-bgaudio-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.2px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 5px;
+}
+
+.pm-bgaudio-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
+  gap: 6px;
+}
+
+.pm-bgaudio-app-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.08s cubic-bezier(0.2, 0, 0, 1), background 0.1s ease, border-color 0.1s ease, box-shadow 0.1s ease;
+}
+
+.pm-bgaudio-app-card:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.pm-bgaudio-app-card:active {
+  transform: scale(0.96);
+}
+
+.pm-bgaudio-app-card.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.pm-bgaudio-app-card.is-bgaudio-on {
+  background: rgba(29, 185, 84, 0.11);
+  border-color: rgba(29, 185, 84, 0.55);
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(29, 185, 84, 0.12);
+}
+
+.pm-bgaudio-app-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pm-bgaudio-app-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+}
+
+.pm-bgaudio-app-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pm-bgaudio-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 99px;
+  font-size: 9.8px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  background: rgba(128, 128, 128, 0.14);
+  color: var(--text-muted);
+}
+
+.pm-bgaudio-app-card.is-active .pm-bgaudio-status-badge {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.pm-bgaudio-app-card.is-bgaudio-on .pm-bgaudio-status-badge {
+  background: #1db954;
+  color: #ffffff;
 }
