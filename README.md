@@ -29,9 +29,10 @@ Instead of keeping ten pinned tabs open just to grab login verification codes, r
 * **8 Warm Themes & Custom Backgrounds:** Choose from 8 warm palettes (*Warm Linen, Botanical Sage, Sakura Morning, Coastal Breeze, Golden Hour, Lavender Cloud, Gallery Paper, Cozy Espresso*), illustrated wallpapers, or upload your own background image.
 * **Acoustic Notification Chimes:** Local Web Audio notification chimes with volume control and Do Not Disturb mode.
 
-## What's New in v2.6.3
+## What's New in v2.6.4
 
 * **Smarter 2FA & Activation Key Extractor:**
+  * **Multi-Message Thread Support (Repeated 2FA Codes):** When a service (like Battle.net, Steam, Discord, or Google) sends multiple verification codes in the same Gmail conversation thread, FoxHub now always extracts the code from the **newest message at the bottom of the thread**, places the newest message at the top of the Reader View, and refreshes active threads automatically.
   * Ignores gamer tags / BattleTags / Discord handles with `#` discriminators (e.g. `BigSnow#21284`) so account numbers are never mistaken for verification codes.
   * Added full support for multi-segment hyphenated activation/launch/gift keys (e.g. `D96P-5HT9-QM3NJ-VS89-CT8B` or Steam keys `XXXXX-XXXXX-XXXXX`) and alphanumeric security codes (`BV9W6D`) in addition to 4–8 digit and `G-XXXXXX` codes.
   * Automatically fetches the full email body in the background whenever Gmail's 128-character preview snippet truncates a verification code (`BV9W6...`), placing the complete 1-click **Copy Code** button right on the mail card.

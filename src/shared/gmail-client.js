@@ -146,7 +146,11 @@
     const messages = entries.map((entry) => {
       const subject = (entry.querySelector('title')?.textContent || '(No subject)').trim();
       const summary = (entry.querySelector('summary')?.textContent || '').trim();
-      const issued = entry.querySelector('issued')?.textContent || entry.querySelector('modified')?.textContent || new Date().toISOString();
+      // Prefer <modified> over <issued> so multi-message threads (e.g. repeated 2FA codes) reflect the newest message arrival time
+      const issued =
+        entry.querySelector('modified')?.textContent ||
+        entry.querySelector('issued')?.textContent ||
+        new Date().toISOString();
       const linkEl = entry.querySelector('link');
       const linkHref = linkEl ? linkEl.getAttribute('href') : '';
       const tagId = entry.querySelector('id')?.textContent || '';
@@ -192,6 +196,7 @@
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'include',
+      cache: 'no-store',
       headers: {
         'Accept': 'application/atom+xml,application/xml,text/xml'
       }
@@ -414,8 +419,8 @@
 
     if (ik) {
       try {
-        const ptUrl = `https://mail.google.com/mail/u/${slot}/?ui=2&ik=${encodeURIComponent(ik)}&view=pt&search=all&th=${encodeURIComponent(message.threadId)}`;
-        const resp = await fetch(ptUrl, { credentials: 'include' });
+        const ptUrl = `https://mail.google.com/mail/u/${slot}/?ui=2&ik=${encodeURIComponent(ik)}&view=pt&search=all&th=${encodeURIComponent(message.threadId)}&_=${Date.now()}`;
+        const resp = await fetch(ptUrl, { credentials: 'include', cache: 'no-store' });
         if (resp.ok) {
           const rawHtml = await resp.text();
           const cleaned = sanitizeGmailPrintHtml(rawHtml, message.subject || '');
@@ -457,6 +462,8 @@
     if (!bodyContainer) return null;
 
     // Strip the top Gmail print-view logo table and duplicate subject table if present
+    let latestMessageText = '';
+    let threadOtpCode = null;
     const mainContent = bodyContainer.querySelector('.maincontent');
     if (mainContent) {
       // Remove top <hr> and duplicate subject table before table.message
@@ -470,7 +477,8 @@
 
       // Inside each table.message, the first rows contain the duplicate sender/recipient/date header
       // while the last row contains the actual email content
-      mainContent.querySelectorAll('table.message').forEach((msgTable) => {
+      const msgTables = Array.from(mainContent.querySelectorAll('table.message'));
+      msgTables.forEach((msgTable) => {
         const rows = Array.from(msgTable.querySelectorAll(':scope > tbody > tr, :scope > tr'));
         if (rows.length >= 2) {
           // Keep only rows that contain the actual message body (skip sender & To:/Reply-To: rows)
@@ -479,6 +487,27 @@
           }
         }
       });
+
+      // Gmail Print View lists messages in a thread oldest-first (msgTables[0]) to newest-last (msgTables[msgTables.length - 1]).
+      // Always extract the verification code & snippet from the NEWEST message first, and place the newest message at the top of Reader View!
+      if (msgTables.length > 0) {
+        for (let i = msgTables.length - 1; i >= 0; i--) {
+          const tblText = (msgTables[i].innerText || msgTables[i].textContent || '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (i === msgTables.length - 1) {
+            latestMessageText = tblText;
+          }
+          if (!threadOtpCode && tblText) {
+            threadOtpCode = extractVerificationCode(subject || '', tblText);
+          }
+        }
+        if (msgTables.length > 1) {
+          for (let i = msgTables.length - 1; i >= 0; i--) {
+            mainContent.appendChild(msgTables[i]);
+          }
+        }
+      }
 
       bodyContainer = mainContent;
     }
@@ -534,15 +563,18 @@
       }
     });
 
-    const plainText = (bodyContainer.innerText || bodyContainer.textContent || '')
+    const fullThreadText = (bodyContainer.innerText || bodyContainer.textContent || '')
       .replace(/\s+/g, ' ')
       .trim();
+    const plainText = latestMessageText || fullThreadText;
+    const latestSnippet = plainText.slice(0, 220);
 
-    const otpCode = extractVerificationCode(subject || '', plainText);
+    const otpCode = threadOtpCode || extractVerificationCode(subject || '', plainText);
 
     return {
       html: bodyContainer.innerHTML,
       plainText,
+      latestSnippet,
       unsubscribeUrl,
       otpCode
     };

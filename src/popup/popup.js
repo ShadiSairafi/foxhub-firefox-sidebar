@@ -494,6 +494,8 @@
 
     bindFaviconFallbacks(emailListEl);
 
+    let fullThreadOtpFetchCount = 0;
+
     // Attach listeners to cards & action buttons
     emailListEl.querySelectorAll('.pm-email-card').forEach((cardEl) => {
       const msgId = cardEl.getAttribute('data-msg-id');
@@ -546,23 +548,31 @@
         openReaderView(msgObj);
       });
 
-      // If this is a verification/2FA email whose code was truncated by Gmail's 128-char Atom <summary> (e.g. "BV9W6..."),
-      // fetch the full body in the background so the 1-click "Copy Code" pill appears right on the card!
+      // For verification/2FA emails (especially multi-message threads where Gmail's Atom <summary> stays stuck on an older
+      // unread message's code, or truncates at 128 chars), always verify against the newest message in the full thread!
       if (
-        !msgObj.otpCode &&
-        !msgObj.fullText &&
-        !msgObj._otpFullFetchAttempted &&
-        /\b(code|verification|verify|otp|passcode|security|sign-in|signin|login|auth|confirm|pin|steam guard|two-factor|2fa)\b/i.test(
+        fullThreadOtpFetchCount < 3 &&
+        !msgObj.isDemo &&
+        msgObj._otpVerifiedTs !== msgObj.timestamp &&
+        /\b(code|key|verification|verify|otp|passcode|security|sign-in|signin|login|auth|confirm|pin|steam guard|two-factor|2fa|redeem|activation)\b/i.test(
           `${msgObj.subject || ''} ${msgObj.snippet || ''}`
         )
       ) {
-        msgObj._otpFullFetchAttempted = true;
+        fullThreadOtpFetchCount++;
+        msgObj._otpVerifiedTs = msgObj.timestamp;
         browser.runtime
           .sendMessage({ type: 'FETCH_FULL_EMAIL', message: msgObj })
           .then((fullRes) => {
             if (!fullRes) return;
             if (fullRes.plainText) {
               msgObj.fullText = fullRes.plainText;
+            }
+            if (fullRes.latestSnippet) {
+              msgObj.snippet = fullRes.latestSnippet;
+              const snippetEl = cardEl.querySelector('.pm-card-snippet');
+              if (snippetEl) {
+                snippetEl.textContent = fullRes.latestSnippet;
+              }
             }
             const resolvedOtp =
               fullRes.otpCode ||
@@ -571,23 +581,31 @@
             if (resolvedOtp) {
               msgObj.otpCode = resolvedOtp;
               const actionsRow = cardEl.querySelector('.pm-card-actions');
-              if (actionsRow && !actionsRow.querySelector('[data-action="copyOtp"]')) {
-                const otpPill = document.createElement('button');
-                otpPill.className = 'pm-action-pill pm-action-pill-otp';
-                otpPill.setAttribute('data-action', 'copyOtp');
-                otpPill.setAttribute('data-otp', resolvedOtp);
-                otpPill.title = 'Click to copy verification code';
-                const span = document.createElement('span');
-                span.textContent = `Copy Code: ${resolvedOtp}`;
-                otpPill.appendChild(span);
-                otpPill.addEventListener('click', async (ev) => {
-                  ev.stopPropagation();
-                  if (navigator.clipboard) {
-                    await navigator.clipboard.writeText(resolvedOtp);
-                    showToast(`Copied verification code: ${resolvedOtp}`);
-                  }
-                });
-                actionsRow.insertBefore(otpPill, actionsRow.firstChild);
+              if (actionsRow) {
+                const existingOtpBtn = actionsRow.querySelector('[data-action="copyOtp"]');
+                if (existingOtpBtn) {
+                  existingOtpBtn.setAttribute('data-otp', resolvedOtp);
+                  const spanEl = existingOtpBtn.querySelector('span') || existingOtpBtn;
+                  spanEl.textContent = `Copy Code: ${resolvedOtp}`;
+                } else {
+                  const otpPill = document.createElement('button');
+                  otpPill.className = 'pm-action-pill pm-action-pill-otp';
+                  otpPill.setAttribute('data-action', 'copyOtp');
+                  otpPill.setAttribute('data-otp', resolvedOtp);
+                  otpPill.title = 'Click to copy verification code';
+                  const span = document.createElement('span');
+                  span.textContent = `Copy Code: ${resolvedOtp}`;
+                  otpPill.appendChild(span);
+                  otpPill.addEventListener('click', async (ev) => {
+                    ev.stopPropagation();
+                    const latestCode = otpPill.getAttribute('data-otp') || resolvedOtp;
+                    if (latestCode && navigator.clipboard) {
+                      await navigator.clipboard.writeText(latestCode);
+                      showToast(`Copied verification code: ${latestCode}`);
+                    }
+                  });
+                  actionsRow.insertBefore(otpPill, actionsRow.firstChild);
+                }
               }
             }
           })
@@ -3600,6 +3618,7 @@
       mediaAppsDrawer?.classList.add('hidden');
       renderOperaRail();
       syncPersistentSessionToBackground('pocketmail', '', null, true);
+      triggerSilentMailSync(2500);
     });
 
     const openFirefoxLeftSidebar = () => {
@@ -5409,6 +5428,24 @@
     });
   }
 
+  let lastSilentMailSyncAt = 0;
+  function triggerSilentMailSync(minIntervalMs = 4000) {
+    const now = Date.now();
+    if (now - lastSilentMailSyncAt < minIntervalMs) return;
+    lastSilentMailSyncAt = now;
+    browser.runtime
+      .sendMessage({ type: 'SYNC_NOW' })
+      .then((syncRes) => {
+        if (syncRes && syncRes.state) {
+          appState = syncRes.state;
+          if (syncRes.settings) appSettings = syncRes.settings;
+          if (syncRes.snoozed) snoozedMap = syncRes.snoozed;
+          renderAll();
+        }
+      })
+      .catch(() => {});
+  }
+
   async function init() {
     bindEvents();
 
@@ -5540,6 +5577,22 @@
       renderAll();
       sidebarInitCompleted = true;
       saveFastBootCache();
+
+      // Immediately trigger a non-blocking fresh Gmail sync on open, window focus, and every 10s while Mail is visible
+      // so newly requested 2FA codes arrive in seconds without waiting for the 30s background poll timer!
+      if (Date.now() - (appState.lastSyncAt || 0) > 2500) {
+        triggerSilentMailSync(2000);
+      }
+      window.addEventListener('focus', () => {
+        if (activeRailAppId === 'pocketmail') {
+          triggerSilentMailSync(3000);
+        }
+      });
+      setInterval(() => {
+        if (activeRailAppId === 'pocketmail' && document.visibilityState === 'visible') {
+          triggerSilentMailSync(9000);
+        }
+      }, 10000);
 
       if (initialAppId && window.PocketMailMediaApps) {
         const app = window.PocketMailMediaApps.getAppById(initialAppId, appSettings);

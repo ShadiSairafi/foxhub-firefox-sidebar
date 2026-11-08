@@ -252,6 +252,19 @@ function applyOverlayToAccounts(rawAccounts) {
 
     let removedCount = 0;
     const processedMessages = (acc.messages || []).filter((msg) => {
+      // If a brand-new message arrived in this thread AFTER the user locally archived/trashed/read an earlier message in the thread,
+      // clear the old overlay entry so the new message appears in the inbox!
+      if (msg.timestamp) {
+        if (localOverlay.trashedIds[msg.id] && msg.timestamp > localOverlay.trashedIds[msg.id] + 2000) {
+          delete localOverlay.trashedIds[msg.id];
+        }
+        if (localOverlay.archivedIds[msg.id] && msg.timestamp > localOverlay.archivedIds[msg.id] + 2000) {
+          delete localOverlay.archivedIds[msg.id];
+        }
+        if (localOverlay.readIds[msg.id] && msg.timestamp > localOverlay.readIds[msg.id] + 2000) {
+          delete localOverlay.readIds[msg.id];
+        }
+      }
       if (localOverlay.trashedIds[msg.id] || localOverlay.archivedIds[msg.id]) {
         removedCount++;
         return false;
@@ -266,13 +279,18 @@ function applyOverlayToAccounts(rawAccounts) {
       const isReadLocally = Boolean(localOverlay.readIds[msg.id]);
       if (isReadLocally) removedCount++;
       const cachedFull = resolvedOtpCache.get(msg.id);
-      const effectiveFullText = cachedFull?.fullText || msg.fullText || '';
+      const isCacheFresh = Boolean(
+        cachedFull && cachedFull.timestamp === msg.timestamp && now - (cachedFull.fetchedAt || 0) < 8000
+      );
+      const effectiveFullText = isCacheFresh ? cachedFull.fullText || msg.fullText || '' : '';
+      const effectiveSnippet = isCacheFresh && cachedFull.latestSnippet ? cachedFull.latestSnippet : msg.snippet;
       const recomputedOtp =
-        cachedFull?.otpCode ||
-        PocketMailGmailClient.extractVerificationCode(msg.subject, effectiveFullText || msg.snippet);
+        (isCacheFresh && cachedFull.otpCode) ||
+        PocketMailGmailClient.extractVerificationCode(msg.subject, effectiveFullText || effectiveSnippet);
       return {
         ...msg,
-        fullText: effectiveFullText || msg.fullText,
+        snippet: effectiveSnippet,
+        fullText: effectiveFullText || undefined,
         otpCode: recomputedOtp || null,
         unread: !isReadLocally,
         starred: localOverlay.starredIds[msg.id] !== undefined ? localOverlay.starredIds[msg.id] : Boolean(msg.starred),
@@ -379,6 +397,50 @@ async function syncAllAccounts(options = {}) {
     }
 
     const { accounts, totalUnread } = applyOverlayToAccounts(combinedRaw);
+
+    // For the newest unread verification/2FA emails (especially multi-message threads where Gmail's Atom <summary>
+    // stays stuck on an older code in the thread), resolve the full thread body so we always extract the newest message's code!
+    const otpCandidates = [];
+    accounts.forEach((acc) => {
+      if (acc.disabled) return;
+      (acc.messages || []).forEach((m) => {
+        if (
+          m.unread !== false &&
+          !m.isDemo &&
+          /\b(code|key|verification|verify|otp|passcode|security|sign-in|signin|login|auth|confirm|pin|steam guard|two-factor|2fa|redeem|activation)\b/i.test(
+            `${m.subject || ''} ${m.snippet || ''}`
+          )
+        ) {
+          const cached = resolvedOtpCache.get(m.id);
+          if (!cached || cached.timestamp !== m.timestamp || Date.now() - (cached.fetchedAt || 0) >= 8000) {
+            otpCandidates.push(m);
+          }
+        }
+      });
+    });
+
+    if (otpCandidates.length > 0) {
+      otpCandidates.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      await Promise.all(
+        otpCandidates.slice(0, 3).map(async (m) => {
+          try {
+            const fullRes = await PocketMailGmailClient.fetchFullEmailContent(m);
+            if (fullRes) {
+              resolvedOtpCache.set(m.id, {
+                timestamp: m.timestamp,
+                fetchedAt: Date.now(),
+                otpCode: fullRes.otpCode || null,
+                fullText: fullRes.plainText || '',
+                latestSnippet: fullRes.latestSnippet || ''
+              });
+              if (fullRes.plainText) m.fullText = fullRes.plainText;
+              if (fullRes.latestSnippet) m.snippet = fullRes.latestSnippet;
+              if (fullRes.otpCode) m.otpCode = fullRes.otpCode;
+            }
+          } catch (_) {}
+        })
+      );
+    }
 
     // Detect newly arrived unread messages that are ACTUALLY visible in FoxHub (never speak spam or older unread emails shifting into the 20-item Atom window!)
     const newArrivals = [];
@@ -3166,14 +3228,18 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         const msgId = msg.message?.id;
         if (msgId && res) {
           resolvedOtpCache.set(msgId, {
+            timestamp: msg.message?.timestamp || 0,
+            fetchedAt: Date.now(),
             otpCode: res.otpCode || null,
-            fullText: res.plainText || ''
+            fullText: res.plainText || '',
+            latestSnippet: res.latestSnippet || ''
           });
           let updated = false;
           (cachedState.accounts || []).forEach((acc) => {
             (acc.messages || []).forEach((m) => {
               if (m.id === msgId) {
                 if (res.plainText) m.fullText = res.plainText;
+                if (res.latestSnippet) m.snippet = res.latestSnippet;
                 if (res.otpCode) m.otpCode = res.otpCode;
                 updated = true;
               }
