@@ -80,6 +80,7 @@ let cachedState = {
 let knownUnreadIds = new Set();
 let isFirstSync = true;
 let pollTimer = null;
+const resolvedOtpCache = new Map(); // msg.id -> { otpCode, fullText }
 
 // Local overlay so actions (read/trash/archive/star/snooze/sent) feel instantaneous (<10ms)
 let localOverlay = {
@@ -147,6 +148,9 @@ async function loadStorage() {
       (acc.messages || []).forEach((m) => {
         knownUnreadIds.add(m.id);
         if (localOverlay.seenIds) localOverlay.seenIds[m.id] = Date.now();
+        if (typeof PocketMailGmailClient !== 'undefined' && PocketMailGmailClient.extractVerificationCode) {
+          m.otpCode = PocketMailGmailClient.extractVerificationCode(m.subject, m.fullText || m.snippet) || null;
+        }
       });
     });
   }
@@ -261,8 +265,15 @@ function applyOverlayToAccounts(rawAccounts) {
     }).map((msg) => {
       const isReadLocally = Boolean(localOverlay.readIds[msg.id]);
       if (isReadLocally) removedCount++;
+      const cachedFull = resolvedOtpCache.get(msg.id);
+      const effectiveFullText = cachedFull?.fullText || msg.fullText || '';
+      const recomputedOtp =
+        cachedFull?.otpCode ||
+        PocketMailGmailClient.extractVerificationCode(msg.subject, effectiveFullText || msg.snippet);
       return {
         ...msg,
+        fullText: effectiveFullText || msg.fullText,
+        otpCode: recomputedOtp || null,
         unread: !isReadLocally,
         starred: localOverlay.starredIds[msg.id] !== undefined ? localOverlay.starredIds[msg.id] : Boolean(msg.starred),
         accountColor: color,
@@ -3150,7 +3161,30 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       })();
 
     case 'FETCH_FULL_EMAIL':
-      return PocketMailGmailClient.fetchFullEmailContent(msg.message);
+      return (async () => {
+        const res = await PocketMailGmailClient.fetchFullEmailContent(msg.message);
+        const msgId = msg.message?.id;
+        if (msgId && res) {
+          resolvedOtpCache.set(msgId, {
+            otpCode: res.otpCode || null,
+            fullText: res.plainText || ''
+          });
+          let updated = false;
+          (cachedState.accounts || []).forEach((acc) => {
+            (acc.messages || []).forEach((m) => {
+              if (m.id === msgId) {
+                if (res.plainText) m.fullText = res.plainText;
+                if (res.otpCode) m.otpCode = res.otpCode;
+                updated = true;
+              }
+            });
+          });
+          if (updated) {
+            browser.storage.local.set({ cachedState }).catch(() => {});
+          }
+        }
+        return res;
+      })();
 
     case 'SEND_EMAIL':
       return (async () => {

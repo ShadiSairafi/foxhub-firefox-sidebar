@@ -29,8 +29,12 @@ Instead of keeping ten pinned tabs open just to grab login verification codes, r
 * **8 Warm Themes & Custom Backgrounds:** Choose from 8 warm palettes (*Warm Linen, Botanical Sage, Sakura Morning, Coastal Breeze, Golden Hour, Lavender Cloud, Gallery Paper, Cozy Espresso*), illustrated wallpapers, or upload your own background image.
 * **Acoustic Notification Chimes:** Local Web Audio notification chimes with volume control and Do Not Disturb mode.
 
-## What's New in v2.6.1
+## What's New in v2.6.2
 
+* **Smarter 2FA & Verification Code Extractor:**
+  * Ignores gamer tags / BattleTags / Discord handles with `#` discriminators (e.g. `BigSnow#21284`) so account numbers are never mistaken for verification codes.
+  * Added full support for alphanumeric security codes (such as Battle.net and Steam Guard codes like `BV9W6D`) in addition to 4–8 digit and `G-XXXXXX` codes.
+  * Automatically fetches the full email body in the background whenever Gmail's 128-character preview snippet truncates a verification code (`BV9W6...`), placing the complete 1-click **Copy Code** button right on the mail card.
 * **Instagram Sidebar & Lightbox Polish:**
   * Profile post & reel modals now open in a clean, full-sized card view by default and toggle the scrollable comments & reply drawer on demand when clicking the Comment (`💬`) button.
   * Added dedicated Play/Pause click support and a floating Mute/Unmute audio button inside profile post & reel modals.

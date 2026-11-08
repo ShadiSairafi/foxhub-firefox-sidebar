@@ -415,10 +415,10 @@
             : `<div class="pm-avatar" style="background:${escapeHtml(color)}">${escapeHtml(initials)}</div>`;
 
           const isReadCard = msg.unread === false;
-          const otpCode =
-            msg.otpCode ||
-            (window.PocketMailGmailClient &&
-              PocketMailGmailClient.extractVerificationCode(msg.subject, msg.snippet));
+          const otpCode = window.PocketMailGmailClient
+            ? PocketMailGmailClient.extractVerificationCode(msg.subject, msg.fullText || msg.snippet)
+            : msg.otpCode;
+          msg.otpCode = otpCode || null;
 
           return `
           <article class="pm-email-card ${isReadCard ? 'pm-card-read' : ''}" data-msg-id="${escapeHtml(msg.id)}" style="--card-account-color:${escapeHtml(color)};${isReadCard ? 'opacity:0.78;' : ''}">
@@ -545,6 +545,54 @@
         if (sel && sel.toString().trim().length > 0) return;
         openReaderView(msgObj);
       });
+
+      // If this is a verification/2FA email whose code was truncated by Gmail's 128-char Atom <summary> (e.g. "BV9W6..."),
+      // fetch the full body in the background so the 1-click "Copy Code" pill appears right on the card!
+      if (
+        !msgObj.otpCode &&
+        !msgObj.fullText &&
+        !msgObj._otpFullFetchAttempted &&
+        /\b(code|verification|verify|otp|passcode|security|sign-in|signin|login|auth|confirm|pin|steam guard|two-factor|2fa)\b/i.test(
+          `${msgObj.subject || ''} ${msgObj.snippet || ''}`
+        )
+      ) {
+        msgObj._otpFullFetchAttempted = true;
+        browser.runtime
+          .sendMessage({ type: 'FETCH_FULL_EMAIL', message: msgObj })
+          .then((fullRes) => {
+            if (!fullRes) return;
+            if (fullRes.plainText) {
+              msgObj.fullText = fullRes.plainText;
+            }
+            const resolvedOtp =
+              fullRes.otpCode ||
+              (window.PocketMailGmailClient &&
+                PocketMailGmailClient.extractVerificationCode(msgObj.subject, msgObj.fullText || msgObj.snippet));
+            if (resolvedOtp) {
+              msgObj.otpCode = resolvedOtp;
+              const actionsRow = cardEl.querySelector('.pm-card-actions');
+              if (actionsRow && !actionsRow.querySelector('[data-action="copyOtp"]')) {
+                const otpPill = document.createElement('button');
+                otpPill.className = 'pm-action-pill pm-action-pill-otp';
+                otpPill.setAttribute('data-action', 'copyOtp');
+                otpPill.setAttribute('data-otp', resolvedOtp);
+                otpPill.title = 'Click to copy verification code';
+                const span = document.createElement('span');
+                span.textContent = `Copy Code: ${resolvedOtp}`;
+                otpPill.appendChild(span);
+                otpPill.addEventListener('click', async (ev) => {
+                  ev.stopPropagation();
+                  if (navigator.clipboard) {
+                    await navigator.clipboard.writeText(resolvedOtp);
+                    showToast(`Copied verification code: ${resolvedOtp}`);
+                  }
+                });
+                actionsRow.insertBefore(otpPill, actionsRow.firstChild);
+              }
+            }
+          })
+          .catch(() => {});
+      }
     });
   }
 
@@ -705,7 +753,8 @@
     if (parenHexMatch && parenHexMatch[1]) {
       addChip(`Commit: ${parenHexMatch[1]}`, parenHexMatch[1]);
     }
-    const idTokens = fullStr.match(/(?:#\d{3,10}|\b[a-z]+-[a-z0-9]+-\d{2,6}(?:-\d{2,6})?\b|\b[A-Z]{2,5}-\d{3,10}\b)/g) || [];
+    const idTokens =
+      fullStr.match(/(?:(?<![A-Za-z0-9_.-])#\d{3,10}|\b[a-z]+-[a-z0-9]+-\d{2,6}(?:-\d{2,6})?\b|\b[A-Z]{2,5}-\d{3,10}\b)/g) || [];
     idTokens.slice(0, 2).forEach((tok) => {
       addChip(`ID: ${tok}`, tok);
     });
@@ -788,10 +837,9 @@
     // OTP & Unsubscribe badges in reader header
     const otpBtn = document.getElementById('btn-reader-copy-otp');
     const unsubBtn = document.getElementById('btn-reader-unsubscribe');
-    const initialOtp =
-      msgObj.otpCode ||
-      (window.PocketMailGmailClient &&
-        PocketMailGmailClient.extractVerificationCode(msgObj.subject, msgObj.snippet));
+    const initialOtp = window.PocketMailGmailClient
+      ? PocketMailGmailClient.extractVerificationCode(msgObj.subject, msgObj.fullText || msgObj.snippet)
+      : msgObj.otpCode;
 
     if (otpBtn) {
       if (initialOtp) {
@@ -835,11 +883,20 @@
         activeReaderMessage.fullText = fullContent.plainText || msgObj.snippet;
         activeReaderMessage.unsubscribeUrl = fullContent.unsubscribeUrl || null;
 
-        const detectedOtp = initialOtp || fullContent.otpCode;
-        if (detectedOtp && otpBtn) {
-          otpBtn.textContent = `Copy Code: ${detectedOtp}`;
-          otpBtn.setAttribute('data-otp', detectedOtp);
-          otpBtn.classList.remove('hidden');
+        const detectedOtp =
+          fullContent.otpCode ||
+          (window.PocketMailGmailClient &&
+            PocketMailGmailClient.extractVerificationCode(msgObj.subject, activeReaderMessage.fullText)) ||
+          initialOtp;
+        if (detectedOtp) {
+          msgObj.otpCode = detectedOtp;
+          if (otpBtn) {
+            otpBtn.textContent = `Copy Code: ${detectedOtp}`;
+            otpBtn.setAttribute('data-otp', detectedOtp);
+            otpBtn.classList.remove('hidden');
+          }
+        } else if (otpBtn) {
+          otpBtn.classList.add('hidden');
         }
         if (fullContent.unsubscribeUrl && unsubBtn) {
           unsubBtn.classList.remove('hidden');

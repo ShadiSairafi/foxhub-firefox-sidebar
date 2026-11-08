@@ -29,25 +29,59 @@
 
   /**
    * Smart 1-Click OTP / 2FA Verification Code Extractor
-   * Detects 4–8 digit or G-XXXXXX verification codes in subject/snippet/body
+   * Detects 4–8 digit, G-XXXXXX, or alphanumeric (e.g. Battle.net / Steam BV9W6D) verification codes
+   * while ignoring gamer tags / BattleTags / Discord discriminators like BigSnow#21284.
    */
   function extractVerificationCode(subject = '', snippet = '') {
-    const combined = `${subject} ${snippet}`;
-    const hasKeyword = /\b(code|verification|verify|otp|passcode|security|sign-in|signin|login|auth|confirm|pin|steam guard)\b/i.test(combined);
+    const rawCombined = `${subject} ${snippet}`;
+    const hasKeyword =
+      /\b(code|verification|verify|otp|passcode|security|sign-in|signin|login|auth|confirm|pin|steam guard|two-factor|2fa)\b/i.test(
+        rawCombined
+      );
     if (!hasKeyword) return null;
 
-    // Match Google style G-123456
-    const gMatch = combined.match(/\b(G-\d{5,8})\b/i);
+    // Strip URLs, email addresses, BattleTag/Discord handle discriminators (e.g. BigSnow#21284),
+    // #12345 ticket IDs, and tokens truncated by Gmail Atom feed ellipsis at the end of a snippet (e.g. "BV9W6...")
+    const cleaned = rawCombined
+      .replace(/[A-Za-z0-9-]+(?:\.{2,}|…)\s*$/g, ' ')
+      .replace(/https?:\/\/\S+/gi, ' ')
+      .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, ' ')
+      .replace(/[A-Za-z0-9_.-]+#\d{2,10}\b/g, ' ')
+      .replace(/(?:^|\s)#\d{2,10}\b/g, ' ');
+
+    // 1. Match Google style G-123456
+    const gMatch = cleaned.match(/\b(G-\d{5,8})\b/i);
     if (gMatch) return gMatch[1];
 
-    // Match 5-8 digit standalone verification code (avoiding years 2010-2030 or prices)
-    const numMatches = combined.match(/\b(\d{5,8})\b/g);
+    // 2. Match explicitly labeled code first (e.g. "security code: BV9W6D", "verification code is 849204", "code: 4829")
+    const labeledRegex =
+      /\b(?:security\s+code|verification\s+code|login\s+code|sign-?in\s+code|access\s+code|confirmation\s+code|auth(?:entication)?\s+code|one-?time\s+code|otp(?:\s+code)?|passcode|steam\s+guard\s+code|your\s+code|code)(?:\s+is|\s*[:=-])\s*([A-Z0-9]{4,8})\b/gi;
+    let labeledMatch;
+    while ((labeledMatch = labeledRegex.exec(cleaned)) !== null) {
+      const candidate = labeledMatch[1];
+      if (/^\d{4,8}$/.test(candidate)) {
+        return candidate;
+      }
+      // Accept 5-8 char uppercase+digit alphanumeric code (e.g. Battle.net BV9W6D)
+      if (/^(?=.*\d)(?=.*[A-Z])[A-Z0-9]{5,8}$/.test(candidate)) {
+        return candidate;
+      }
+    }
+
+    // 3. Match 5-8 digit standalone verification code (ignoring years 1990-2039 or prices)
+    const numMatches = cleaned.match(/\b(\d{5,8})\b/g);
     if (numMatches && numMatches.length > 0) {
       return numMatches[0];
     }
 
-    // Match 4-digit code if explicitly preceded by "code:" or "code is"
-    const fourDigit = combined.match(/\bcode(?:\s+is|\s*[:=-])?\s*(\d{4})\b/i);
+    // 4. Match standalone 5-7 char uppercase alphanumeric code (must contain both uppercase letters and digits in original case, e.g. BV9W6D)
+    const alphaNumMatches = cleaned.match(/\b(?=[A-Z0-9]{5,7}\b)(?=.*\d)(?=.*[A-Z])[A-Z0-9]{5,7}\b/g);
+    if (alphaNumMatches && alphaNumMatches.length > 0) {
+      return alphaNumMatches[0];
+    }
+
+    // 5. Match 4-digit code if explicitly near "code", "pin", or "otp"
+    const fourDigit = cleaned.match(/\b(?:code|pin|otp)(?:\s+is|\s*[:=-])?\s*(\d{4})\b/i);
     if (fourDigit) return fourDigit[1];
 
     return null;
@@ -375,7 +409,7 @@
         const resp = await fetch(ptUrl, { credentials: 'include' });
         if (resp.ok) {
           const rawHtml = await resp.text();
-          const cleaned = sanitizeGmailPrintHtml(rawHtml);
+          const cleaned = sanitizeGmailPrintHtml(rawHtml, message.subject || '');
           if (cleaned && cleaned.plainText.length > 10) {
             return cleaned;
           }
@@ -402,7 +436,7 @@
    * Strips the redundant Gmail print-view logo header and duplicate subject/sender rows,
    * fixes relative URLs, and detects Unsubscribe links + OTP codes.
    */
-  function sanitizeGmailPrintHtml(rawHtml) {
+  function sanitizeGmailPrintHtml(rawHtml, subject = '') {
     const parser = new DOMParser();
     const doc = parser.parseFromString(rawHtml, 'text/html');
 
@@ -495,7 +529,7 @@
       .replace(/\s+/g, ' ')
       .trim();
 
-    const otpCode = extractVerificationCode('', plainText);
+    const otpCode = extractVerificationCode(subject || '', plainText);
 
     return {
       html: bodyContainer.innerHTML,
@@ -668,8 +702,9 @@
     const textData = findPart(data.payload, 'text/plain');
     const html = htmlData ? decodeBase64Url(htmlData) : `<p>${decodeBase64Url(textData || '') || data.snippet}</p>`;
     const plainText = textData ? decodeBase64Url(textData) : (data.snippet || '');
+    const otpCode = extractVerificationCode('', plainText);
 
-    return { html, plainText };
+    return { html, plainText, otpCode };
   }
 
   async function executeOAuthAction(oauthAccount, messageId, actionType) {
