@@ -1612,6 +1612,113 @@
     });
   }
 
+  function closeRailContextMenu() {
+    const existing = document.getElementById('pm-rail-context-menu');
+    if (existing) existing.remove();
+  }
+
+  function openRailAppContextMenu(app, anchorBtn, clientY) {
+    closeRailContextMenu();
+    const mediaApi = window.PocketMailMediaApps;
+    if (!mediaApi || !app) return;
+
+    const menu = document.createElement('div');
+    menu.id = 'pm-rail-context-menu';
+    menu.className = 'pm-rail-context-menu';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'pm-rail-ctx-header';
+    const hdrIcon = mediaApi.createAppSvgIcon(app.id, 14);
+    hdrIcon.style.color = app.color || 'var(--accent)';
+    const hdrText = document.createElement('span');
+    hdrText.textContent = app.name;
+    hdr.appendChild(hdrIcon);
+    hdr.appendChild(hdrText);
+    menu.appendChild(hdr);
+
+    const addItem = (labelText, onClick, isDanger = false) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `pm-rail-ctx-item${isDanger ? ' is-danger' : ''}`;
+      item.textContent = labelText;
+      item.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        closeRailContextMenu();
+        onClick();
+      });
+      menu.appendChild(item);
+    };
+
+    const isAlive =
+      mediaFramePool.has(app.id) ||
+      pendingSidebarAudioTakeoverSet.has(app.id) ||
+      app.id === currentAudibleBgAppId;
+
+    if (isAlive) {
+      addItem('⏹ Close Background Session', () => {
+        closeMediaAppFrame(app.id);
+        showToast(`Closed ${app.name} background session`);
+      });
+    }
+
+    addItem(
+      `📌 Remove ${app.name} from Sidebar`,
+      async () => {
+        if (isAlive || activeRailAppId === app.id) {
+          closeMediaAppFrame(app.id);
+        }
+        if (app.isCustom) {
+          const customs = Array.isArray(appSettings.customMediaApps) ? [...appSettings.customMediaApps] : [];
+          const cIdx = customs.findIndex((c, idx) => (c.id || `custom-${idx}`) === app.id);
+          if (cIdx >= 0) {
+            customs[cIdx] = { ...customs[cIdx], enabled: false };
+            await saveSettingsPatch({ customMediaApps: customs });
+          }
+        } else {
+          const enabledIds = Array.isArray(appSettings.enabledMediaApps)
+            ? appSettings.enabledMediaApps
+            : mediaApi.BUILTIN_MEDIA_APPS.map((a) => a.id);
+          const nextIds = enabledIds.filter((id) => id !== app.id);
+          await saveSettingsPatch({ enabledMediaApps: nextIds });
+        }
+        renderOperaRail();
+        if (mediaAppsDrawer && !mediaAppsDrawer.classList.contains('hidden')) {
+          renderMediaAppsManager();
+        }
+        showToast(`Removed ${app.name} from sidebar (click + anytime to add back)`);
+      },
+      true
+    );
+
+    addItem('↗ Open in Browser Tab', () => {
+      if (app.defaultUrl) {
+        browser.tabs.create({ url: app.defaultUrl });
+      }
+    });
+
+    addItem('⚙️ Customize Sidebar Apps (+)', () => {
+      document.getElementById('rail-btn-manage-apps')?.click();
+    });
+
+    document.body.appendChild(menu);
+
+    const rect = anchorBtn ? anchorBtn.getBoundingClientRect() : { right: 42, top: clientY || 60 };
+    const menuH = menu.offsetHeight || 140;
+    const topPos = Math.max(8, Math.min(window.innerHeight - menuH - 8, rect.top));
+    menu.style.left = `${Math.round((rect.right || 42) + 6)}px`;
+    menu.style.top = `${Math.round(topPos)}px`;
+
+    setTimeout(() => {
+      const dismiss = (ev) => {
+        if (!menu.contains(ev.target)) {
+          closeRailContextMenu();
+          document.removeEventListener('mousedown', dismiss, true);
+        }
+      };
+      document.addEventListener('mousedown', dismiss, true);
+    }, 0);
+  }
+
   /**
    * Render Opera-Style Left Sidebar Rail (PocketHub Mail + Instagram, WhatsApp, Discord, Spotify, etc.)
    */
@@ -1727,10 +1834,10 @@
       btn.style.setProperty('--rail-app-grad', app.gradient || app.color);
       btn.style.color = isActive ? '' : app.color || 'var(--text-primary)';
       btn.title = isPlayingAudio
-        ? `▶ ${app.name} — Playing Audio | Click to switch, Drag to reorder, Right-click to stop & close`
+        ? `▶ ${app.name} — Playing Audio | Click to switch, Drag to reorder, Right-click for options`
         : isAliveInPool
-        ? `${app.name}${unreadCount > 0 ? ` (${unreadCount} new)` : ''} | Active in background (Click to switch, Drag to reorder, Right-click to close)`
-        : `${app.name} | Click to open (Drag to reorder)`;
+        ? `${app.name}${unreadCount > 0 ? ` (${unreadCount} new)` : ''} | Active in background (Click to switch, Drag to reorder, Right-click for options)`
+        : `${app.name} | Click to open, Drag to reorder, Right-click to remove/options`;
 
       // Update notification badge IN-PLACE so it never flashes or re-runs entry animation during audio ticks or app switches!
       let unreadBadge = btn.querySelector('.pm-rail-social-badge');
@@ -1874,10 +1981,8 @@
 
       btn.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        if (mediaFramePool.has(app.id) || pendingSidebarAudioTakeoverSet.has(app.id)) {
-          closeMediaAppFrame(app.id);
-          showToast(`Closed ${app.name} background session`);
-        }
+        e.stopPropagation();
+        openRailAppContextMenu(app, btn, e.clientY);
       });
 
       appsListEl.appendChild(btn);
