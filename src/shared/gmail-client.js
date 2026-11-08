@@ -28,14 +28,15 @@
   };
 
   /**
-   * Smart 1-Click OTP / 2FA Verification Code Extractor
-   * Detects 4–8 digit, G-XXXXXX, or alphanumeric (e.g. Battle.net / Steam BV9W6D) verification codes
+   * Smart 1-Click OTP / 2FA & Activation Key Extractor
+   * Detects 4–8 digit codes, G-XXXXXX, alphanumeric 2FA codes (e.g. Battle.net / Steam BV9W6D),
+   * and multi-segment hyphenated activation/launch/gift keys (e.g. D96P-5HT9-QM3NJ-VS89-CT8B)
    * while ignoring gamer tags / BattleTags / Discord discriminators like BigSnow#21284.
    */
   function extractVerificationCode(subject = '', snippet = '') {
     const rawCombined = `${subject} ${snippet}`;
     const hasKeyword =
-      /\b(code|verification|verify|otp|passcode|security|sign-in|signin|login|auth|confirm|pin|steam guard|two-factor|2fa)\b/i.test(
+      /\b(code|key|verification|verify|otp|passcode|security|sign-in|signin|login|auth|confirm|pin|steam guard|two-factor|2fa|redeem|activation)\b/i.test(
         rawCombined
       );
     if (!hasKeyword) return null;
@@ -53,9 +54,15 @@
     const gMatch = cleaned.match(/\b(G-\d{5,8})\b/i);
     if (gMatch) return gMatch[1];
 
-    // 2. Match explicitly labeled code first (e.g. "security code: BV9W6D", "verification code is 849204", "code: 4829")
+    // 2. Match multi-segment hyphenated activation / launch / gift / game keys (e.g. D96P-5HT9-QM3NJ-VS89-CT8B, Steam XXXXX-XXXXX-XXXXX)
+    const hyphenKeyMatch = cleaned.match(
+      /(?<![A-Za-z0-9-])(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])(?:[A-Z0-9]{3,6}-){2,5}[A-Z0-9]{3,6}(?![A-Za-z0-9-])/
+    );
+    if (hyphenKeyMatch) return hyphenKeyMatch[0];
+
+    // 3. Match explicitly labeled single-token code (e.g. "security code: BV9W6D", "verification code is 849204", "code: 4829")
     const labeledRegex =
-      /\b(?:security\s+code|verification\s+code|login\s+code|sign-?in\s+code|access\s+code|confirmation\s+code|auth(?:entication)?\s+code|one-?time\s+code|otp(?:\s+code)?|passcode|steam\s+guard\s+code|your\s+code|code)(?:\s+is|\s*[:=-])\s*([A-Z0-9]{4,8})\b/gi;
+      /\b(?:security\s+code|verification\s+code|login\s+code|sign-?in\s+code|access\s+code|confirmation\s+code|auth(?:entication)?\s+code|one-?time\s+code|otp(?:\s+code)?|passcode|steam\s+guard\s+code|launch\s+code|shareable\s+code|your\s+code|code)(?:\s+is|\s*[:=-])\s*([A-Z0-9]{4,8})(?![A-Za-z0-9-])/gi;
     let labeledMatch;
     while ((labeledMatch = labeledRegex.exec(cleaned)) !== null) {
       const candidate = labeledMatch[1];
@@ -63,25 +70,27 @@
         return candidate;
       }
       // Accept 5-8 char uppercase+digit alphanumeric code (e.g. Battle.net BV9W6D)
-      if (/^(?=.*\d)(?=.*[A-Z])[A-Z0-9]{5,8}$/.test(candidate)) {
+      if (/^(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,8}$/.test(candidate)) {
         return candidate;
       }
     }
 
-    // 3. Match 5-8 digit standalone verification code (ignoring years 1990-2039 or prices)
-    const numMatches = cleaned.match(/\b(\d{5,8})\b/g);
+    // 4. Match 5-8 digit standalone verification code (never slicing inside a hyphenated token)
+    const numMatches = cleaned.match(/(?<![A-Za-z0-9-])(\d{5,8})(?![A-Za-z0-9-])/g);
     if (numMatches && numMatches.length > 0) {
       return numMatches[0];
     }
 
-    // 4. Match standalone 5-7 char uppercase alphanumeric code (must contain both uppercase letters and digits in original case, e.g. BV9W6D)
-    const alphaNumMatches = cleaned.match(/\b(?=[A-Z0-9]{5,7}\b)(?=.*\d)(?=.*[A-Z])[A-Z0-9]{5,7}\b/g);
+    // 5. Match standalone 5-7 char uppercase alphanumeric code (must contain both uppercase letters and digits within the token itself)
+    const alphaNumMatches = cleaned.match(
+      /(?<![A-Za-z0-9-])(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,7}(?![A-Za-z0-9-])/g
+    );
     if (alphaNumMatches && alphaNumMatches.length > 0) {
       return alphaNumMatches[0];
     }
 
-    // 5. Match 4-digit code if explicitly near "code", "pin", or "otp"
-    const fourDigit = cleaned.match(/\b(?:code|pin|otp)(?:\s+is|\s*[:=-])?\s*(\d{4})\b/i);
+    // 6. Match 4-digit code if explicitly near "code", "pin", or "otp"
+    const fourDigit = cleaned.match(/\b(?:code|pin|otp)(?:\s+is|\s*[:=-])?\s*(\d{4})(?![A-Za-z0-9-])/i);
     if (fourDigit) return fourDigit[1];
 
     return null;
