@@ -183,6 +183,7 @@ html[data-sidebar="true"] .pm-resize-grip {
 
 .pm-rail-apps-list {
   flex: 1;
+  min-height: 0;
   width: 100%;
   overflow-y: auto;
   overflow-x: hidden;
@@ -252,6 +253,14 @@ html[data-sidebar="true"] .pm-resize-grip {
   background: var(--accent-soft);
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.pm-rail-item-settings svg {
+  transition: transform 0.22s ease;
+}
+
+.pm-rail-item-settings:hover svg {
+  transform: rotate(35deg);
 }
 
 .pm-rail-icon-wrap {

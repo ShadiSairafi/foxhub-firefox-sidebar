@@ -179,6 +179,7 @@
     let lastPlayStartedAt = 0;
     let lastParentSyncSentAt = 0;
     let mirrorWasPlaying = false;
+    let mirrorAutoPausedByTab = false;
     let pendingYtSeekTarget = null; // { time: number, expiresAt: number }
 
     const markUnloading = () => {
@@ -190,6 +191,7 @@
 
     const recordUserGesture = () => {
       lastUserGestureAt = Date.now();
+      mirrorAutoPausedByTab = false;
     };
     window.addEventListener('pointerdown', recordUserGesture, { capture: true, passive: true });
     window.addEventListener('mousedown', recordUserGesture, { capture: true, passive: true });
@@ -216,12 +218,24 @@
         if (typeof browser !== 'undefined' && browser.runtime && typeof browser.runtime.connect === 'function') {
           emeBridgePort = browser.runtime.connect({ name: 'foxhub-eme-bridge' });
           emeBridgePort.onMessage.addListener((msg) => {
-            if (!msg || msg.cmd !== 'SEEK_SP_MEDIA') return;
-            try {
-              if (pageWin && typeof pageWin.__seekActiveSpMediaEl === 'function') {
-                pageWin.__seekActiveSpMediaEl(Number(msg.currentTime) || 0);
-              }
-            } catch (_) {}
+            if (!msg || !msg.cmd) return;
+            if (msg.cmd === 'SEEK_SP_MEDIA') {
+              try {
+                if (pageWin && typeof pageWin.__seekActiveSpMediaEl === 'function') {
+                  pageWin.__seekActiveSpMediaEl(Number(msg.currentTime) || 0);
+                }
+              } catch (_) {}
+              return;
+            }
+            if (
+              msg.cmd === 'TAB_AUDIO_AUTO_PAUSE' ||
+              msg.cmd === 'TAB_AUDIO_AUTO_RESUME' ||
+              msg.cmd === 'PAUSE_LOCAL_MEDIA'
+            ) {
+              try {
+                window.postMessage({ target: 'pocketmail-media-frame', cmd: msg.cmd }, '*');
+              } catch (_) {}
+            }
           });
           emeBridgePort.onDisconnect.addListener(() => {
             emeBridgePort = null;
@@ -817,6 +831,15 @@
         }
       }
       const el = getActiveEl();
+      if (mirrorAutoPausedByTab) {
+        if (el && !el.paused && !el.ended) {
+          try {
+            suppressPauseEvent.add(el);
+            el.pause();
+          } catch (_) {}
+        }
+        return;
+      }
       if (el && !el.paused && !el.ended) {
         applyPendingYtSeek(el);
         mirrorWasPlaying = true;
@@ -835,6 +858,7 @@
     define(pageWin, '__pmDisableSpBridge', function () {});
     define(pageWin, '__pmStopYtMirror', function () {
       mirrorWasPlaying = false;
+      mirrorAutoPausedByTab = false;
       pendingYtSeekTarget = null;
       mediaEls.forEach((el) => {
         try {
@@ -845,6 +869,7 @@
       postBridge('STOP_PLAYBACK', { currentTime: 0, paused: true, explicitPause: true });
     });
     define(pageWin, '__pmEnsureMirrorPlay', function () {
+      mirrorAutoPausedByTab = false;
       if (IS_YT && !isYtPlayableRoute()) return false;
       const el = getActiveEl();
       if (el && el.paused && !el.ended) {
@@ -857,6 +882,7 @@
     });
     define(pageWin, '__pmPauseAllSpMedia', function () {
       mirrorWasPlaying = false;
+      mirrorAutoPausedByTab = false;
       mediaEls.forEach((el) => {
         try {
           if (!el.paused) el.pause();
@@ -864,19 +890,34 @@
       });
       postBridge('STOP_PLAYBACK', { currentTime: 0, paused: true, explicitPause: true });
     });
+    define(pageWin, '__pmClearTabAutoPaused', function () {
+      mirrorAutoPausedByTab = false;
+    });
     define(pageWin, '__pmTempPauseSpMedia', function () {
       let pausedAny = false;
+      const hadMirrorPlaying = mirrorWasPlaying;
+      mirrorAutoPausedByTab = true;
+      mirrorWasPlaying = false;
+      let latestTime = 0;
       mediaEls.forEach((el) => {
         try {
+          if (el.currentTime > latestTime) latestTime = el.currentTime;
           if (!el.paused) {
             pausedAny = true;
             suppressPauseEvent.add(el);
             el.pause();
-            postBridge('SYNC_TIME', { currentTime: el.currentTime || 0, paused: true, explicitPause: false, autoPausedByTab: true });
           }
         } catch (_) {}
       });
-      return pausedAny || mirrorWasPlaying;
+      if (pausedAny || hadMirrorPlaying) {
+        postBridge('SYNC_TIME', {
+          currentTime: latestTime || 0,
+          paused: true,
+          explicitPause: false,
+          autoPausedByTab: true
+        });
+      }
+      return pausedAny || hadMirrorPlaying;
     });
     define(pageWin, '__seekActiveSpMediaEl', function (targetTime) {
       try {
@@ -7663,19 +7704,26 @@
       case 'TAB_AUDIO_AUTO_PAUSE': {
         try {
           let wasPlayingNow = false;
+          if (host.includes('spotify.com')) {
+            spAutoClickInFlight = true;
+            try {
+              const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+              if (spToggle && !spToggle.disabled) {
+                const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+                if (aria.includes('pause') || aria.includes('stop')) {
+                  wasPlayingNow = true;
+                  spToggle.click();
+                }
+              }
+            } finally {
+              setTimeout(() => {
+                spAutoClickInFlight = false;
+              }, 160);
+            }
+          }
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmTempPauseSpMedia === 'function') {
             if (window.wrappedJSObject.__pmTempPauseSpMedia()) {
               wasPlayingNow = true;
-            }
-          }
-          if (host.includes('spotify.com')) {
-            const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-            if (spToggle && !spToggle.disabled) {
-              const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-              if (aria.includes('pause') || aria.includes('stop')) {
-                wasPlayingNow = true;
-                spToggle.click();
-              }
             }
           }
           document.querySelectorAll('video, audio').forEach((el) => {
@@ -7696,26 +7744,48 @@
       }
       case 'TAB_AUDIO_AUTO_RESUME': {
         try {
+          if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmClearTabAutoPaused === 'function') {
+            window.wrappedJSObject.__pmClearTabAutoPaused();
+          }
           const shouldResume = Boolean(window.__pmWasAutoPausedByTabAudio);
           window.__pmWasAutoPausedByTabAudio = false;
           if (shouldResume) {
-            if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
-              window.wrappedJSObject.__pmEnsureMirrorPlay();
-            }
             if (host.includes('spotify.com')) {
-              const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-              if (spToggle && !spToggle.disabled) {
-                const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-                if (aria.includes('play') && !aria.includes('pause')) {
-                  spToggle.click();
+              let clickedSpotifyPlay = false;
+              spAutoClickInFlight = true;
+              try {
+                const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+                if (spToggle && !spToggle.disabled) {
+                  const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+                  if (aria.includes('play') && !aria.includes('pause')) {
+                    spToggle.click();
+                    clickedSpotifyPlay = true;
+                  }
                 }
+              } finally {
+                setTimeout(() => {
+                  spAutoClickInFlight = false;
+                }, 160);
               }
+              if (clickedSpotifyPlay) {
+                setTimeout(() => {
+                  try {
+                    if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+                      window.wrappedJSObject.__pmEnsureMirrorPlay();
+                    }
+                  } catch (_) {}
+                }, 140);
+              } else if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+                window.wrappedJSObject.__pmEnsureMirrorPlay();
+              }
+            } else if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+              window.wrappedJSObject.__pmEnsureMirrorPlay();
             }
             document.querySelectorAll('video, audio').forEach((el) => {
               try {
                 if (el.dataset.pmTabAutoPaused === '1') {
                   delete el.dataset.pmTabAutoPaused;
-                  if (el.paused && !el.ended) {
+                  if (!host.includes('spotify.com') && el.paused && !el.ended) {
                     const p = el.play();
                     if (p && typeof p.catch === 'function') p.catch(() => {});
                   }
@@ -7724,7 +7794,7 @@
             });
           }
         } catch (_) {}
-        setTimeout(() => reportLivePlaybackState(), 120);
+        setTimeout(() => reportLivePlaybackState(), 160);
         break;
       }
       case 'FREE_HEAVY_MEDIA':
@@ -7773,4 +7843,88 @@
         break;
     }
   });
+
+  // Persistent Scroll Position Save & Instant Restore across FoxHub Close & Reopen
+  if (!isBgAudioFrame && !window.location.search.includes('pm_boot=1')) {
+    const SCROLL_STORE_KEY = '__pm_persist_scroll_v1';
+    let scrollSaveTimer = null;
+    let userScrolledManually = false;
+
+    const findPrimaryScrollContainer = () => {
+      try {
+        const candidates = document.querySelectorAll(
+          'main, [role="main"], [data-testid="primaryColumn"], .main-view-container__scroll-node, .scrollable-page'
+        );
+        for (let i = 0; i < candidates.length; i++) {
+          const c = candidates[i];
+          if (c && c.scrollHeight > c.clientHeight + 80 && c.scrollTop > 0) {
+            return c;
+          }
+        }
+      } catch (_) {}
+      return null;
+    };
+
+    const persistCurrentScroll = () => {
+      try {
+        const winY = Math.round(window.scrollY || document.documentElement?.scrollTop || 0);
+        const innerEl = winY <= 2 ? findPrimaryScrollContainer() : null;
+        const innerY = innerEl ? Math.round(innerEl.scrollTop || 0) : 0;
+        if (winY <= 4 && innerY <= 4) return;
+        const payload = JSON.stringify({
+          p: window.location.pathname + window.location.search,
+          w: winY,
+          i: innerY,
+          ts: Date.now()
+        });
+        window.localStorage.setItem(SCROLL_STORE_KEY, payload);
+      } catch (_) {}
+    };
+
+    window.addEventListener(
+      'scroll',
+      (ev) => {
+        if (ev && ev.isTrusted) userScrolledManually = true;
+        clearTimeout(scrollSaveTimer);
+        scrollSaveTimer = setTimeout(persistCurrentScroll, 320);
+      },
+      { capture: true, passive: true }
+    );
+    window.addEventListener('pagehide', persistCurrentScroll, { capture: true, passive: true });
+
+    const attemptRestoreSavedScroll = () => {
+      if (userScrolledManually) return;
+      try {
+        const raw = window.localStorage.getItem(SCROLL_STORE_KEY);
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        if (!saved || Date.now() - (saved.ts || 0) > 6 * 3600 * 1000) return;
+        if (saved.p !== window.location.pathname + window.location.search) return;
+        if (saved.w > 4 && (document.documentElement?.scrollHeight || 0) > window.innerHeight + 40) {
+          window.scrollTo(0, saved.w);
+        } else if (saved.i > 4) {
+          const candidates = document.querySelectorAll(
+            'main, [role="main"], [data-testid="primaryColumn"], .main-view-container__scroll-node, .scrollable-page'
+          );
+          for (let i = 0; i < candidates.length; i++) {
+            const c = candidates[i];
+            if (c && c.scrollHeight > c.clientHeight + 80) {
+              c.scrollTop = saved.i;
+              break;
+            }
+          }
+        }
+      } catch (_) {}
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        attemptRestoreSavedScroll();
+        setTimeout(attemptRestoreSavedScroll, 220);
+      }, { once: true });
+    } else {
+      attemptRestoreSavedScroll();
+      setTimeout(attemptRestoreSavedScroll, 220);
+    }
+  }
 })();
