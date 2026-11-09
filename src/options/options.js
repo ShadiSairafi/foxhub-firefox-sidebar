@@ -441,6 +441,19 @@
       chkKeepAudio.checked = appSettings.keepAudioPlayingWhenClosed !== false;
     }
 
+    const tabAudioBehaviorEl = document.getElementById('opt-tab-audio-behavior');
+    if (tabAudioBehaviorEl) {
+      const effectiveTabMode =
+        appSettings.tabAudioBehavior === 'pause-resume' ||
+        appSettings.tabAudioBehavior === 'pause-only' ||
+        appSettings.tabAudioBehavior === 'off'
+          ? appSettings.tabAudioBehavior
+          : appSettings.autoPauseOnTabAudio === false
+            ? 'off'
+            : 'pause-resume';
+      tabAudioBehaviorEl.value = effectiveTabMode;
+    }
+
     const mediaApi = window.PocketMailMediaApps;
     const allApps = mediaApi
       ? [
@@ -810,6 +823,22 @@
         e.target.checked
           ? 'Background audio keep-alive enabled when closed'
           : 'Background audio will pause when closed'
+      );
+    });
+
+    document.getElementById('opt-tab-audio-behavior')?.addEventListener('change', (e) => {
+      const nextMode = e.target.value || 'pause-resume';
+      const labelMap = {
+        'pause-resume': 'When Tab Plays Audio: Auto-Pause & Auto-Resume enabled',
+        'pause-only': 'When Tab Plays Audio: Pause Only (stays stopped)',
+        off: 'When Tab Plays Audio: Keep Playing Simultaneously (Off)'
+      };
+      saveSettings(
+        {
+          tabAudioBehavior: nextMode,
+          autoPauseOnTabAudio: nextMode !== 'off'
+        },
+        labelMap[nextMode] || 'Updated browser tab audio behavior'
       );
     });
 

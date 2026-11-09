@@ -776,15 +776,20 @@
           <div class="pm-control-card">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
               <span style="font-size:12px;font-weight:700;color:var(--text-primary);">Persistent App Memory &amp; Background Audio:</span>
-              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;">
-                <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Keep Spotify &amp; YouTube audio playing even after closing the sidebar for full screen space">
-                  <input type="checkbox" id="chk-keep-audio-closed" checked>
-                  <span>Play Audio When Closed</span>
-                </label>
-                <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Opera GX-style smart media pause: automatically pause FoxHub music when any browser tab plays audio/video, and auto-resume when the tab stops">
-                  <input type="checkbox" id="chk-auto-pause-tab-audio" checked>
-                  <span>Auto-Pause on Tab Media</span>
-                </label>
+              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Keep Spotify &amp; YouTube audio playing even after closing the sidebar for full screen space">
+                <input type="checkbox" id="chk-keep-audio-closed" checked>
+                <span>Play Audio When Closed</span>
+              </label>
+            </div>
+            <div style="margin-bottom:10px;padding:8px 9px;border-radius:9px;background:rgba(128,128,128,0.08);">
+              <div class="pm-bgaudio-section-title" style="margin-bottom:5px;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                <span>When a Browser Tab Plays Audio / Video:</span>
+              </div>
+              <div class="pm-option-grid" id="opt-tab-audio-behavior-grid" style="grid-template-columns:repeat(3,1fr);">
+                <button class="pm-opt-pill" data-tab-audio-mode="pause-resume" title="Default (Opera GX style): automatically pause FoxHub music when any browser tab plays audio, and auto-resume when the tab stops">Pause &amp; Resume</button>
+                <button class="pm-opt-pill" data-tab-audio-mode="pause-only" title="Automatically pause FoxHub music when a browser tab plays audio, and stay paused until you press Play">Pause Only</button>
+                <button class="pm-opt-pill" data-tab-audio-mode="off" title="Never auto-pause FoxHub music when browser tabs play audio (play both together)">Play Together (Off)</button>
               </div>
             </div>
             <div class="pm-option-grid" id="opt-persistence-mode-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:8px;">

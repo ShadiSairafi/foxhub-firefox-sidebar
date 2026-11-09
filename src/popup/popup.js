@@ -1655,6 +1655,9 @@
       );
     } else if (iconType === 'play') {
       svg.appendChild(el('polygon', { points: '6 4 20 12 6 20 6 4', fill: 'currentColor', stroke: 'none' }));
+    } else if (iconType === 'pause') {
+      svg.appendChild(el('rect', { x: '6', y: '4', width: '4', height: '16', rx: '1' }));
+      svg.appendChild(el('rect', { x: '14', y: '4', width: '4', height: '16', rx: '1' }));
     } else if (iconType === 'moon') {
       svg.appendChild(el('path', { d: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z' }));
     } else if (iconType === 'sun') {
@@ -1727,6 +1730,17 @@
     }
   }
 
+  function getEffectiveTabAudioBehavior(settings = appSettings) {
+    if (
+      settings.tabAudioBehavior === 'pause-resume' ||
+      settings.tabAudioBehavior === 'pause-only' ||
+      settings.tabAudioBehavior === 'off'
+    ) {
+      return settings.tabAudioBehavior;
+    }
+    return settings.autoPauseOnTabAudio === false ? 'off' : 'pause-resume';
+  }
+
   function openRailAppContextMenu(app, anchorBtn, clientY) {
     closeRailContextMenu();
     const mediaApi = window.PocketMailMediaApps;
@@ -1774,6 +1788,35 @@
       addItem('stop', 'Close Background Session', () => {
         closeMediaAppFrame(app.id);
         showToast(`Closed ${app.name} background session`);
+      });
+    }
+
+    const isMediaCapable =
+      isAlive || ['spotify', 'youtube', 'tiktok', 'twitch', 'reddit', 'x', 'instagram'].includes(app.id) || app.isCustom;
+    if (isMediaCapable) {
+      const curTabBehavior = getEffectiveTabAudioBehavior(appSettings);
+      const modeLabel =
+        curTabBehavior === 'pause-resume'
+          ? 'Pause & Resume'
+          : curTabBehavior === 'pause-only'
+            ? 'Pause Only'
+            : 'Off (Play Together)';
+      addItem('pause', `On Tab Audio: ${modeLabel}`, async () => {
+        const order = ['pause-resume', 'pause-only', 'off'];
+        const nextMode = order[(order.indexOf(curTabBehavior) + 1) % order.length];
+        await saveSettingsPatch({
+          tabAudioBehavior: nextMode,
+          autoPauseOnTabAudio: nextMode !== 'off'
+        });
+        if (mediaAppsDrawer && !mediaAppsDrawer.classList.contains('hidden')) {
+          renderMediaAppsManager();
+        }
+        const toastMap = {
+          'pause-resume': 'When Tab Plays Audio: Auto-Pause & Auto-Resume (Default)',
+          'pause-only': 'When Tab Plays Audio: Pause Only (Stay Stopped)',
+          off: 'When Tab Plays Audio: Keep Playing Simultaneously (Off)'
+        };
+        showToast(toastMap[nextMode]);
       });
     }
 
@@ -3134,10 +3177,10 @@
       chkKeepAudio.disabled = pMode === 'eco';
     }
 
-    const chkAutoPauseTab = document.getElementById('chk-auto-pause-tab-audio');
-    if (chkAutoPauseTab) {
-      chkAutoPauseTab.checked = appSettings.autoPauseOnTabAudio !== false;
-    }
+    const curTabAudioMode = getEffectiveTabAudioBehavior(appSettings);
+    document.querySelectorAll('[data-tab-audio-mode]').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-tab-audio-mode') === curTabAudioMode);
+    });
 
     const resNoteEl = document.getElementById('pm-persistence-resource-note');
     if (resNoteEl) {
@@ -3945,15 +3988,21 @@
       );
     });
 
-    document.getElementById('chk-auto-pause-tab-audio')?.addEventListener('change', async (e) => {
-      const enabled = Boolean(e.target.checked);
-      await saveSettingsPatch({ autoPauseOnTabAudio: enabled });
-      renderMediaAppsManager();
-      showToast(
-        enabled
-          ? 'Smart Media Auto-Pause enabled — FoxHub music pauses when a browser tab plays audio'
-          : 'Smart Media Auto-Pause disabled'
-      );
+    document.querySelectorAll('[data-tab-audio-mode]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const nextMode = btn.getAttribute('data-tab-audio-mode') || 'pause-resume';
+        await saveSettingsPatch({
+          tabAudioBehavior: nextMode,
+          autoPauseOnTabAudio: nextMode !== 'off'
+        });
+        renderMediaAppsManager();
+        const msgMap = {
+          'pause-resume': 'When Tab Plays Audio: Auto-Pause & Auto-Resume enabled',
+          'pause-only': 'When Tab Plays Audio: Pause Only (stays stopped until you click Play)',
+          off: 'When Tab Plays Audio: Off — FoxHub audio keeps playing simultaneously'
+        };
+        showToast(msgMap[nextMode] || 'Updated Tab Audio setting');
+      });
     });
 
     document.querySelectorAll('[data-topbar-mode]').forEach((btn) => {
@@ -5553,10 +5602,11 @@
         } catch (_) {}
       } else if (msg.type === 'PM_TAB_AUDIO_AUTO_PAUSE_STATE') {
         const autoPaused = Boolean(msg.autoPaused);
+        const stayStopped = Boolean(msg.stayStopped);
         if (autoPaused) {
           sidebarMsePlayers.forEach((player) => {
             if (player && player.audioEl && !player.audioEl.paused) {
-              player.autoPausedByTab = true;
+              player.autoPausedByTab = !stayStopped;
               try {
                 player.audioEl.pause();
               } catch (_) {}
@@ -5565,7 +5615,10 @@
           mediaFramePool.forEach((entry) => {
             try {
               entry?.frame?.contentWindow?.postMessage(
-                { target: 'pocketmail-media-frame', cmd: 'TAB_AUDIO_AUTO_PAUSE' },
+                {
+                  target: 'pocketmail-media-frame',
+                  cmd: stayStopped ? 'PAUSE_LOCAL_MEDIA' : 'TAB_AUDIO_AUTO_PAUSE'
+                },
                 '*'
               );
             } catch (_) {}

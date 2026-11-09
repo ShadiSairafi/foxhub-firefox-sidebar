@@ -266,10 +266,11 @@
               <label for="opt-social-theme-mode" style="display:block;font-weight:600;margin-bottom:6px;">Social &amp; Media App Theme Palette</label>
               <select id="opt-social-theme-mode" class="opt-select">
                 <option value="native">Native App Default</option>
-                <option value="theme-adaptive">Match FoxHub Palette</option>
-                <option value="cozy-amber">Warm Eye-Care</option>
-                <option value="midnight-oled">Midnight OLED</option>
-                <option value="rose-quartz">Rose Velvet</option>
+                <option value="true-night">True Night OLED (#000000)</option>
+                <option value="match-theme">Match FoxHub Palette</option>
+                <option value="warm-glass">Cozy Warm Eye-Care</option>
+                <option value="midnight-oled">Midnight Indigo</option>
+                <option value="rose-twilight">Rose Twilight</option>
               </select>
             </div>
           </div>
@@ -438,8 +439,23 @@
           </div>
         </div>
 
-        <!-- BACKGROUND AUDIO WHEN EXTENSION IS CLOSED -->
+        <!-- BACKGROUND AUDIO WHEN EXTENSION IS CLOSED & SMART TAB MEDIA AUTO-PAUSE -->
         <div class="opt-card" style="margin-top:16px;">
+          <div class="opt-row-between" style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border-color);flex-wrap:wrap;gap:12px;">
+            <div>
+              <h4 style="display:flex;align-items:center;gap:8px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                <span>When Another Browser Tab Plays Audio / Video</span>
+              </h4>
+              <p class="opt-muted">Opera GX-style smart media control: choose whether FoxHub pauses your music when a normal Firefox tab plays audio, or lets both play at the same time.</p>
+            </div>
+            <select id="opt-tab-audio-behavior" class="opt-select" style="width:270px;">
+              <option value="pause-resume">Auto-Pause &amp; Auto-Resume (Default)</option>
+              <option value="pause-only">Pause Only (Stay Stopped)</option>
+              <option value="off">Keep Playing Simultaneously (Off)</option>
+            </select>
+          </div>
+
           <div class="opt-row-between" style="margin-bottom:14px;">
             <div>
               <h4 style="display:flex;align-items:center;gap:8px;">

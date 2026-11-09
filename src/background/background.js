@@ -41,7 +41,8 @@ const DEFAULT_SETTINGS = {
   persistentLastActiveAppId: 'pocketmail',
   persistentSavedAppUrls: {},   // { spotify: 'https://...', youtube: 'https://...', ... }
   keepAudioPlayingWhenClosed: true,
-  autoPauseOnTabAudio: true,    // Opera GX-style: automatically pause FoxHub music when a browser tab plays audio, and resume when tab stops
+  autoPauseOnTabAudio: true,    // Opera GX-style: automatically pause FoxHub music when a browser tab plays audio
+  tabAudioBehavior: 'pause-resume', // 'pause-resume' (default) | 'pause-only' | 'off'
   bgAudioAppIds: ['spotify', 'youtube'], // Only Spotify & YouTube play audio when closed by default (Twitter/X, TikTok, etc. off by default!)
   bgAudioAppIdsMigratedV1: true,
   persistenceDefaultSelectedMigratedV1: true,
@@ -3329,6 +3330,11 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     case 'UPDATE_SETTINGS':
       return (async () => {
         const patch = msg.settings || {};
+        if (patch.tabAudioBehavior !== undefined && patch.autoPauseOnTabAudio === undefined) {
+          patch.autoPauseOnTabAudio = patch.tabAudioBehavior !== 'off';
+        } else if (patch.autoPauseOnTabAudio !== undefined && patch.tabAudioBehavior === undefined) {
+          patch.tabAudioBehavior = patch.autoPauseOnTabAudio ? 'pause-resume' : 'off';
+        }
         const prevPoll = currentSettings.pollIntervalSeconds;
         currentSettings = { ...currentSettings, ...patch };
         scheduleSettingsSave(true);
@@ -3346,7 +3352,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
           });
         }
         refreshBgAudioIndicator();
-        if (patch.autoPauseOnTabAudio !== undefined) {
+        if (patch.autoPauseOnTabAudio !== undefined || patch.tabAudioBehavior !== undefined) {
           checkExternalTabAudioState();
         }
         if (patch.pollIntervalSeconds !== undefined && patch.pollIntervalSeconds !== prevPoll) {
@@ -3757,7 +3763,18 @@ let isAutoPausedByTabAudio = false;
 const tabAutoPausedSpAppIds = new Set();
 const tabAutoPausedMseAppIds = new Set();
 
-function pauseAllForTabAudioAutoPause() {
+function getTabAudioBehavior() {
+  if (
+    currentSettings.tabAudioBehavior === 'pause-resume' ||
+    currentSettings.tabAudioBehavior === 'pause-only' ||
+    currentSettings.tabAudioBehavior === 'off'
+  ) {
+    return currentSettings.tabAudioBehavior;
+  }
+  return currentSettings.autoPauseOnTabAudio === false ? 'off' : 'pause-resume';
+}
+
+function pauseAllForTabAudioAutoPause(stayStopped = false) {
   tabAutoPausedSpAppIds.clear();
   tabAutoPausedMseAppIds.clear();
 
@@ -3769,9 +3786,20 @@ function pauseAllForTabAudioAutoPause() {
       liveMediaPlaybackState.get(appId)?.isPlaying
     );
     if (isPlayingNow) {
-      sp.autoPausedByTab = true;
-      sp.remotePaused = true;
-      tabAutoPausedSpAppIds.add(appId);
+      if (stayStopped) {
+        sp.autoPausedByTab = false;
+        sp.remotePaused = true;
+        sp.explicitUserPause = true;
+        const st = liveMediaPlaybackState.get(appId);
+        if (st) {
+          st.isPlaying = false;
+          st.updatedAt = Date.now();
+        }
+      } else {
+        sp.autoPausedByTab = true;
+        sp.remotePaused = true;
+        tabAutoPausedSpAppIds.add(appId);
+      }
       if (sp.videoEl && !sp.videoEl.paused) {
         try {
           sp.videoEl.pause();
@@ -3782,7 +3810,9 @@ function pauseAllForTabAudioAutoPause() {
 
   bgMsePlayers.forEach((player, appId) => {
     if (player && player.audioEl && !player.audioEl.paused) {
-      tabAutoPausedMseAppIds.add(appId);
+      if (!stayStopped) {
+        tabAutoPausedMseAppIds.add(appId);
+      }
       try {
         player.audioEl.pause();
       } catch (_) {}
@@ -3793,7 +3823,10 @@ function pauseAllForTabAudioAutoPause() {
     try {
       if (entry && entry.iframe && entry.iframe.contentWindow) {
         entry.iframe.contentWindow.postMessage(
-          { target: 'pocketmail-media-frame', cmd: 'TAB_AUDIO_AUTO_PAUSE' },
+          {
+            target: 'pocketmail-media-frame',
+            cmd: stayStopped ? 'PAUSE_LOCAL_MEDIA' : 'TAB_AUDIO_AUTO_PAUSE'
+          },
           '*'
         );
       }
@@ -3803,7 +3836,8 @@ function pauseAllForTabAudioAutoPause() {
   browser.runtime
     .sendMessage({
       type: 'PM_TAB_AUDIO_AUTO_PAUSE_STATE',
-      autoPaused: true
+      autoPaused: true,
+      stayStopped
     })
     .catch(() => {});
 
@@ -3866,7 +3900,8 @@ function resumeAllFromTabAudioAutoPause() {
 }
 
 async function checkExternalTabAudioState() {
-  if (currentSettings.autoPauseOnTabAudio === false) {
+  const behavior = getTabAudioBehavior();
+  if (behavior === 'off') {
     if (isAutoPausedByTabAudio) {
       resumeAllFromTabAudioAutoPause();
     }
@@ -3887,10 +3922,17 @@ async function checkExternalTabAudioState() {
     if (externalAudible.length > 0) {
       if (!isAutoPausedByTabAudio) {
         isAutoPausedByTabAudio = true;
-        pauseAllForTabAudioAutoPause();
+        pauseAllForTabAudioAutoPause(behavior === 'pause-only');
       }
     } else if (isAutoPausedByTabAudio) {
-      resumeAllFromTabAudioAutoPause();
+      if (behavior === 'pause-only') {
+        isAutoPausedByTabAudio = false;
+        tabAutoPausedSpAppIds.clear();
+        tabAutoPausedMseAppIds.clear();
+        refreshBgAudioIndicator();
+      } else {
+        resumeAllFromTabAudioAutoPause();
+      }
     }
   } catch (_) {}
 }
