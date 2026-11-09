@@ -421,7 +421,7 @@
           msg.otpCode = otpCode || null;
 
           return `
-          <article class="pm-email-card ${isReadCard ? 'pm-card-read' : ''}" data-msg-id="${escapeHtml(msg.id)}" style="--card-account-color:${escapeHtml(color)};${isReadCard ? 'opacity:0.78;' : ''}">
+          <article class="pm-email-card ${isReadCard ? 'is-read pm-card-read' : ''}" data-msg-id="${escapeHtml(msg.id)}" style="--card-account-color:${escapeHtml(color)}">
             <div class="pm-card-left">
               <div class="pm-avatar-container">
                 ${avatarHtml}
@@ -898,6 +898,7 @@
       });
       if (fullContent && fullContent.html) {
         setSafeHtml(bodyEl, fullContent.html);
+        adaptEmailDomForDarkMode(bodyEl);
         activeReaderMessage.fullText = fullContent.plainText || msgObj.snippet;
         activeReaderMessage.unsubscribeUrl = fullContent.unsubscribeUrl || null;
 
@@ -932,11 +933,64 @@
         renderReaderSmartCopyChips(activeReaderMessage, bodyEl, initialOtp);
         applyEmailReaderScale();
       }
-    } catch (e) {
+      } catch (e) {
       bodyEl.textContent = msgObj.snippet || 'Could not load full thread.';
       renderReaderSmartCopyChips(activeReaderMessage, bodyEl, initialOtp);
       applyEmailReaderScale();
     }
+  }
+
+  function parseCssRgb(str) {
+    if (!str) return null;
+    const m = str.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i);
+    if (!m) return null;
+    return {
+      r: Number(m[1]),
+      g: Number(m[2]),
+      b: Number(m[3]),
+      a: m[4] !== undefined ? Number(m[4]) : 1
+    };
+  }
+
+  function relLuminance(rgb) {
+    return (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
+  }
+
+  function adaptEmailDomForDarkMode(container) {
+    if (!container) return;
+    const isDarkUi = document.documentElement.getAttribute('data-color-scheme') === 'dark';
+    if (!isDarkUi) return;
+
+    const lightBgNodes = new WeakSet();
+    const nodes = container.querySelectorAll('*');
+    nodes.forEach((el) => {
+      const hasInlineBg = Boolean(el.style?.backgroundColor || el.style?.background || el.getAttribute('bgcolor'));
+      if (!hasInlineBg) return;
+      const bg = parseCssRgb(window.getComputedStyle(el).backgroundColor);
+      if (bg && bg.a > 0.25 && relLuminance(bg) > 0.52) {
+        lightBgNodes.add(el);
+      }
+    });
+
+    const isInsideLightBox = (el) => {
+      let cur = el;
+      while (cur && cur !== container) {
+        if (lightBgNodes.has(cur)) return true;
+        cur = cur.parentElement;
+      }
+      return false;
+    };
+
+    nodes.forEach((el) => {
+      if (isInsideLightBox(el)) return;
+      const hasColorOverride = Boolean(el.style?.color || el.getAttribute('color'));
+      if (!hasColorOverride) return;
+      const fg = parseCssRgb(window.getComputedStyle(el).color);
+      if (fg && fg.a > 0.2 && relLuminance(fg) < 0.36) {
+        const isLink = el.tagName === 'A' || Boolean(el.closest && el.closest('a'));
+        el.style.setProperty('color', isLink ? '#FF7A5C' : '#F4F4F8', 'important');
+      }
+    });
   }
 
   /**
@@ -1587,7 +1641,9 @@
   function getSocialAppAccentColor() {
     if (window.PocketMailThemes && window.PocketMailThemes.THEMES) {
       const themeObj = window.PocketMailThemes.THEMES[appSettings.theme || 'warm-linen'];
-      if (themeObj && themeObj.accent) return themeObj.accent;
+      if (themeObj) {
+        return themeObj.accent || themeObj.accentDot || themeObj.vars?.['--accent'] || '#D96B43';
+      }
     }
     return '#D96B43';
   }
@@ -1695,8 +1751,10 @@
         previousDayTheme: appSettings.theme || 'warm-linen',
         previousDayWallpaper: appSettings.wallpaper || 'watercolor-hills',
         previousDaySocialTheme: appSettings.socialAppThemeMode || 'native',
+        previousDayAmbient: appSettings.ambientEffect || 'sunbeams',
         theme: 'true-night',
         wallpaper: 'none',
+        ambientEffect: 'none',
         socialAppThemeMode: 'true-night'
       };
       await saveSettingsPatch(patch);
@@ -1705,6 +1763,9 @@
       }
       broadcastSocialAppTheme();
       renderAll();
+      if (readerDrawer && !readerDrawer.classList.contains('hidden') && activeReaderMessage) {
+        adaptEmailDomForDarkMode(document.getElementById('reader-body'));
+      }
       showToast('True Night OLED Mode enabled (#000000)');
     } else {
       const restoredTheme =
@@ -1712,6 +1773,7 @@
           ? appSettings.previousDayTheme
           : 'warm-linen';
       const restoredWall = appSettings.previousDayWallpaper || 'watercolor-hills';
+      const restoredAmbient = appSettings.previousDayAmbient || 'sunbeams';
       const restoredSocial =
         appSettings.previousDaySocialTheme && appSettings.previousDaySocialTheme !== 'true-night'
           ? appSettings.previousDaySocialTheme
@@ -1719,6 +1781,7 @@
       await saveSettingsPatch({
         theme: restoredTheme,
         wallpaper: restoredWall,
+        ambientEffect: restoredAmbient,
         socialAppThemeMode: restoredSocial
       });
       if (window.PocketMailThemes) {
@@ -3044,17 +3107,18 @@
       entry.pendingSpaUntil = 0;
       entry.lastNavAt = Date.now();
       showMediaBrandLoader(app, entry.frame, isFastCachedRestore);
-      // Bypass & unregister any pre-existing Service Worker (sw.js / serviceworker.js) once per profile on X and WhatsApp
+      // Bypass & unregister any pre-existing Service Worker (sw.js / serviceworker.js) once per profile on X, WhatsApp, and Telegram
       // so cached X-Frame-Options: DENY / CSP frame-ancestors 'none' in Service Worker CacheStorage never blocks embedding,
-      // while avoiding re-running robots.txt?pm_boot=1 on subsequent popup reopens!
-      const swStorageKey = `pm_sw_cleaned_v1_${app.id}`;
+      // while avoiding re-running ?pm_boot=1 on subsequent popup reopens!
+      const swStorageKey = app.id === 'telegram' ? 'pm_sw_cleaned_v2_telegram' : `pm_sw_cleaned_v1_${app.id}`;
       let alreadyCleanedInProfile = Boolean(entry.swCleaned);
       if (!alreadyCleanedInProfile) {
         try {
           alreadyCleanedInProfile = window.localStorage.getItem(swStorageKey) === '1';
         } catch (_) {}
       }
-      const needsSwBootClean = !alreadyCleanedInProfile && (app.id === 'x' || app.id === 'whatsapp');
+      const needsSwBootClean =
+        !alreadyCleanedInProfile && (app.id === 'x' || app.id === 'whatsapp' || app.id === 'telegram');
       if (needsSwBootClean) {
         entry.swCleaned = true;
         try {
@@ -3062,7 +3126,8 @@
         } catch (_) {}
         try {
           const origin = new URL(targetUrl).origin;
-          entry.frame.src = `${origin}/robots.txt?pm_boot=1&pm_target=${encodeURIComponent(targetUrl)}`;
+          const bootPath = app.id === 'telegram' ? '/favicon.ico' : '/robots.txt';
+          entry.frame.src = `${origin}${bootPath}?pm_boot=1&pm_target=${encodeURIComponent(targetUrl)}`;
         } catch (_) {
           entry.frame.src = targetUrl;
         }
@@ -4299,7 +4364,9 @@
         }
       }
 
-      if (data.type === 'PM_FRAME_NAV_START') {
+      if (data.type === 'PM_FRAME_START') {
+        broadcastSocialAppTheme();
+      } else if (data.type === 'PM_FRAME_NAV_START') {
         if (sourceEntry) {
           sourceEntry.lastNavAt = Date.now();
         }

@@ -31,6 +31,18 @@
   const isBgAudioFrame = typeof window.name === 'string' && window.name.startsWith('pm-bg-audio-');
   const isFoxHubMediaFrame =
     typeof window.name === 'string' && /^pm-(media-frame|bg-audio)-/.test(window.name);
+  let isFoxHubContext = isFoxHubMediaFrame || isPocketMailSidebarTop;
+  if (isFoxHubContext) {
+    try {
+      window.sessionStorage.setItem('__pm_foxhub_frame', '1');
+    } catch (_) {}
+  } else if (isDirectChildIframe) {
+    try {
+      if (window.sessionStorage.getItem('__pm_foxhub_frame') === '1') {
+        isFoxHubContext = true;
+      }
+    } catch (_) {}
+  }
   const initialAutoplayPolicy =
     typeof navigator.getAutoplayPolicy === 'function' ? navigator.getAutoplayPolicy('mediaelement') : 'allowed';
   const isMirrorAudioHost = host.includes('spotify.com') || host.includes('youtube.com');
@@ -1081,6 +1093,45 @@
     return;
   }
 
+  // Configure Telegram Web K at document_start to use a Dedicated Worker (instead of SharedWorker, which stalls in
+  // Firefox's partitioned moz-extension:// iframe context) and skip ServiceWorker caching of X-Frame-Options: deny.
+  if (isFoxHubContext && host.includes('telegram.org')) {
+    try {
+      const rawFlags = window.localStorage.getItem('experimental_flags');
+      let parsedFlags = [];
+      if (rawFlags) {
+        try {
+          const arr = JSON.parse(rawFlags);
+          if (Array.isArray(arr)) parsedFlags = arr;
+        } catch (_) {}
+      }
+      let changedFlags = false;
+      if (!parsedFlags.includes('noSharedWorker')) {
+        parsedFlags.push('noSharedWorker');
+        changedFlags = true;
+      }
+      if (!parsedFlags.includes('noServiceWorker')) {
+        parsedFlags.push('noServiceWorker');
+        changedFlags = true;
+      }
+      if (changedFlags) {
+        window.localStorage.setItem('experimental_flags', JSON.stringify(parsedFlags));
+      }
+    } catch (_) {}
+  }
+
+  function isTelegramVisuallyMounted() {
+    const pageChats = document.getElementById('page-chats');
+    if (pageChats && pageChats.style.display !== 'none' && pageChats.offsetHeight > 20) {
+      return true;
+    }
+    return Boolean(
+      document.querySelector(
+        '#auth-flow-root, #auth-pages, .auth-pages, #MiddleColumn, #LeftColumn, .Auth, .qr-container, .chatlist-parts'
+      )
+    );
+  }
+
   // Signal immediately at document_start (unless on ServiceWorker/CacheStorage bootstrap cleaner)
   const isSwBootstrap = window.location.search.includes('pm_boot=1');
   if (!isSwBootstrap) {
@@ -1092,7 +1143,11 @@
         clearInterval(earlyPaintTimer);
         return;
       }
-      if (document.body && document.body.children && document.body.children.length > 0) {
+      const hasBodyContent = Boolean(document.body && document.body.children && document.body.children.length > 0);
+      const isReadyNow = host.includes('telegram.org')
+        ? hasBodyContent && isTelegramVisuallyMounted()
+        : hasBodyContent;
+      if (isReadyNow) {
         earlyReadySent = true;
         clearInterval(earlyPaintTimer);
         injectOptimizerCss();
@@ -1110,23 +1165,41 @@
     host.includes('whatsapp.com') ||
     host.includes('x.com') ||
     host.includes('twitter.com') ||
+    host.includes('telegram.org') ||
     !isKnownBuiltInHost
   ) {
     try {
       if (navigator.serviceWorker) {
+        const isTelegramHost = host.includes('telegram.org');
         try {
           navigator.serviceWorker.register = function () {
-            return Promise.resolve({});
+            return isTelegramHost
+              ? Promise.reject(new Error('ServiceWorker disabled in sidebar'))
+              : Promise.resolve({});
           };
         } catch (_) {}
+        if (isTelegramHost && window.wrappedJSObject && typeof exportFunction === 'function') {
+          try {
+            const pageWin = window.wrappedJSObject;
+            if (pageWin.navigator && pageWin.navigator.serviceWorker) {
+              const rejectSw = exportFunction(
+                () => pageWin.Promise.reject(new pageWin.Error('ServiceWorker disabled in sidebar')),
+                pageWin
+              );
+              pageWin.navigator.serviceWorker.register = rejectSw;
+            }
+          } catch (_) {}
+        }
 
         const unregisterSwFast = async () => {
           try {
             const regs = await navigator.serviceWorker.getRegistrations();
             if (regs && regs.length > 0) {
               await Promise.all(regs.map((r) => r.unregister()));
-              if (window.caches && window.caches.keys) {
-                const keys = await window.caches.keys();
+            }
+            if (window.caches && window.caches.keys) {
+              const keys = await window.caches.keys();
+              if (keys && keys.length > 0) {
                 await Promise.all(keys.map((k) => window.caches.delete(k)));
               }
             }
@@ -1142,7 +1215,7 @@
           const targetUrl = params.get('pm_target') || `${window.location.origin}/`;
           Promise.race([
             unregisterSwFast(),
-            new Promise((resolve) => setTimeout(resolve, 90))
+            new Promise((resolve) => setTimeout(resolve, 110))
           ]).then(() => {
             window.location.replace(targetUrl);
           });
@@ -3039,13 +3112,417 @@
     }
   }
 
+  let activeSocialThemeMode = 'native';
+  let activeSocialAccent = '#FF5C39';
+  let isSyncingPlatformDarkDom = false;
+  let genericInvertTimer = null;
+
+  function getCookieVal(name) {
+    try {
+      const raw = document.cookie || '';
+      const parts = raw.split(';');
+      for (const p of parts) {
+        const eq = p.indexOf('=');
+        if (eq > 0 && p.slice(0, eq).trim() === name) {
+          return p.slice(eq + 1).trim();
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  function parseRgbComponents(str) {
+    if (!str) return null;
+    const m = str.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i);
+    if (!m) return null;
+    return {
+      r: Number(m[1]),
+      g: Number(m[2]),
+      b: Number(m[3]),
+      a: m[4] !== undefined ? Number(m[4]) : 1
+    };
+  }
+
+  function computeLuminance(rgb) {
+    return (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
+  }
+
+  function isXBootedInLightMode() {
+    try {
+      const metaTheme = document.querySelector('meta[name="theme-color"]');
+      const metaVal = (metaTheme?.getAttribute('content') || '').trim().toUpperCase();
+      if (metaVal === '#FFFFFF' || metaVal === '#FFF' || metaVal === 'RGB(255, 255, 255)') {
+        return true;
+      }
+      const inlineBg = (document.body?.style?.backgroundColor || '').replace(/\s+/g, '').toLowerCase();
+      if (inlineBg === 'rgb(255,255,255)' || inlineBg === '#ffffff' || inlineBg === '#fff') {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function checkGenericLightPageAndSmartInvert() {
+    const docEl = document.documentElement;
+    if (!docEl) return;
+    const enableDark = activeSocialThemeMode === 'true-night' || activeSocialThemeMode === 'midnight-oled';
+    if (!enableDark || isKnownBuiltInHost || host.includes('twitch.tv') || host.includes('chatgpt.com') || host.includes('openai.com')) {
+      docEl.removeAttribute('data-pm-smart-invert');
+      return;
+    }
+    try {
+      const htmlBg = parseRgbComponents(window.getComputedStyle(docEl).backgroundColor);
+      const bodyBg = document.body ? parseRgbComponents(window.getComputedStyle(document.body).backgroundColor) : null;
+      const effective = bodyBg && bodyBg.a > 0.15 ? bodyBg : htmlBg && htmlBg.a > 0.15 ? htmlBg : null;
+      if (!effective || computeLuminance(effective) > 0.52) {
+        if (docEl.getAttribute('data-pm-smart-invert') !== '1') {
+          docEl.setAttribute('data-pm-smart-invert', '1');
+        }
+      } else if (docEl.hasAttribute('data-pm-smart-invert')) {
+        docEl.removeAttribute('data-pm-smart-invert');
+      }
+    } catch (_) {}
+  }
+
+  function syncPlatformDarkModeDom(enableDark) {
+    if (isSyncingPlatformDarkDom) return;
+    const docEl = document.documentElement;
+    if (!docEl) return;
+    isSyncingPlatformDarkDom = true;
+    try {
+      if (host.includes('youtube.com')) {
+        if (enableDark) {
+          if (!docEl.hasAttribute('dark')) {
+            docEl.dataset.pmAddedYtDark = '1';
+            docEl.setAttribute('dark', '');
+          }
+          if (docEl.style.colorScheme !== 'dark') {
+            docEl.style.colorScheme = 'dark';
+          }
+          document.querySelectorAll('ytd-masthead, ytd-app, tp-yt-app-drawer, ytmusic-app').forEach((el) => {
+            if (!el.hasAttribute('dark')) el.setAttribute('dark', '');
+          });
+          try {
+            const prevPref = getCookieVal('PREF');
+            if (!/(^|&)f6=400(&|$)/.test(prevPref)) {
+              const nextPref = prevPref
+                ? /(^|&)f6=[^&]*/.test(prevPref)
+                  ? prevPref.replace(/(^|&)f6=[^&]*/, '$1f6=400')
+                  : `${prevPref}&f6=400`
+                : 'f6=400';
+              document.cookie = `PREF=${nextPref}; domain=.youtube.com; path=/; max-age=31536000; SameSite=None; Secure`;
+            }
+          } catch (_) {}
+        } else if (docEl.dataset.pmAddedYtDark === '1') {
+          delete docEl.dataset.pmAddedYtDark;
+          if (docEl.hasAttribute('dark')) docEl.removeAttribute('dark');
+          docEl.style.colorScheme = '';
+          document.querySelectorAll('ytd-masthead, ytd-app, tp-yt-app-drawer').forEach((el) => {
+            if (el.hasAttribute('dark')) el.removeAttribute('dark');
+          });
+        }
+      } else if (host.includes('x.com') || host.includes('twitter.com')) {
+        const cookieDomain = host.includes('twitter.com') ? '.twitter.com' : '.x.com';
+        if (enableDark) {
+          const curNight = getCookieVal('night_mode');
+          if (curNight !== '2') {
+            try {
+              if (window.sessionStorage.getItem('pm_x_prev_night') === null) {
+                window.sessionStorage.setItem('pm_x_prev_night', curNight || '0');
+              }
+            } catch (_) {}
+            try {
+              document.cookie = `night_mode=2; domain=${cookieDomain}; path=/; max-age=31536000; SameSite=None; Secure`;
+              if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+                browser.runtime
+                  .sendMessage({
+                    type: 'PM_SYNC_LIVE_FRAME_COOKIES',
+                    origin: 'https://x.com',
+                    cookieStr: document.cookie
+                  })
+                  .catch(() => {});
+              }
+            } catch (_) {}
+          }
+          if (isXBootedInLightMode()) {
+            if (docEl.getAttribute('data-pm-x-light-pending') !== '1') {
+              docEl.setAttribute('data-pm-x-light-pending', '1');
+            }
+            try {
+              if (window.sessionStorage.getItem('pm_x_reloaded_for_dark') !== '1') {
+                window.sessionStorage.setItem('pm_x_reloaded_for_dark', '1');
+                setTimeout(() => window.location.reload(), 35);
+              }
+            } catch (_) {}
+          } else {
+            if (docEl.hasAttribute('data-pm-x-light-pending')) {
+              docEl.removeAttribute('data-pm-x-light-pending');
+            }
+            try {
+              window.sessionStorage.removeItem('pm_x_reloaded_for_dark');
+            } catch (_) {}
+          }
+        } else {
+          if (docEl.hasAttribute('data-pm-x-light-pending')) {
+            docEl.removeAttribute('data-pm-x-light-pending');
+          }
+          try {
+            const prevNight = window.sessionStorage.getItem('pm_x_prev_night');
+            window.sessionStorage.removeItem('pm_x_reloaded_for_dark');
+            if (prevNight !== null) {
+              window.sessionStorage.removeItem('pm_x_prev_night');
+              document.cookie = `night_mode=${prevNight}; domain=${cookieDomain}; path=/; max-age=31536000; SameSite=None; Secure`;
+              if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+                browser.runtime
+                  .sendMessage({
+                    type: 'PM_SYNC_LIVE_FRAME_COOKIES',
+                    origin: 'https://x.com',
+                    cookieStr: document.cookie
+                  })
+                  .catch(() => {});
+              }
+              if (prevNight !== '2') {
+                setTimeout(() => window.location.reload(), 35);
+              }
+            }
+          } catch (_) {}
+        }
+      } else if (host.includes('telegram.org')) {
+        if (enableDark) {
+          if (!docEl.classList.contains('night') && !docEl.classList.contains('theme-dark')) {
+            docEl.dataset.pmAddedTgDark = '1';
+          }
+          if (docEl.classList.contains('theme-light')) {
+            docEl.dataset.pmWasTgLight = '1';
+            docEl.classList.remove('theme-light');
+          }
+          if (!docEl.classList.contains('night')) docEl.classList.add('night');
+          if (!docEl.classList.contains('theme-dark')) docEl.classList.add('theme-dark');
+        } else if (docEl.dataset.pmAddedTgDark === '1') {
+          delete docEl.dataset.pmAddedTgDark;
+          docEl.classList.remove('night', 'theme-dark');
+          if (docEl.dataset.pmWasTgLight === '1') {
+            delete docEl.dataset.pmWasTgLight;
+            docEl.classList.add('theme-light');
+          }
+        }
+      } else if (host.includes('instagram.com')) {
+        if (enableDark) {
+          if (!docEl.classList.contains('_aa4d')) {
+            docEl.dataset.pmAddedIgDark = '1';
+            docEl.classList.add('_aa4d');
+          }
+          if (docEl.getAttribute('data-theme') !== 'dark') {
+            docEl.setAttribute('data-theme', 'dark');
+          }
+          try {
+            if (window.localStorage.getItem('igt') !== 'dark') {
+              window.localStorage.setItem('igt', 'dark');
+            }
+          } catch (_) {}
+        } else if (docEl.dataset.pmAddedIgDark === '1') {
+          delete docEl.dataset.pmAddedIgDark;
+          docEl.classList.remove('_aa4d');
+          docEl.removeAttribute('data-theme');
+          try {
+            window.localStorage.removeItem('igt');
+          } catch (_) {}
+        }
+      } else if (host.includes('whatsapp.com')) {
+        if (enableDark) {
+          if (!docEl.classList.contains('dark') && !(document.body && document.body.classList.contains('dark'))) {
+            docEl.dataset.pmAddedWaDark = '1';
+          }
+          if (!docEl.classList.contains('dark')) docEl.classList.add('dark');
+          if (document.body && !document.body.classList.contains('dark')) document.body.classList.add('dark');
+        } else if (docEl.dataset.pmAddedWaDark === '1') {
+          delete docEl.dataset.pmAddedWaDark;
+          docEl.classList.remove('dark');
+          if (document.body) document.body.classList.remove('dark');
+        }
+      } else if (host.includes('discord.com')) {
+        if (enableDark) {
+          if (docEl.classList.contains('theme-light')) {
+            docEl.dataset.pmWasDcLight = '1';
+            docEl.classList.remove('theme-light');
+          }
+          if (!docEl.classList.contains('theme-dark')) docEl.classList.add('theme-dark');
+        } else if (docEl.dataset.pmWasDcLight === '1') {
+          delete docEl.dataset.pmWasDcLight;
+          docEl.classList.remove('theme-dark');
+          docEl.classList.add('theme-light');
+        }
+      } else if (host.includes('reddit.com')) {
+        if (enableDark) {
+          if (!docEl.classList.contains('theme-dark')) {
+            docEl.dataset.pmAddedRdDark = '1';
+          }
+          if (docEl.classList.contains('theme-light')) {
+            docEl.dataset.pmWasRdLight = '1';
+            docEl.classList.remove('theme-light');
+          }
+          if (!docEl.classList.contains('theme-dark')) docEl.classList.add('theme-dark');
+          if (!docEl.classList.contains('dark')) docEl.classList.add('dark');
+        } else if (docEl.dataset.pmAddedRdDark === '1') {
+          delete docEl.dataset.pmAddedRdDark;
+          docEl.classList.remove('theme-dark', 'dark');
+          if (docEl.dataset.pmWasRdLight === '1') {
+            delete docEl.dataset.pmWasRdLight;
+            docEl.classList.add('theme-light');
+          }
+        }
+      } else if (host.includes('messenger.com') || host.includes('facebook.com')) {
+        if (enableDark) {
+          if (!docEl.classList.contains('__fb-dark-mode')) {
+            docEl.dataset.pmAddedFbDark = '1';
+          }
+          if (docEl.classList.contains('__fb-light-mode')) {
+            docEl.dataset.pmWasFbLight = '1';
+            docEl.classList.remove('__fb-light-mode');
+          }
+          if (!docEl.classList.contains('__fb-dark-mode')) docEl.classList.add('__fb-dark-mode');
+          if (document.body) {
+            if (document.body.classList.contains('__fb-light-mode')) document.body.classList.remove('__fb-light-mode');
+            if (!document.body.classList.contains('__fb-dark-mode')) document.body.classList.add('__fb-dark-mode');
+          }
+        } else if (docEl.dataset.pmAddedFbDark === '1') {
+          delete docEl.dataset.pmAddedFbDark;
+          docEl.classList.remove('__fb-dark-mode');
+          if (document.body) document.body.classList.remove('__fb-dark-mode');
+          if (docEl.dataset.pmWasFbLight === '1') {
+            delete docEl.dataset.pmWasFbLight;
+            docEl.classList.add('__fb-light-mode');
+            if (document.body) document.body.classList.add('__fb-light-mode');
+          }
+        }
+      } else if (host.includes('tiktok.com')) {
+        if (enableDark) {
+          if (docEl.getAttribute('data-theme') !== 'dark') {
+            docEl.dataset.pmPrevTtTheme = docEl.getAttribute('data-theme') || '';
+            docEl.dataset.pmAddedTtDark = '1';
+            docEl.setAttribute('data-theme', 'dark');
+          }
+          try {
+            if (getCookieVal('tiktok_webapp_theme') !== 'dark') {
+              document.cookie =
+                'tiktok_webapp_theme=dark; domain=.tiktok.com; path=/; max-age=31536000; SameSite=None; Secure';
+            }
+          } catch (_) {}
+        } else if (docEl.dataset.pmAddedTtDark === '1') {
+          const prevTt = docEl.dataset.pmPrevTtTheme || '';
+          delete docEl.dataset.pmAddedTtDark;
+          delete docEl.dataset.pmPrevTtTheme;
+          if (prevTt) {
+            docEl.setAttribute('data-theme', prevTt);
+          } else {
+            docEl.removeAttribute('data-theme');
+          }
+        }
+      } else if (host.includes('twitch.tv')) {
+        if (enableDark) {
+          if (docEl.classList.contains('tw-root--theme-light')) {
+            docEl.dataset.pmWasTwLight = '1';
+            docEl.classList.remove('tw-root--theme-light');
+          }
+          if (!docEl.classList.contains('tw-root--theme-dark')) docEl.classList.add('tw-root--theme-dark');
+        } else if (docEl.dataset.pmWasTwLight === '1') {
+          delete docEl.dataset.pmWasTwLight;
+          docEl.classList.remove('tw-root--theme-dark');
+          docEl.classList.add('tw-root--theme-light');
+        }
+      } else if (host.includes('chatgpt.com') || host.includes('openai.com')) {
+        if (enableDark) {
+          if (!docEl.classList.contains('dark')) {
+            docEl.dataset.pmAddedGptDark = '1';
+          }
+          if (docEl.classList.contains('light')) docEl.classList.remove('light');
+          if (!docEl.classList.contains('dark')) docEl.classList.add('dark');
+          if (docEl.style.colorScheme !== 'dark') docEl.style.colorScheme = 'dark';
+        } else if (docEl.dataset.pmAddedGptDark === '1') {
+          delete docEl.dataset.pmAddedGptDark;
+          docEl.classList.remove('dark');
+          docEl.classList.add('light');
+          docEl.style.colorScheme = '';
+        }
+      } else if (host.includes('gemini.google.com')) {
+        if (enableDark && document.body) {
+          if (!document.body.classList.contains('dark-theme')) {
+            docEl.dataset.pmAddedGemDark = '1';
+          }
+          if (document.body.classList.contains('light-theme')) document.body.classList.remove('light-theme');
+          if (!document.body.classList.contains('dark-theme')) document.body.classList.add('dark-theme');
+        } else if (!enableDark && docEl.dataset.pmAddedGemDark === '1' && document.body) {
+          delete docEl.dataset.pmAddedGemDark;
+          document.body.classList.remove('dark-theme');
+          document.body.classList.add('light-theme');
+        }
+      } else {
+        // Custom user websites: activate standard dark-mode framework attributes first, then smart-invert if still light!
+        if (enableDark) {
+          if (!docEl.classList.contains('dark')) {
+            docEl.dataset.pmAddedGenericDark = '1';
+            docEl.classList.add('dark');
+          }
+          if (!docEl.hasAttribute('data-theme')) {
+            docEl.dataset.pmAddedDataTheme = '1';
+            docEl.setAttribute('data-theme', 'dark');
+          }
+          if (!docEl.hasAttribute('data-bs-theme')) {
+            docEl.dataset.pmAddedBsTheme = '1';
+            docEl.setAttribute('data-bs-theme', 'dark');
+          }
+          if (!docEl.hasAttribute('data-color-mode')) {
+            docEl.dataset.pmAddedColorMode = '1';
+            docEl.setAttribute('data-color-mode', 'dark');
+          }
+          clearTimeout(genericInvertTimer);
+          genericInvertTimer = setTimeout(checkGenericLightPageAndSmartInvert, 65);
+          setTimeout(checkGenericLightPageAndSmartInvert, 450);
+        } else {
+          if (docEl.hasAttribute('data-pm-smart-invert')) {
+            docEl.removeAttribute('data-pm-smart-invert');
+          }
+          if (docEl.dataset.pmAddedGenericDark === '1') {
+            delete docEl.dataset.pmAddedGenericDark;
+            docEl.classList.remove('dark');
+          }
+          if (docEl.dataset.pmAddedDataTheme === '1') {
+            delete docEl.dataset.pmAddedDataTheme;
+            docEl.removeAttribute('data-theme');
+          }
+          if (docEl.dataset.pmAddedBsTheme === '1') {
+            delete docEl.dataset.pmAddedBsTheme;
+            docEl.removeAttribute('data-bs-theme');
+          }
+          if (docEl.dataset.pmAddedColorMode === '1') {
+            delete docEl.dataset.pmAddedColorMode;
+            docEl.removeAttribute('data-color-mode');
+          }
+        }
+      }
+    } finally {
+      Promise.resolve().then(() => {
+        isSyncingPlatformDarkDom = false;
+      });
+    }
+  }
+
   function injectAppThemeCss(themeMode, accentColor) {
+    activeSocialThemeMode = themeMode || 'native';
+    activeSocialAccent = accentColor || '#FF5C39';
+    const isDarkOverride = activeSocialThemeMode === 'true-night' || activeSocialThemeMode === 'midnight-oled';
+
+    syncPlatformDarkModeDom(isDarkOverride);
+
     const root = document.head || document.documentElement;
     if (!root) return;
     let themeStyle = document.getElementById('pm-social-app-theme-css');
-    if (!themeMode || themeMode === 'native') {
+    if (!activeSocialThemeMode || activeSocialThemeMode === 'native') {
       if (themeStyle) themeStyle.remove();
-      if (document.documentElement) document.documentElement.removeAttribute('data-pm-social-theme');
+      if (document.documentElement) {
+        document.documentElement.removeAttribute('data-pm-social-theme');
+        document.documentElement.removeAttribute('data-pm-smart-invert');
+      }
       return;
     }
     if (!themeStyle) {
@@ -3054,11 +3531,11 @@
       root.appendChild(themeStyle);
     }
     if (document.documentElement) {
-      document.documentElement.setAttribute('data-pm-social-theme', themeMode);
+      document.documentElement.setAttribute('data-pm-social-theme', activeSocialThemeMode);
     }
-    const accent = accentColor || '#6C5CE7';
+    const accent = activeSocialAccent;
     let tCss = `
-      /* PocketHub Social App Custom Theme Overlay (${themeMode}) */
+      /* FoxHub Social App Custom Theme Overlay (${activeSocialThemeMode}) */
       :root {
         --pm-social-accent: ${accent} !important;
       }
@@ -3071,21 +3548,26 @@
       ::selection {
         background: ${accent}44 !important;
       }
-      body::before {
-        content: "";
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 3px;
-        background: linear-gradient(90deg, ${accent}, #FF7675, ${accent});
-        z-index: 2147483646;
-        pointer-events: none;
-        opacity: 0.88;
-      }
     `;
 
-    if (themeMode === 'warm-glass') {
+    if (activeSocialThemeMode !== 'true-night') {
+      tCss += `
+        body::before {
+          content: "";
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 3px;
+          background: linear-gradient(90deg, ${accent}, #FF7675, ${accent});
+          z-index: 2147483646;
+          pointer-events: none;
+          opacity: 0.88;
+        }
+      `;
+    }
+
+    if (activeSocialThemeMode === 'warm-glass') {
       tCss += `
         html {
           filter: sepia(0.15) saturate(1.06) brightness(0.98) !important;
@@ -3102,43 +3584,266 @@
           z-index: 2147483645;
         }
       `;
-    } else if (themeMode === 'midnight-oled') {
+    } else if (activeSocialThemeMode === 'midnight-oled') {
       tCss += `
         html {
-          filter: contrast(1.05) saturate(1.08) !important;
+          color-scheme: dark !important;
+          filter: contrast(1.04) saturate(1.06) !important;
         }
         body::after {
           content: "";
           position: fixed;
           inset: 0;
-          background: radial-gradient(circle at top left, rgba(108, 92, 231, 0.10), rgba(0, 206, 209, 0.04) 65%, transparent);
+          background: radial-gradient(circle at top left, rgba(108, 92, 231, 0.08), rgba(0, 206, 209, 0.03) 65%, transparent);
           pointer-events: none;
           z-index: 2147483645;
         }
       `;
-    } else if (themeMode === 'true-night') {
+    } else if (activeSocialThemeMode === 'true-night') {
       tCss += `
-        :root, html, body {
+        :root, html {
           color-scheme: dark !important;
-          background-color: #000000 !important;
-          --ig-primary-background: 0, 0, 0 !important;
-          --ig-secondary-background: 8, 8, 10 !important;
-          --ig-elevated-background: 14, 14, 18 !important;
-          --yt-spec-base-background: #000000 !important;
-          --yt-spec-raised-background: #0A0A0D !important;
-          --yt-spec-menu-background: #0E0E12 !important;
-          --background-primary: #000000 !important;
-          --background-secondary: #070709 !important;
-          --background-secondary-alt: #0B0B0F !important;
-          --background-tertiary: #000000 !important;
-          --background-floating: #0C0C10 !important;
-          --spice-main: #000000 !important;
-          --spice-sidebar: #000000 !important;
-          --spice-player: #050507 !important;
-          --spice-card: #0C0C10 !important;
         }
       `;
-    } else if (themeMode === 'rose-twilight') {
+
+      if (host.includes('youtube.com')) {
+        tCss += `
+          html,
+          html[dark],
+          html:not(.style-scope),
+          html[data-pm-social-theme="true-night"],
+          ytd-app,
+          ytmusic-app {
+            background-color: #000000 !important;
+            color: #FFFFFF !important;
+            --yt-spec-base-background: #000000 !important;
+            --yt-spec-raised-background: #0E0E14 !important;
+            --yt-spec-menu-background: #12121A !important;
+            --yt-spec-general-background-a: #000000 !important;
+            --yt-spec-general-background-b: #08080C !important;
+            --yt-spec-general-background-c: #0E0E14 !important;
+            --yt-spec-brand-background-primary: #000000 !important;
+            --yt-spec-brand-background-solid: #000000 !important;
+            --yt-spec-brand-background-secondary: #0A0A0F !important;
+            --yt-spec-additive-background: rgba(255, 255, 255, 0.10) !important;
+            --yt-spec-badge-chip-background: rgba(255, 255, 255, 0.10) !important;
+            --yt-spec-button-chip-background-hover: rgba(255, 255, 255, 0.18) !important;
+            --yt-spec-inverted-background: #FFFFFF !important;
+            --yt-spec-text-primary: #FFFFFF !important;
+            --yt-spec-text-primary-inverse: #000000 !important;
+            --yt-spec-text-secondary: #B8BCC8 !important;
+            --yt-spec-text-disabled: #7E8290 !important;
+            --yt-spec-icon-active-other: #FFFFFF !important;
+            --yt-spec-icon-inactive: #D4D7E0 !important;
+            --yt-spec-wordmark-text: #FFFFFF !important;
+            --yt-spec-10-percent-layer: rgba(255, 255, 255, 0.14) !important;
+            --yt-spec-outline: rgba(255, 255, 255, 0.18) !important;
+            --ytd-searchbox-background: #0E0E14 !important;
+            --ytd-searchbox-legacy-border-color: rgba(255, 255, 255, 0.22) !important;
+            --ytd-searchbox-legacy-button-color: #181822 !important;
+            --ytd-searchbox-legacy-button-border-color: rgba(255, 255, 255, 0.22) !important;
+            --ytd-searchbox-legacy-button-icon-color: #FFFFFF !important;
+            --ytd-searchbox-text-color: #FFFFFF !important;
+          }
+          body,
+          ytd-masthead,
+          #background.ytd-masthead,
+          #container.ytd-masthead,
+          #chips-wrapper.ytd-feed-filter-chip-bar-renderer,
+          ytd-feed-filter-chip-bar-renderer {
+            background: #000000 !important;
+            background-color: #000000 !important;
+          }
+          yt-searchbox .ytSearchboxComponentInputBox,
+          #search-form #container.ytd-searchbox {
+            background: #0E0E14 !important;
+            border-color: rgba(255, 255, 255, 0.22) !important;
+            color: #FFFFFF !important;
+          }
+          yt-searchbox input.ytSearchboxComponentInput,
+          input#search {
+            color: #FFFFFF !important;
+          }
+          yt-searchbox button.ytSearchboxComponentSearchButton,
+          #search-icon-legacy.ytd-searchbox {
+            background: #181822 !important;
+            border-color: rgba(255, 255, 255, 0.22) !important;
+            color: #FFFFFF !important;
+          }
+          yt-chip-cloud-chip-renderer:not([selected]) {
+            background-color: #14141D !important;
+            color: #F4F5F8 !important;
+          }
+          yt-chip-cloud-chip-renderer[selected] {
+            background-color: #FFFFFF !important;
+            color: #000000 !important;
+          }
+          #video-title,
+          yt-formatted-string#video-title,
+          .yt-core-attributed-string {
+            color: var(--yt-spec-text-primary, #FFFFFF);
+          }
+          ytd-topbar-logo-renderer #logo-icon svg path[fill="#212121"],
+          ytd-topbar-logo-renderer #logo-icon svg path[fill="#282828"],
+          ytd-topbar-logo-renderer #logo-icon svg path[fill="#0F0F0F"],
+          ytd-topbar-logo-renderer #youtube-paths path {
+            fill: #FFFFFF !important;
+          }
+        `;
+      } else if (host.includes('x.com') || host.includes('twitter.com')) {
+        tCss += `
+          html[data-pm-x-light-pending="1"] {
+            filter: invert(0.94) hue-rotate(180deg) !important;
+            background-color: #FFFFFF !important;
+          }
+          html[data-pm-x-light-pending="1"] img,
+          html[data-pm-x-light-pending="1"] video,
+          html[data-pm-x-light-pending="1"] [style*="background-image"] {
+            filter: invert(1) hue-rotate(180deg) !important;
+          }
+          html:not([data-pm-x-light-pending="1"]),
+          html:not([data-pm-x-light-pending="1"]) body {
+            background-color: #000000 !important;
+          }
+        `;
+      } else if (host.includes('telegram.org')) {
+        tCss += `
+          html, html.night, html.theme-dark, body {
+            background-color: #000000 !important;
+            color: #FFFFFF !important;
+            --body-background-color: #000000 !important;
+            --surface-color: #0E0E14 !important;
+            --primary-text-color: #FFFFFF !important;
+            --secondary-text-color: #B4B8C4 !important;
+            --color-background: #000000 !important;
+            --color-background-secondary: #0E0E14 !important;
+            --color-text: #FFFFFF !important;
+            --color-text-secondary: #B4B8C4 !important;
+          }
+          #auth-pages, #auth-flow-root, .auth-pages, #MiddleColumn, #LeftColumn, .chatlist-container {
+            background-color: #000000 !important;
+            color: #FFFFFF !important;
+          }
+        `;
+      } else if (host.includes('instagram.com')) {
+        tCss += `
+          :root, html, body, ._aa4d, [data-theme="dark"] {
+            background-color: #000000 !important;
+            color: #F8F9FA !important;
+            --ig-primary-background: 0, 0, 0 !important;
+            --ig-secondary-background: 12, 12, 16 !important;
+            --ig-elevated-background: 20, 20, 26 !important;
+            --ig-highlight-background: 28, 28, 36 !important;
+            --ig-primary-text: 248, 249, 250 !important;
+            --ig-secondary-text: 176, 180, 188 !important;
+            --ig-tertiary-text: 132, 136, 146 !important;
+            --ig-stroke: 38, 38, 48 !important;
+            --ig-elevated-separator: 38, 38, 48 !important;
+            --ig-separator: 38, 38, 48 !important;
+          }
+        `;
+      } else if (host.includes('reddit.com')) {
+        tCss += `
+          :root, html, html.theme-dark, body, shreddit-app {
+            background-color: #000000 !important;
+            color: #F4F5F8 !important;
+            --color-neutral-background: #000000 !important;
+            --color-neutral-background-weak: #0B0B10 !important;
+            --color-neutral-background-medium: #12121A !important;
+            --color-neutral-background-strong: #1A1A24 !important;
+            --color-neutral-content: #F4F5F8 !important;
+            --color-neutral-content-strong: #FFFFFF !important;
+            --color-neutral-content-weak: #B4B8C4 !important;
+          }
+        `;
+      } else if (host.includes('whatsapp.com')) {
+        tCss += `
+          html, body, body.dark {
+            background-color: #000000 !important;
+            --app-background: #000000 !important;
+            --background-default: #000000 !important;
+            --background-default-hover: #0F0F15 !important;
+            --panel-header-background: #0A0A0F !important;
+            --search-input-container-background: #0A0A0F !important;
+            --search-input-background: #14141D !important;
+            --compose-input-background: #14141D !important;
+            --rich-text-panel-background: #0A0A0F !important;
+            --incoming-background: #14141E !important;
+            --primary-strong: #FFFFFF !important;
+            --secondary: #B4B8C4 !important;
+          }
+        `;
+      } else if (host.includes('messenger.com') || host.includes('facebook.com')) {
+        tCss += `
+          html, body, .__fb-dark-mode {
+            background-color: #000000 !important;
+            color: #F5F6F8 !important;
+            --surface-background: #000000 !important;
+            --web-wash: #000000 !important;
+            --card-background: #0E0E14 !important;
+            --card-background-flat: #0E0E14 !important;
+            --hosted-view-selected-state: rgba(255, 255, 255, 0.10) !important;
+            --primary-text: #FFFFFF !important;
+            --secondary-text: #B8BCC8 !important;
+          }
+        `;
+      } else if (host.includes('discord.com')) {
+        tCss += `
+          html, body, .theme-dark {
+            background-color: #000000 !important;
+            --background-primary: #000000 !important;
+            --background-secondary: #08080C !important;
+            --background-secondary-alt: #0D0D13 !important;
+            --background-tertiary: #000000 !important;
+            --background-floating: #101018 !important;
+            --text-normal: #F4F5F8 !important;
+            --header-primary: #FFFFFF !important;
+            --channels-default: #B8BCC8 !important;
+          }
+        `;
+      } else if (host.includes('spotify.com')) {
+        tCss += `
+          html, body {
+            background-color: #000000 !important;
+            --background-base: #000000 !important;
+            --background-highlight: #12121A !important;
+            --background-press: #08080C !important;
+            --background-elevated-base: #12121A !important;
+            --spice-main: #000000 !important;
+            --spice-sidebar: #000000 !important;
+            --spice-player: #050508 !important;
+            --spice-card: #0E0E14 !important;
+            --text-base: #FFFFFF !important;
+            --text-subdued: #B8BCC8 !important;
+          }
+        `;
+      } else if (host.includes('tiktok.com')) {
+        tCss += `
+          html, body, [data-theme="dark"] {
+            background-color: #000000 !important;
+            color: #FFFFFF !important;
+          }
+        `;
+      } else {
+        tCss += `
+          html[data-pm-smart-invert="1"] {
+            filter: invert(0.93) hue-rotate(180deg) contrast(1.04) !important;
+            background-color: #FFFFFF !important;
+          }
+          html[data-pm-smart-invert="1"] img,
+          html[data-pm-smart-invert="1"] video,
+          html[data-pm-smart-invert="1"] picture,
+          html[data-pm-smart-invert="1"] canvas,
+          html[data-pm-smart-invert="1"] [style*="background-image"] {
+            filter: invert(1) hue-rotate(180deg) !important;
+          }
+          html:not([data-pm-smart-invert="1"]),
+          html:not([data-pm-smart-invert="1"]) body {
+            background-color: #000000 !important;
+          }
+        `;
+      }
+    } else if (activeSocialThemeMode === 'rose-twilight') {
       tCss += `
         html {
           filter: hue-rotate(-6deg) saturate(1.07) !important;
@@ -3155,7 +3860,7 @@
           z-index: 2147483645;
         }
       `;
-    } else if (themeMode === 'match-theme') {
+    } else if (activeSocialThemeMode === 'match-theme') {
       tCss += `
         body::after {
           content: "";
@@ -3169,6 +3874,55 @@
     }
 
     themeStyle.textContent = tCss;
+  }
+
+  // Immediately read socialAppThemeMode from extension storage at document_start so websites boot in Dark Mode right away,
+  // and keep dark mode attributes intact across SPA hydration & live theme toggles!
+  if (isFoxHubContext && !isSwBootstrap && typeof browser !== 'undefined' && browser.storage && browser.storage.local) {
+    browser.storage.local
+      .get('settings')
+      .then((res) => {
+        const s = (res && res.settings) || {};
+        if (s.socialAppThemeMode && s.socialAppThemeMode !== 'native') {
+          injectAppThemeCss(s.socialAppThemeMode, activeSocialAccent);
+        }
+      })
+      .catch(() => {});
+
+    if (browser.storage.onChanged) {
+      browser.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes.settings && changes.settings.newValue) {
+          const nextMode = changes.settings.newValue.socialAppThemeMode || 'native';
+          if (nextMode !== activeSocialThemeMode) {
+            injectAppThemeCss(nextMode, activeSocialAccent);
+          }
+        }
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if (activeSocialThemeMode && activeSocialThemeMode !== 'native') {
+        injectAppThemeCss(activeSocialThemeMode, activeSocialAccent);
+      }
+    });
+
+    if (typeof MutationObserver === 'function' && document.documentElement) {
+      const darkHydrationObserver = new MutationObserver(() => {
+        if (
+          !isSyncingPlatformDarkDom &&
+          (activeSocialThemeMode === 'true-night' || activeSocialThemeMode === 'midnight-oled')
+        ) {
+          syncPlatformDarkModeDom(true);
+          if (!document.getElementById('pm-social-app-theme-css')) {
+            injectAppThemeCss(activeSocialThemeMode, activeSocialAccent);
+          }
+        }
+      });
+      darkHydrationObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'dark', 'data-theme']
+      });
+    }
   }
 
   function injectDiscordCaptchaPreconnect() {
@@ -3694,9 +4448,7 @@
         );
       }
       if (host.includes('telegram.org')) {
-        return Boolean(
-          document.querySelector('#page-chats, #main-columns, #MiddleColumn, #LeftColumn, .chatlist-parts, .auth-pages, canvas')
-        );
+        return isTelegramVisuallyMounted();
       }
       if (host.includes('reddit.com')) {
         return Boolean(document.querySelector('shreddit-app, rs-app, main, [role="main"], reddit-header-large'));

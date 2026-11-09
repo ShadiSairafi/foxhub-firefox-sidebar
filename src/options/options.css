@@ -558,6 +558,11 @@ body {
   box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
+:root[data-color-scheme="dark"] .opt-preview-card {
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
 .pm-avatar {
   width: 40px;
   height: 40px;

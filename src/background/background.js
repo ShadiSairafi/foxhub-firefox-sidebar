@@ -666,12 +666,16 @@ if (browser.webRequest) {
     return false;
   };
 
-  // Block Service Worker registration scripts on YouTube, WhatsApp Web & X inside PocketHub where SW caches X-Frame-Options: DENY
+  // Block Service Worker registration scripts on YouTube, WhatsApp Web, Telegram & X inside FoxHub where SW caches X-Frame-Options: DENY
   if (browser.webRequest.onBeforeRequest) {
     browser.webRequest.onBeforeRequest.addListener(
       (details) => {
         if (!isFromPocketMail(details)) return {};
-        if (/\/(sw|service-worker|serviceworker|guest-sw|guest-events-sw|OneSignalSDKWorker)\.js(\?|$)/i.test(details.url || '')) {
+        if (
+          /\/(sw(-[\w.-]+)?|service[.-]?worker(-[\w.-]+)?|guest-sw|guest-events-sw|OneSignalSDKWorker)\.js(\?|$)/i.test(
+            details.url || ''
+          )
+        ) {
           return { cancel: true };
         }
         return {};
@@ -681,7 +685,8 @@ if (browser.webRequest) {
           '*://*.whatsapp.com/*',
           '*://*.youtube.com/*',
           '*://*.x.com/*',
-          '*://*.twitter.com/*'
+          '*://*.twitter.com/*',
+          '*://*.telegram.org/*'
         ],
         types: ['script', 'xmlhttprequest', 'other']
       },
@@ -888,6 +893,24 @@ if (browser.webRequest) {
       const verifyFp = parsedUrl.searchParams.get('verifyFp');
       if (verifyFp && verifyFp.startsWith('verify_') && !map.has('s_v_web_id')) {
         map.set('s_v_web_id', verifyFp);
+      }
+    }
+    // Honor FoxHub's Social Dark Mode override (True Night OLED / Midnight OLED) on cookie-driven platforms (X Lights Out, YouTube SSR Dark, TikTok Dark)
+    const socialTheme = currentSettings?.socialAppThemeMode || 'native';
+    if (parsedUrl && (socialTheme === 'true-night' || socialTheme === 'midnight-oled')) {
+      const ph = parsedUrl.hostname.toLowerCase();
+      if (ph === 'x.com' || ph.endsWith('.x.com') || ph === 'twitter.com' || ph.endsWith('.twitter.com')) {
+        map.set('night_mode', '2');
+      } else if (ph === 'www.youtube.com' || ph.endsWith('.youtube.com')) {
+        const prevPref = map.get('PREF') || '';
+        const nextPref = prevPref
+          ? /(^|&)f6=[^&]*/.test(prevPref)
+            ? prevPref.replace(/(^|&)f6=[^&]*/, '$1f6=400')
+            : `${prevPref}&f6=400`
+          : 'f6=400';
+        map.set('PREF', nextPref);
+      } else if (ph === 'www.tiktok.com' || ph.endsWith('.tiktok.com')) {
+        map.set('tiktok_webapp_theme', 'dark');
       }
     }
     const merged = Array.from(map.entries())
@@ -1182,6 +1205,35 @@ if (browser.webRequest) {
           }
           respOriginKey = getRootOriginForHost(parsedRespUrl.hostname) || parsedRespUrl.origin;
         } catch (_) {}
+
+        // Serve a minimal clean HTML document for ServiceWorker/CacheStorage bootstrap cleanup requests (?pm_boot=1)
+        // so /favicon.ico?pm_boot=1 (Telegram) and /robots.txt?pm_boot=1 (X, WhatsApp) execute media-frame-optimizer.js cleanly at document_start!
+        if (
+          isBootRequest &&
+          details.type === 'sub_frame' &&
+          typeof browser.webRequest.filterResponseData === 'function'
+        ) {
+          try {
+            const bootFilter = browser.webRequest.filterResponseData(details.requestId);
+            const bootEncoder = new TextEncoder();
+            bootFilter.ondata = () => {};
+            bootFilter.onstop = () => {
+              try {
+                bootFilter.write(
+                  bootEncoder.encode('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>')
+                );
+              } catch (_) {}
+              try {
+                bootFilter.close();
+              } catch (_) {}
+            };
+            bootFilter.onerror = () => {
+              try {
+                bootFilter.close();
+              } catch (_) {}
+            };
+          } catch (_) {}
+        }
 
         // Neutralize Gmail's inline iframe frame-buster (Qh=window!=top||window.frameElement?Ph:null and We=function(a){var b=top.location;...})
         // on sub_frame HTML responses from mail.google.com so the embedded Gmail composer never throws SecurityError at line 109!
@@ -3337,6 +3389,18 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         }
         const prevPoll = currentSettings.pollIntervalSeconds;
         currentSettings = { ...currentSettings, ...patch };
+        if (
+          patch.socialAppThemeMode !== undefined &&
+          patch.socialAppThemeMode !== 'true-night' &&
+          patch.socialAppThemeMode !== 'midnight-oled'
+        ) {
+          const xLive = liveFrameCookiesByOrigin.get('https://x.com');
+          if (xLive) xLive.delete('night_mode');
+          const ttLive = liveFrameCookiesByOrigin.get('https://www.tiktok.com');
+          if (ttLive) ttLive.delete('tiktok_webapp_theme');
+          const ytLive = liveFrameCookiesByOrigin.get('https://www.youtube.com');
+          if (ytLive) ytLive.delete('PREF');
+        }
         scheduleSettingsSave(true);
         // If any active background audio app was disabled in settings, stop it immediately
         Array.from(bgAudioPool.keys()).forEach((appId) => {

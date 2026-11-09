@@ -418,60 +418,64 @@
       id: 'cozy-espresso',
       name: 'Cozy Espresso',
       subtitle: 'Warm roasted coffeehouse dark',
+      isDark: true,
       defaultWallpaper: 'cafe-rain',
       previewGradient: 'linear-gradient(135deg, #231C18 0%, #332822 55%, #4F3C31 100%)',
       accentDot: '#E57A54',
       vars: {
         '--bg-base': '#1E1815',
+        '--bg-primary': '#261E1A',
         '--bg-secondary': '#29211D',
         '--card-rgb': '44, 35, 30',
-        '--card-bg': 'rgba(44, 35, 30, 0.78)',
-        '--card-bg-hover': 'rgba(56, 45, 39, 0.92)',
+        '--card-bg': 'rgba(44, 35, 30, 0.84)',
+        '--card-bg-hover': 'rgba(56, 45, 39, 0.94)',
         '--card-bg-solid': '#2E2520',
-        '--header-bg': 'rgba(30, 24, 21, 0.84)',
-        '--text-primary': '#F5ECE4',
-        '--text-secondary': '#C7B6A8',
-        '--text-muted': '#8F7E70',
+        '--header-bg': 'rgba(30, 24, 21, 0.88)',
+        '--text-primary': '#FAF3EC',
+        '--text-secondary': '#DED0C3',
+        '--text-muted': '#AE9D8F',
         '--accent': '#E57A54',
         '--accent-hover': '#F08C68',
-        '--accent-soft': 'rgba(229, 122, 84, 0.18)',
-        '--accent-contrast': '#1E1815',
-        '--border-color': 'rgba(245, 236, 228, 0.11)',
-        '--border-strong': 'rgba(245, 236, 228, 0.22)',
+        '--accent-soft': 'rgba(229, 122, 84, 0.20)',
+        '--accent-contrast': '#FFFFFF',
+        '--border-color': 'rgba(245, 236, 228, 0.14)',
+        '--border-strong': 'rgba(245, 236, 228, 0.25)',
         '--shadow-soft': '0 6px 20px rgba(10, 7, 5, 0.35)',
         '--shadow-hover': '0 10px 28px rgba(10, 7, 5, 0.5)',
         '--success': '#52B788',
         '--warning': '#F4A261',
         '--danger': '#E76F51',
         '--badge-bg': '#E57A54',
-        '--badge-text': '#1E1815',
-        '--scrollbar-thumb': 'rgba(245, 236, 228, 0.22)'
+        '--badge-text': '#FFFFFF',
+        '--scrollbar-thumb': 'rgba(245, 236, 228, 0.24)'
       }
     },
     'midnight-velvet': {
       id: 'midnight-velvet',
       name: 'Starlit Study',
       subtitle: 'Candlelit velvet & warm gold',
+      isDark: true,
       defaultWallpaper: 'starry-dusk',
       previewGradient: 'linear-gradient(135deg, #1E1B24 0%, #2D2638 55%, #4A3E59 100%)',
       accentDot: '#E9B872',
       vars: {
         '--bg-base': '#1C1924',
+        '--bg-primary': '#242030',
         '--bg-secondary': '#272233',
         '--card-rgb': '42, 36, 54',
-        '--card-bg': 'rgba(42, 36, 54, 0.78)',
-        '--card-bg-hover': 'rgba(54, 46, 68, 0.92)',
+        '--card-bg': 'rgba(42, 36, 54, 0.84)',
+        '--card-bg-hover': 'rgba(54, 46, 68, 0.94)',
         '--card-bg-solid': '#2B2538',
-        '--header-bg': 'rgba(28, 25, 36, 0.84)',
-        '--text-primary': '#F4EFEA',
-        '--text-secondary': '#C4B9D0',
-        '--text-muted': '#8E829E',
+        '--header-bg': 'rgba(28, 25, 36, 0.88)',
+        '--text-primary': '#FAF6F2',
+        '--text-secondary': '#DDD4E8',
+        '--text-muted': '#ACA1BC',
         '--accent': '#E9B872',
         '--accent-hover': '#F2C88B',
-        '--accent-soft': 'rgba(233, 184, 114, 0.18)',
+        '--accent-soft': 'rgba(233, 184, 114, 0.20)',
         '--accent-contrast': '#1C1924',
-        '--border-color': 'rgba(244, 239, 234, 0.11)',
-        '--border-strong': 'rgba(244, 239, 234, 0.22)',
+        '--border-color': 'rgba(244, 239, 234, 0.14)',
+        '--border-strong': 'rgba(244, 239, 234, 0.25)',
         '--shadow-soft': '0 6px 20px rgba(8, 6, 14, 0.38)',
         '--shadow-hover': '0 10px 28px rgba(8, 6, 14, 0.52)',
         '--success': '#52B788',
@@ -479,41 +483,43 @@
         '--danger': '#E76F51',
         '--badge-bg': '#E9B872',
         '--badge-text': '#1C1924',
-        '--scrollbar-thumb': 'rgba(244, 239, 234, 0.22)'
+        '--scrollbar-thumb': 'rgba(244, 239, 234, 0.24)'
       }
     },
     'true-night': {
       id: 'true-night',
       name: 'True Night OLED',
       subtitle: 'Pitch-black #000000 OLED dark mode',
+      isDark: true,
       defaultWallpaper: 'none',
       previewGradient: 'linear-gradient(135deg, #000000 0%, #09090D 55%, #181822 100%)',
-      accentDot: '#FF6B4A',
+      accentDot: '#FF5C39',
       vars: {
         '--bg-base': '#000000',
-        '--bg-secondary': '#08080A',
-        '--card-rgb': '12, 12, 16',
-        '--card-bg': 'rgba(12, 12, 16, 0.90)',
-        '--card-bg-hover': 'rgba(22, 22, 28, 0.96)',
-        '--card-bg-solid': '#0C0C10',
-        '--header-bg': 'rgba(0, 0, 0, 0.94)',
-        '--text-primary': '#EDEDEF',
-        '--text-secondary': '#A1A1AA',
-        '--text-muted': '#71717A',
-        '--accent': '#FF6B4A',
-        '--accent-hover': '#FF8266',
-        '--accent-soft': 'rgba(255, 107, 74, 0.16)',
-        '--accent-contrast': '#000000',
-        '--border-color': 'rgba(255, 255, 255, 0.09)',
-        '--border-strong': 'rgba(255, 255, 255, 0.18)',
-        '--shadow-soft': '0 6px 20px rgba(0, 0, 0, 0.75)',
-        '--shadow-hover': '0 10px 28px rgba(0, 0, 0, 0.90)',
+        '--bg-primary': '#0E0E14',
+        '--bg-secondary': '#0B0B10',
+        '--card-rgb': '16, 16, 22',
+        '--card-bg': 'rgba(16, 16, 22, 0.94)',
+        '--card-bg-hover': 'rgba(26, 26, 35, 0.98)',
+        '--card-bg-solid': '#121219',
+        '--header-bg': 'rgba(0, 0, 0, 0.96)',
+        '--text-primary': '#FFFFFF',
+        '--text-secondary': '#E4E4EA',
+        '--text-muted': '#A6A6B2',
+        '--accent': '#FF5C39',
+        '--accent-hover': '#FF7455',
+        '--accent-soft': 'rgba(255, 92, 57, 0.20)',
+        '--accent-contrast': '#FFFFFF',
+        '--border-color': 'rgba(255, 255, 255, 0.14)',
+        '--border-strong': 'rgba(255, 255, 255, 0.26)',
+        '--shadow-soft': '0 6px 20px rgba(0, 0, 0, 0.80)',
+        '--shadow-hover': '0 10px 28px rgba(0, 0, 0, 0.92)',
         '--success': '#34D399',
         '--warning': '#FBBF24',
-        '--danger': '#F87171',
-        '--badge-bg': '#FF6B4A',
-        '--badge-text': '#000000',
-        '--scrollbar-thumb': 'rgba(255, 255, 255, 0.18)'
+        '--danger': '#FF6B6B',
+        '--badge-bg': '#FF5C39',
+        '--badge-text': '#FFFFFF',
+        '--scrollbar-thumb': 'rgba(255, 255, 255, 0.24)'
       }
     }
   };
@@ -786,25 +792,33 @@
   function applyThemeAndWallpaper(doc, settings = {}) {
     const themeId = settings.theme && THEMES[settings.theme] ? settings.theme : 'warm-linen';
     const theme = THEMES[themeId];
+    const isDark = Boolean(theme.isDark);
     const root = doc.documentElement;
 
     // 1. Apply base theme CSS variables
     Object.entries(theme.vars).forEach(([key, val]) => {
       root.style.setProperty(key, val);
     });
+    if (!theme.vars['--bg-primary']) {
+      root.style.setProperty('--bg-primary', theme.vars['--card-bg-solid'] || theme.vars['--bg-base']);
+    }
+    root.setAttribute('data-color-scheme', isDark ? 'dark' : 'light');
+    root.style.colorScheme = isDark ? 'dark' : 'light';
 
     // 2. Dynamic card glass translucency & blur
     const cardStyle = settings.cardStyle || 'glassmorphism';
-    let defaultOpacity = 0.72;
-    if (cardStyle === 'glassmorphism') defaultOpacity = 0.58;
-    if (cardStyle === 'tinted-glass') defaultOpacity = 0.62;
-    if (cardStyle === 'outlined-editorial') defaultOpacity = 0.35;
-    if (cardStyle === 'warm-paper') defaultOpacity = 0.92;
+    let defaultOpacity = isDark ? 0.84 : 0.72;
+    if (cardStyle === 'glassmorphism') defaultOpacity = isDark ? 0.82 : 0.58;
+    if (cardStyle === 'tinted-glass') defaultOpacity = isDark ? 0.84 : 0.62;
+    if (cardStyle === 'outlined-editorial') defaultOpacity = isDark ? 0.68 : 0.35;
+    if (cardStyle === 'warm-paper') defaultOpacity = 0.94;
+    if (themeId === 'true-night') defaultOpacity = 0.94;
 
-    const cardOpacity = typeof settings.cardOpacity === 'number' ? settings.cardOpacity : defaultOpacity;
+    const rawOpacity = typeof settings.cardOpacity === 'number' ? settings.cardOpacity : defaultOpacity;
+    const cardOpacity = themeId === 'true-night' ? Math.max(0.88, rawOpacity) : rawOpacity;
     const cardRgb = theme.vars['--card-rgb'] || '255, 252, 247';
     root.style.setProperty('--card-bg', `rgba(${cardRgb}, ${cardOpacity})`);
-    root.style.setProperty('--card-bg-hover', `rgba(${cardRgb}, ${Math.min(0.98, cardOpacity + 0.16)})`);
+    root.style.setProperty('--card-bg-hover', `rgba(${cardRgb}, ${Math.min(0.99, cardOpacity + 0.14)})`);
 
     const cardBlur = typeof settings.cardBlur === 'number' ? settings.cardBlur : 16;
     root.style.setProperty('--card-blur', `${cardBlur}px`);
