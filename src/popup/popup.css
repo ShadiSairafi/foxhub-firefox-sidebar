@@ -2607,6 +2607,22 @@ html[data-sidebar="true"] .pm-resize-grip {
   opacity: 0;
 }
 
+:root[data-social-dark="true"] .pm-media-frame-wrap,
+:root[data-social-dark="true"] .pm-media-frame-pool,
+:root[data-social-dark="true"] .pm-media-frame {
+  background: #000000 !important;
+  color-scheme: dark !important;
+}
+
+:root[data-social-dark="false"] .pm-media-frame {
+  color-scheme: light;
+}
+
+:root[data-theme="true-night"] .pm-media-loader,
+:root[data-social-dark="true"] .pm-media-loader {
+  background: radial-gradient(circle at 50% 38%, #0E0E14 0%, #000000 100%) !important;
+}
+
 /* Keep media workspace alive in background when reading Mail so Spotify/YouTube keep playing */
 .pm-drawer.pm-workspace-keepalive {
   display: flex !important;

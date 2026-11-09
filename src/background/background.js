@@ -842,7 +842,21 @@ if (browser.webRequest) {
     const cookieIdx = headers.findIndex((h) => (h.name || '').toLowerCase() === 'cookie');
     const hasHeaderCookie = Boolean(cookieIdx >= 0 && headers[cookieIdx].value);
     const hasLiveCookies = Boolean(liveFrameCookies && liveFrameCookies.size > 0);
-    if ((!storeCookies || storeCookies.length === 0) && !hasHeaderCookie && !hasLiveCookies) return;
+    const socialTheme = currentSettings?.socialAppThemeMode || 'native';
+    const phLower = parsedUrl ? parsedUrl.hostname.toLowerCase() : '';
+    const hasDarkCookieOverride =
+      Boolean(parsedUrl && (socialTheme === 'true-night' || socialTheme === 'midnight-oled')) &&
+      (phLower === 'x.com' ||
+        phLower.endsWith('.x.com') ||
+        phLower === 'twitter.com' ||
+        phLower.endsWith('.twitter.com') ||
+        phLower === 'www.youtube.com' ||
+        phLower.endsWith('.youtube.com') ||
+        phLower === 'www.tiktok.com' ||
+        phLower.endsWith('.tiktok.com'));
+    if ((!storeCookies || storeCookies.length === 0) && !hasHeaderCookie && !hasLiveCookies && !hasDarkCookieOverride) {
+      return;
+    }
 
     const isGoogleMailOrAuth = Boolean(
       parsedUrl && (parsedUrl.hostname === 'mail.google.com' || parsedUrl.hostname === 'accounts.google.com')
@@ -896,12 +910,10 @@ if (browser.webRequest) {
       }
     }
     // Honor FoxHub's Social Dark Mode override (True Night OLED / Midnight OLED) on cookie-driven platforms (X Lights Out, YouTube SSR Dark, TikTok Dark)
-    const socialTheme = currentSettings?.socialAppThemeMode || 'native';
     if (parsedUrl && (socialTheme === 'true-night' || socialTheme === 'midnight-oled')) {
-      const ph = parsedUrl.hostname.toLowerCase();
-      if (ph === 'x.com' || ph.endsWith('.x.com') || ph === 'twitter.com' || ph.endsWith('.twitter.com')) {
+      if (phLower === 'x.com' || phLower.endsWith('.x.com') || phLower === 'twitter.com' || phLower.endsWith('.twitter.com')) {
         map.set('night_mode', '2');
-      } else if (ph === 'www.youtube.com' || ph.endsWith('.youtube.com')) {
+      } else if (phLower === 'www.youtube.com' || phLower.endsWith('.youtube.com')) {
         const prevPref = map.get('PREF') || '';
         const nextPref = prevPref
           ? /(^|&)f6=[^&]*/.test(prevPref)
@@ -909,7 +921,7 @@ if (browser.webRequest) {
             : `${prevPref}&f6=400`
           : 'f6=400';
         map.set('PREF', nextPref);
-      } else if (ph === 'www.tiktok.com' || ph.endsWith('.tiktok.com')) {
+      } else if (phLower === 'www.tiktok.com' || phLower.endsWith('.tiktok.com')) {
         map.set('tiktok_webapp_theme', 'dark');
       }
     }
@@ -1154,11 +1166,17 @@ if (browser.webRequest) {
 
   const rewriteSetCookieForIframe = (rawCookieVal, cookieOriginKey = '') => {
     if (!rawCookieVal) return rawCookieVal;
+    const isSocialDark =
+      currentSettings?.socialAppThemeMode === 'true-night' || currentSettings?.socialAppThemeMode === 'midnight-oled';
     const lines = String(rawCookieVal).split('\n');
     const outLines = lines.map((line) => {
+      let effectiveLine = line;
+      if (isSocialDark && cookieOriginKey === 'https://x.com' && /^\s*night_mode=[01]\b/i.test(effectiveLine)) {
+        effectiveLine = effectiveLine.replace(/^(\s*night_mode=)[01]\b/i, '$12');
+      }
       if (cookieOriginKey) {
-        const semi = line.indexOf(';');
-        const firstPart = semi >= 0 ? line.slice(0, semi) : line;
+        const semi = effectiveLine.indexOf(';');
+        const firstPart = semi >= 0 ? effectiveLine.slice(0, semi) : effectiveLine;
         const eq = firstPart.indexOf('=');
         if (eq > 0) {
           const cName = firstPart.slice(0, eq).trim();
@@ -1167,14 +1185,14 @@ if (browser.webRequest) {
             !cVal ||
             cVal === 'EXPIRED' ||
             cVal === 'deleted' ||
-            /;\s*Max-Age\s*=\s*-?0\b/i.test(line) ||
-            /;\s*Expires\s*=[^;]*1970/i.test(line);
+            /;\s*Max-Age\s*=\s*-?0\b/i.test(effectiveLine) ||
+            /;\s*Expires\s*=[^;]*1970/i.test(effectiveLine);
           if (cName) {
             updateLiveOriginCookie(cookieOriginKey, cName, isExpiredDirective ? 'EXPIRED' : cVal);
           }
         }
       }
-      let updated = line.replace(/;\s*SameSite\s*=\s*(Lax|Strict)/gi, '; SameSite=None');
+      let updated = effectiveLine.replace(/;\s*SameSite\s*=\s*(Lax|Strict)/gi, '; SameSite=None');
       if (!/;\s*SameSite\s*=/i.test(updated)) {
         updated += '; SameSite=None';
       }
@@ -1220,7 +1238,9 @@ if (browser.webRequest) {
             bootFilter.onstop = () => {
               try {
                 bootFilter.write(
-                  bootEncoder.encode('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>')
+                  bootEncoder.encode(
+                    '<!DOCTYPE html><html style="background:#000000;color-scheme:dark"><head><meta charset="utf-8"></head><body style="background:#000000;margin:0"></body></html>'
+                  )
                 );
               } catch (_) {}
               try {

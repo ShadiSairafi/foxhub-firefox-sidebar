@@ -804,6 +804,16 @@
     }
     root.setAttribute('data-color-scheme', isDark ? 'dark' : 'light');
     root.style.colorScheme = isDark ? 'dark' : 'light';
+    const socialMode = settings.socialAppThemeMode || 'native';
+    const isSocialDark = socialMode === 'true-night' || socialMode === 'midnight-oled';
+    const osDark = Boolean(
+      doc.defaultView &&
+        doc.defaultView.matchMedia &&
+        doc.defaultView.matchMedia('(prefers-color-scheme: dark)').matches
+    );
+    const wantIframeDarkScheme =
+      isSocialDark || (socialMode !== 'native' && isDark) || (socialMode === 'native' && osDark);
+    root.setAttribute('data-social-dark', wantIframeDarkScheme ? 'true' : 'false');
 
     // 2. Dynamic card glass translucency & blur
     const cardStyle = settings.cardStyle || 'glassmorphism';

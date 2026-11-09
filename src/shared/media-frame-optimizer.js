@@ -28,9 +28,26 @@
   // Never run in normal browser tabs or deeply nested ad/analytics/CAPTCHA sub-iframes
   if (!isDirectChildIframe && !isPocketMailSidebarTop && !isGoogleAccountWidgetIframe) return;
 
-  const isBgAudioFrame = typeof window.name === 'string' && window.name.startsWith('pm-bg-audio-');
-  const isFoxHubMediaFrame =
-    typeof window.name === 'string' && /^pm-(media-frame|bg-audio)-/.test(window.name);
+  const rawWindowName = typeof window.name === 'string' ? window.name : '';
+  const pmtIdx = rawWindowName.indexOf('__pmt=');
+  const cleanWindowName = pmtIdx >= 0 ? rawWindowName.slice(0, pmtIdx) : rawWindowName;
+  let initialSyncThemeMode = '';
+  let initialSyncAccent = '';
+  if (pmtIdx >= 0) {
+    try {
+      const metaPart = rawWindowName.slice(pmtIdx + 6);
+      const pmaIdx = metaPart.indexOf('__pma=');
+      if (pmaIdx >= 0) {
+        initialSyncThemeMode = decodeURIComponent(metaPart.slice(0, pmaIdx));
+        initialSyncAccent = decodeURIComponent(metaPart.slice(pmaIdx + 6));
+      } else {
+        initialSyncThemeMode = decodeURIComponent(metaPart);
+      }
+    } catch (_) {}
+  }
+
+  const isBgAudioFrame = cleanWindowName.startsWith('pm-bg-audio-');
+  const isFoxHubMediaFrame = /^pm-(media-frame|bg-audio)-/.test(cleanWindowName);
   let isFoxHubContext = isFoxHubMediaFrame || isPocketMailSidebarTop;
   if (isFoxHubContext) {
     try {
@@ -43,6 +60,21 @@
       }
     } catch (_) {}
   }
+  if (isFoxHubContext) {
+    try {
+      if (initialSyncThemeMode) {
+        window.sessionStorage.setItem('__pm_social_theme', initialSyncThemeMode);
+      } else {
+        initialSyncThemeMode = window.sessionStorage.getItem('__pm_social_theme') || '';
+      }
+      if (initialSyncAccent) {
+        window.sessionStorage.setItem('__pm_social_accent', initialSyncAccent);
+      } else {
+        initialSyncAccent = window.sessionStorage.getItem('__pm_social_accent') || '';
+      }
+    } catch (_) {}
+  }
+  let initialThemeResolved = !isFoxHubContext || Boolean(initialSyncThemeMode);
   const initialAutoplayPolicy =
     typeof navigator.getAutoplayPolicy === 'function' ? navigator.getAutoplayPolicy('mediaelement') : 'allowed';
   const isMirrorAudioHost = host.includes('spotify.com') || host.includes('youtube.com');
@@ -131,7 +163,7 @@
     pageWin.__pmSpBridgeEnabled = true;
 
     const IS_YT = host.includes('youtube.com');
-    const frameName = window.name || '';
+    const frameName = cleanWindowName;
     const mediaEls = []; // Xray-wrapped hooked music elements (most recent last)
     const mirroredEls = new WeakSet(); // YouTube main-player elements whose MediaSource is mirrored
     const lockedEls = new WeakSet();
@@ -984,7 +1016,7 @@
         {
           source: 'pocketmail-media-frame',
           type,
-          flatFrameName: isDirectChildIframe ? (window.name || '') : '',
+          flatFrameName: isDirectChildIframe ? cleanWindowName : '',
           url: window.location.href,
           ...payload
         },
@@ -1143,10 +1175,10 @@
         clearInterval(earlyPaintTimer);
         return;
       }
+      if (isFoxHubContext && !initialThemeResolved) return;
+      if (document.documentElement && document.documentElement.hasAttribute('data-pm-x-light-pending')) return;
       const hasBodyContent = Boolean(document.body && document.body.children && document.body.children.length > 0);
-      const isReadyNow = host.includes('telegram.org')
-        ? hasBodyContent && isTelegramVisuallyMounted()
-        : hasBodyContent;
+      const isReadyNow = hasBodyContent && isAppVisuallyPainted();
       if (isReadyNow) {
         earlyReadySent = true;
         clearInterval(earlyPaintTimer);
@@ -1208,8 +1240,20 @@
 
         if (isSwBootstrap) {
           if (document.documentElement) {
-            document.documentElement.style.background = '#141110';
+            const isBootDark =
+              initialSyncThemeMode === 'true-night' || initialSyncThemeMode === 'midnight-oled';
+            document.documentElement.style.background = isBootDark ? '#000000' : '#141110';
             document.documentElement.style.visibility = 'hidden';
+          }
+          if (
+            (initialSyncThemeMode === 'true-night' || initialSyncThemeMode === 'midnight-oled') &&
+            (host.includes('x.com') || host.includes('twitter.com'))
+          ) {
+            try {
+              const cDom = host.includes('twitter.com') ? '.twitter.com' : '.x.com';
+              document.cookie = 'night_mode=; path=/; max-age=0; SameSite=None; Secure';
+              document.cookie = `night_mode=2; domain=${cDom}; path=/; max-age=31536000; SameSite=None; Secure`;
+            } catch (_) {}
           }
           const params = new URLSearchParams(window.location.search || '');
           const targetUrl = params.get('pm_target') || `${window.location.origin}/`;
@@ -3116,6 +3160,44 @@
   let activeSocialAccent = '#FF5C39';
   let isSyncingPlatformDarkDom = false;
   let genericInvertTimer = null;
+  let matchMediaHookInstalled = false;
+
+  function syncPageMatchMediaDarkFlag(enableDark) {
+    if (!isFoxHubContext || !window.wrappedJSObject || typeof exportFunction !== 'function') return;
+    try {
+      const pageWin = window.wrappedJSObject;
+      pageWin.__pmForceDarkColorScheme = Boolean(enableDark);
+      if (!matchMediaHookInstalled && typeof pageWin.matchMedia === 'function') {
+        matchMediaHookInstalled = true;
+        const origMatchMedia = pageWin.matchMedia.bind(pageWin);
+        exportFunction(
+          function (query) {
+            const realMql = origMatchMedia(query);
+            if (!pageWin.__pmForceDarkColorScheme || !realMql) return realMql;
+            const q = String(query || '').toLowerCase();
+            if (q.includes('prefers-color-scheme')) {
+              const isDarkQuery = /prefers-color-scheme\s*:\s*dark/.test(q);
+              const isLightQuery = /prefers-color-scheme\s*:\s*light/.test(q);
+              if (isDarkQuery || isLightQuery) {
+                try {
+                  Object.defineProperty(realMql, 'matches', {
+                    get: exportFunction(
+                      () => (pageWin.__pmForceDarkColorScheme ? isDarkQuery : origMatchMedia(query).matches),
+                      pageWin
+                    ),
+                    configurable: true
+                  });
+                } catch (_) {}
+              }
+            }
+            return realMql;
+          },
+          pageWin,
+          { defineAs: 'matchMedia' }
+        );
+      }
+    } catch (_) {}
+  }
 
   function getCookieVal(name) {
     try {
@@ -3167,12 +3249,17 @@
     if (!docEl) return;
     const enableDark = activeSocialThemeMode === 'true-night' || activeSocialThemeMode === 'midnight-oled';
     if (!enableDark || isKnownBuiltInHost || host.includes('twitch.tv') || host.includes('chatgpt.com') || host.includes('openai.com')) {
-      docEl.removeAttribute('data-pm-smart-invert');
+      if (docEl.hasAttribute('data-pm-smart-invert')) {
+        docEl.removeAttribute('data-pm-smart-invert');
+      }
       return;
     }
     try {
+      const themeStyleEl = document.getElementById('pm-social-app-theme-css');
+      if (themeStyleEl) themeStyleEl.disabled = true;
       const htmlBg = parseRgbComponents(window.getComputedStyle(docEl).backgroundColor);
       const bodyBg = document.body ? parseRgbComponents(window.getComputedStyle(document.body).backgroundColor) : null;
+      if (themeStyleEl) themeStyleEl.disabled = false;
       const effective = bodyBg && bodyBg.a > 0.15 ? bodyBg : htmlBg && htmlBg.a > 0.15 ? htmlBg : null;
       if (!effective || computeLuminance(effective) > 0.52) {
         if (docEl.getAttribute('data-pm-smart-invert') !== '1') {
@@ -3189,6 +3276,7 @@
     const docEl = document.documentElement;
     if (!docEl) return;
     isSyncingPlatformDarkDom = true;
+    syncPageMatchMediaDarkFlag(enableDark);
     try {
       if (host.includes('youtube.com')) {
         if (enableDark) {
@@ -3210,6 +3298,7 @@
                   ? prevPref.replace(/(^|&)f6=[^&]*/, '$1f6=400')
                   : `${prevPref}&f6=400`
                 : 'f6=400';
+              document.cookie = 'PREF=; path=/; max-age=0; SameSite=None; Secure';
               document.cookie = `PREF=${nextPref}; domain=.youtube.com; path=/; max-age=31536000; SameSite=None; Secure`;
             }
           } catch (_) {}
@@ -3232,7 +3321,12 @@
               }
             } catch (_) {}
             try {
+              // Expire any host-only night_mode=0 cookie first so it can never shadow domain=.x.com night_mode=2!
+              document.cookie = 'night_mode=; path=/; max-age=0; SameSite=None; Secure';
               document.cookie = `night_mode=2; domain=${cookieDomain}; path=/; max-age=31536000; SameSite=None; Secure`;
+              if (getCookieVal('night_mode') !== '2') {
+                document.cookie = 'night_mode=2; path=/; max-age=31536000; SameSite=None; Secure';
+              }
               if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
                 browser.runtime
                   .sendMessage({
@@ -3251,7 +3345,11 @@
             try {
               if (window.sessionStorage.getItem('pm_x_reloaded_for_dark') !== '1') {
                 window.sessionStorage.setItem('pm_x_reloaded_for_dark', '1');
-                setTimeout(() => window.location.reload(), 35);
+                // Mask immediately in #000000 and raise parent loader curtain so zero white flash is visible during reload!
+                docEl.style.setProperty('background', '#000000', 'important');
+                docEl.style.setProperty('opacity', '0', 'important');
+                notifyParent('PM_FRAME_NAV_START', { title: 'Applying Dark Mode…' });
+                setTimeout(() => window.location.reload(), 16);
               }
             } catch (_) {}
           } else {
@@ -3271,6 +3369,7 @@
             window.sessionStorage.removeItem('pm_x_reloaded_for_dark');
             if (prevNight !== null) {
               window.sessionStorage.removeItem('pm_x_prev_night');
+              document.cookie = 'night_mode=; path=/; max-age=0; SameSite=None; Secure';
               document.cookie = `night_mode=${prevNight}; domain=${cookieDomain}; path=/; max-age=31536000; SameSite=None; Secure`;
               if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
                 browser.runtime
@@ -3282,7 +3381,8 @@
                   .catch(() => {});
               }
               if (prevNight !== '2') {
-                setTimeout(() => window.location.reload(), 35);
+                notifyParent('PM_FRAME_NAV_START', { title: 'Restoring Theme…' });
+                setTimeout(() => window.location.reload(), 16);
               }
             }
           } catch (_) {}
@@ -3404,6 +3504,7 @@
           }
           try {
             if (getCookieVal('tiktok_webapp_theme') !== 'dark') {
+              document.cookie = 'tiktok_webapp_theme=; path=/; max-age=0; SameSite=None; Secure';
               document.cookie =
                 'tiktok_webapp_theme=dark; domain=.tiktok.com; path=/; max-age=31536000; SameSite=None; Secure';
             }
@@ -3509,7 +3610,13 @@
 
   function injectAppThemeCss(themeMode, accentColor) {
     activeSocialThemeMode = themeMode || 'native';
-    activeSocialAccent = accentColor || '#FF5C39';
+    activeSocialAccent = accentColor || activeSocialAccent || '#FF5C39';
+    if (isFoxHubContext) {
+      try {
+        window.sessionStorage.setItem('__pm_social_theme', activeSocialThemeMode);
+        window.sessionStorage.setItem('__pm_social_accent', activeSocialAccent);
+      } catch (_) {}
+    }
     const isDarkOverride = activeSocialThemeMode === 'true-night' || activeSocialThemeMode === 'midnight-oled';
 
     syncPlatformDarkModeDom(isDarkOverride);
@@ -3529,8 +3636,10 @@
       themeStyle = document.createElement('style');
       themeStyle.id = 'pm-social-app-theme-css';
       root.appendChild(themeStyle);
+    } else if (document.head && themeStyle.parentNode !== document.head) {
+      document.head.appendChild(themeStyle);
     }
-    if (document.documentElement) {
+    if (document.documentElement && document.documentElement.getAttribute('data-pm-social-theme') !== activeSocialThemeMode) {
       document.documentElement.setAttribute('data-pm-social-theme', activeSocialThemeMode);
     }
     const accent = activeSocialAccent;
@@ -3584,27 +3693,24 @@
           z-index: 2147483645;
         }
       `;
-    } else if (activeSocialThemeMode === 'midnight-oled') {
-      tCss += `
-        html {
-          color-scheme: dark !important;
-          filter: contrast(1.04) saturate(1.06) !important;
-        }
-        body::after {
-          content: "";
-          position: fixed;
-          inset: 0;
-          background: radial-gradient(circle at top left, rgba(108, 92, 231, 0.08), rgba(0, 206, 209, 0.03) 65%, transparent);
-          pointer-events: none;
-          z-index: 2147483645;
-        }
-      `;
-    } else if (activeSocialThemeMode === 'true-night') {
+    } else if (activeSocialThemeMode === 'true-night' || activeSocialThemeMode === 'midnight-oled') {
       tCss += `
         :root, html {
           color-scheme: dark !important;
         }
       `;
+      if (activeSocialThemeMode === 'midnight-oled') {
+        tCss += `
+          body::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(circle at top left, rgba(108, 92, 231, 0.08), rgba(0, 206, 209, 0.03) 65%, transparent);
+            pointer-events: none;
+            z-index: 2147483645;
+          }
+        `;
+      }
 
       if (host.includes('youtube.com')) {
         tCss += `
@@ -3876,18 +3982,28 @@
     themeStyle.textContent = tCss;
   }
 
-  // Immediately read socialAppThemeMode from extension storage at document_start so websites boot in Dark Mode right away,
-  // and keep dark mode attributes intact across SPA hydration & live theme toggles!
+  // 1. ZERO-FLASH SYNCHRONOUS 0.00ms BOOT AT document_start:
+  // Apply cookies (night_mode=2, PREF=f6=400, tiktok_webapp_theme=dark), matchMedia('(prefers-color-scheme: dark)'),
+  // and OLED #000000 CSS synchronously BEFORE <head>, <body>, or any page script executes!
+  if (isFoxHubContext && !isSwBootstrap && initialSyncThemeMode && initialSyncThemeMode !== 'native') {
+    injectAppThemeCss(initialSyncThemeMode, initialSyncAccent || '#FF5C39');
+  }
+
+  // 2. Async storage sync & live updates across SPA hydration and theme toggles
   if (isFoxHubContext && !isSwBootstrap && typeof browser !== 'undefined' && browser.storage && browser.storage.local) {
     browser.storage.local
       .get('settings')
       .then((res) => {
+        initialThemeResolved = true;
         const s = (res && res.settings) || {};
-        if (s.socialAppThemeMode && s.socialAppThemeMode !== 'native') {
-          injectAppThemeCss(s.socialAppThemeMode, activeSocialAccent);
+        const storedMode = s.socialAppThemeMode || 'native';
+        if (storedMode !== activeSocialThemeMode) {
+          injectAppThemeCss(storedMode, activeSocialAccent);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        initialThemeResolved = true;
+      });
 
     if (browser.storage.onChanged) {
       browser.storage.onChanged.addListener((changes, area) => {
@@ -4454,11 +4570,15 @@
         return Boolean(document.querySelector('shreddit-app, rs-app, main, [role="main"], reddit-header-large'));
       }
       if (host.includes('youtube.com')) {
-        return Boolean(document.querySelector('ytd-app, ytmusic-app, ytd-page-manager, video'));
+        return Boolean(
+          document.querySelector('ytd-masthead #container, ytd-page-manager > *, ytmusic-app, video, form')
+        );
       }
       if (host.includes('x.com') || host.includes('twitter.com')) {
         return Boolean(
-          document.querySelector('#react-root main, [data-testid="primaryColumn"], [data-testid="DMDrawer"], header[role="banner"], form')
+          document.querySelector(
+            '#react-root main, [data-testid="primaryColumn"], [data-testid="DMDrawer"], header[role="banner"], [data-testid="loginButton"], [data-testid="google_sign_in_container"], form, input'
+          )
         );
       }
       if (host.includes('tiktok.com')) {
@@ -4486,6 +4606,8 @@
 
   function checkAndNotifyVisualReady() {
     if (visualReadySent) return;
+    if (isFoxHubContext && !initialThemeResolved) return;
+    if (document.documentElement && document.documentElement.hasAttribute('data-pm-x-light-pending')) return;
     if (isAppVisuallyPainted()) {
       visualReadySent = true;
       notifyParent('PM_FRAME_VISUAL_READY', {
@@ -6432,7 +6554,7 @@
                   {
                     source: 'pocketmail-media-frame',
                     type: 'PM_BG_AUDIO_CHUNK',
-                    flatFrameName: window.name || '',
+                    flatFrameName: cleanWindowName,
                     chunk: buf
                   },
                   '*',
@@ -6714,7 +6836,7 @@
                     {
                       source: 'pocketmail-media-frame',
                       type: 'PM_SP_EME_BRIDGE',
-                      flatFrameName: window.name || '',
+                      flatFrameName: cleanWindowName,
                       bridgeType: 'USER_PLAY_INTENT'
                     },
                     '*'
@@ -6758,7 +6880,7 @@
                     {
                       source: 'pocketmail-media-frame',
                       type: 'PM_SP_EME_BRIDGE',
-                      flatFrameName: window.name || '',
+                      flatFrameName: cleanWindowName,
                       bridgeType: 'USER_PLAY_INTENT'
                     },
                     '*'
