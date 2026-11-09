@@ -2025,8 +2025,22 @@ function getSpBufferedEnd(sp) {
 let isAutoPausedByTabAudio = false;
 let manualOverrideWhileTabAudible = false;
 let lastExternalTabAudioCheckAt = 0;
+let pendingTabResumeTimer = null;
+let silentMediaRecheckTimer = null;
+const knownActiveMediaTabIds = new Set();
+const audibleOverrideTabIds = new Set();
 const tabAutoPausedSpAppIds = new Set();
 const tabAutoPausedMseAppIds = new Set();
+
+function isExternalBrowserTab(t) {
+  if (!t) return false;
+  if (t.mutedInfo && t.mutedInfo.muted) return false;
+  if (t.windowId && companionWindowIds.has(t.windowId)) return false;
+  if (t.id && t.id === activeCompanionTabId) return false;
+  const url = String(t.url || '');
+  if (url.startsWith('moz-extension://')) return false;
+  return true;
+}
 
 function getTabAudioBehavior() {
   if (
@@ -2494,7 +2508,7 @@ function initSpPlayerInstance(sp) {
   sp.mkReadyPromise = (async () => {
     try {
       const v = document.createElement('video');
-      v.autoplay = !sp.isStaging;
+      v.autoplay = false;
       v.muted = sp.isStaging ? true : sp.desiredMuted;
       v.volume = sp.isStaging ? 0 : sp.desiredVolume;
       document.body.appendChild(v);
@@ -2654,6 +2668,8 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
   if (bt === 'USER_PLAY_INTENT') {
     if (isAutoPausedByTabAudio) {
       manualOverrideWhileTabAudible = true;
+      audibleOverrideTabIds.clear();
+      knownActiveMediaTabIds.forEach((tid) => audibleOverrideTabIds.add(tid));
     }
     tabAutoPausedSpAppIds.delete(appId);
     if (bgStagingSpPlayers.has(appId)) {
@@ -2686,7 +2702,9 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       activeSp.awaitingBgFrameHandoff = true;
       activeSp.handoffStartedAt = Date.now();
       activeSp.handoffSource = 'sidebar';
-      activeSp.remotePaused = false;
+      if (!isTabAutoPauseEnforced()) {
+        activeSp.remotePaused = false;
+      }
     }
   }
 
@@ -3468,7 +3486,7 @@ window.addEventListener('message', (e) => {
               if (player.queue.length > 0 && !player.sb.updating) {
                 player.sb.appendBuffer(player.queue.shift());
               }
-              if (player.audioEl.paused) {
+              if (player.audioEl.paused && !isTabAutoPauseEnforced()) {
                 player.audioEl.play().catch(() => {});
               }
             } catch (_) {}
@@ -3490,7 +3508,7 @@ window.addEventListener('message', (e) => {
     const bgEntry = bgAudioPool.get(appId);
     const prevSt = liveMediaPlaybackState.get(appId);
     liveMediaPlaybackState.set(appId, {
-      isPlaying: true,
+      isPlaying: !isTabAutoPauseEnforced(),
       currentTime: prevSt?.currentTime || 0,
       resumeUrl: bgEntry?.url || prevSt?.resumeUrl || '',
       title: bgEntry?.title || prevSt?.title || '',
@@ -3509,7 +3527,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         snoozed: localOverlay.snoozed,
         audibleAppId: getAudibleBgAudioAppId(),
         sidebarOpenCount: sidebarPortCount,
-        isAutoPausedByTabAudio
+        isAutoPausedByTabAudio: isTabAutoPauseEnforced()
       });
 
     case 'PREWARM_APP_SESSION':
@@ -3685,6 +3703,12 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         }
         refreshBgAudioIndicator();
         if (patch.autoPauseOnTabAudio !== undefined || patch.tabAudioBehavior !== undefined) {
+          manualOverrideWhileTabAudible = false;
+          audibleOverrideTabIds.clear();
+          const nextBehavior = getTabAudioBehavior();
+          if (nextBehavior !== 'off') {
+            isAutoPausedByTabAudio = false;
+          }
           checkExternalTabAudioState();
         }
         if (patch.pollIntervalSeconds !== undefined && patch.pollIntervalSeconds !== prevPoll) {
@@ -4153,6 +4177,27 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       });
     }
 
+    case 'EXTERNAL_TAB_MEDIA_PLAYING': {
+      if (sender && sender.tab && isExternalBrowserTab(sender.tab)) {
+        const tid = sender.tab.id;
+        if (typeof tid === 'number') {
+          knownActiveMediaTabIds.add(tid);
+        }
+        clearTimeout(pendingTabResumeTimer);
+        manualOverrideWhileTabAudible = false;
+        audibleOverrideTabIds.clear();
+        checkExternalTabAudioState();
+      }
+      return Promise.resolve({ ok: true });
+    }
+
+    case 'EXTERNAL_TAB_MEDIA_STOPPED': {
+      if (sender && sender.tab) {
+        checkExternalTabAudioState();
+      }
+      return Promise.resolve({ ok: true });
+    }
+
     default:
       return Promise.resolve({ ok: false });
   }
@@ -4327,8 +4372,12 @@ function resumeAllFromTabAudioAutoPause() {
 }
 
 async function checkExternalTabAudioState() {
+  clearTimeout(silentMediaRecheckTimer);
   const behavior = getTabAudioBehavior();
   if (behavior === 'off') {
+    clearTimeout(pendingTabResumeTimer);
+    knownActiveMediaTabIds.clear();
+    audibleOverrideTabIds.clear();
     if (isAutoPausedByTabAudio) {
       resumeAllFromTabAudioAutoPause();
     }
@@ -4336,17 +4385,44 @@ async function checkExternalTabAudioState() {
   }
   try {
     const audibleTabs = await browser.tabs.query({ audible: true });
-    const externalAudible = (audibleTabs || []).filter((t) => {
-      if (!t || !t.audible) return false;
-      if (t.mutedInfo && t.mutedInfo.muted) return false;
-      if (t.windowId && companionWindowIds.has(t.windowId)) return false;
-      if (t.id && t.id === activeCompanionTabId) return false;
-      const url = String(t.url || '');
-      if (url.startsWith('moz-extension://')) return false;
-      return true;
+    const externalAudible = (audibleTabs || []).filter((t) => Boolean(t && t.audible && isExternalBrowserTab(t)));
+    externalAudible.forEach((t) => {
+      if (typeof t.id === 'number') {
+        knownActiveMediaTabIds.add(t.id);
+        if (manualOverrideWhileTabAudible && !audibleOverrideTabIds.has(t.id)) {
+          manualOverrideWhileTabAudible = false;
+          audibleOverrideTabIds.clear();
+        }
+      }
     });
 
-    if (externalAudible.length > 0) {
+    // If Firefox temporarily dropped tab.audible=false (e.g. quiet music video intro/scene, seeking, or buffering),
+    // query previously active media tabs before falsely unpausing Spotify!
+    if (externalAudible.length === 0 && knownActiveMediaTabIds.size > 0) {
+      const candidateIds = Array.from(knownActiveMediaTabIds);
+      for (let i = 0; i < candidateIds.length; i++) {
+        const tid = candidateIds[i];
+        const tabInfo = await browser.tabs.get(tid).catch(() => null);
+        if (!isExternalBrowserTab(tabInfo)) {
+          knownActiveMediaTabIds.delete(tid);
+          audibleOverrideTabIds.delete(tid);
+          continue;
+        }
+        const mediaCheck = await Promise.race([
+          browser.tabs.sendMessage(tid, { type: 'CHECK_TAB_HAS_ACTIVE_MEDIA' }).catch(() => null),
+          new Promise((resolve) => setTimeout(() => resolve(null), 220))
+        ]);
+        if (!(mediaCheck && mediaCheck.hasActiveMedia)) {
+          knownActiveMediaTabIds.delete(tid);
+          audibleOverrideTabIds.delete(tid);
+        }
+      }
+    }
+
+    const hasActiveExternalMedia = externalAudible.length > 0 || knownActiveMediaTabIds.size > 0;
+
+    if (hasActiveExternalMedia) {
+      clearTimeout(pendingTabResumeTimer);
       if (!manualOverrideWhileTabAudible) {
         const anyBgStillAudible = Boolean(getAudibleBgAudioAppId());
         if (!isAutoPausedByTabAudio || anyBgStillAudible) {
@@ -4354,16 +4430,26 @@ async function checkExternalTabAudioState() {
           pauseAllForTabAudioAutoPause(behavior === 'pause-only');
         }
       }
+      if (externalAudible.length === 0 && knownActiveMediaTabIds.size > 0) {
+        silentMediaRecheckTimer = setTimeout(checkExternalTabAudioState, 1200);
+      }
     } else {
       manualOverrideWhileTabAudible = false;
+      audibleOverrideTabIds.clear();
       if (isAutoPausedByTabAudio) {
+        clearTimeout(pendingTabResumeTimer);
         if (behavior === 'pause-only') {
           isAutoPausedByTabAudio = false;
           tabAutoPausedSpAppIds.clear();
           tabAutoPausedMseAppIds.clear();
           refreshBgAudioIndicator();
         } else {
-          resumeAllFromTabAudioAutoPause();
+          // Clean 340ms settle debounce prevents quarter-second blips during YouTube playlist track transitions
+          pendingTabResumeTimer = setTimeout(() => {
+            if (isAutoPausedByTabAudio && knownActiveMediaTabIds.size === 0) {
+              resumeAllFromTabAudioAutoPause();
+            }
+          }, 340);
         }
       }
     }
@@ -4372,14 +4458,20 @@ async function checkExternalTabAudioState() {
 
 if (browser.tabs && browser.tabs.onUpdated) {
   browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.audible === true) {
-      const isCompanion =
-        (tab && tab.windowId && companionWindowIds.has(tab.windowId)) ||
-        tabId === activeCompanionTabId ||
-        String(tab?.url || '').startsWith('moz-extension://');
-      if (!isCompanion && !(tab?.mutedInfo && tab.mutedInfo.muted)) {
+    if (changeInfo.audible === true && isExternalBrowserTab(tab)) {
+      knownActiveMediaTabIds.add(tabId);
+      clearTimeout(pendingTabResumeTimer);
+      if (!audibleOverrideTabIds.has(tabId)) {
         manualOverrideWhileTabAudible = false;
+        audibleOverrideTabIds.clear();
       }
+    }
+    if (changeInfo.mutedInfo && changeInfo.mutedInfo.muted) {
+      knownActiveMediaTabIds.delete(tabId);
+      audibleOverrideTabIds.delete(tabId);
+    }
+    if (changeInfo.status === 'loading' && changeInfo.url) {
+      knownActiveMediaTabIds.delete(tabId);
     }
     if (
       changeInfo.audible !== undefined ||
@@ -4398,7 +4490,9 @@ if (browser.tabs && browser.tabs.onActivated) {
 }
 
 if (browser.tabs && browser.tabs.onRemoved) {
-  browser.tabs.onRemoved.addListener(() => {
+  browser.tabs.onRemoved.addListener((tabId) => {
+    knownActiveMediaTabIds.delete(tabId);
+    audibleOverrideTabIds.delete(tabId);
     setTimeout(checkExternalTabAudioState, 60);
   });
 }

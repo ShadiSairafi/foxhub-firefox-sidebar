@@ -25,8 +25,95 @@
     isTopFrame &&
     (window.location.hash.includes('pm-sidebar') || window.name === 'pm-opera-sidebar');
 
-  // Never run in normal browser tabs or deeply nested ad/analytics/CAPTCHA sub-iframes
-  if (!isDirectChildIframe && !isPocketMailSidebarTop && !isGoogleAccountWidgetIframe) return;
+  // Passive External Browser Tab Media Watcher (0 DOM/CSS touch): notifies FoxHub immediately when an unmuted
+  // video/audio starts or stops in a normal browser tab and prevents false Spotify resumes during quiet video scenes!
+  function installExternalTabMediaWatcher() {
+    let lastPlayNotifyAt = 0;
+    let pauseReportTimer = null;
+
+    const isAudiblePlayingElement = (el) => {
+      if (!el || el.paused || el.ended) return false;
+      if (el.muted || Number(el.volume) === 0) return false;
+      if (el.mozHasAudio === false) return false;
+      return true;
+    };
+
+    const hasAnyActiveAudibleMediaHere = () => {
+      try {
+        const els = document.querySelectorAll('video, audio');
+        for (let i = 0; i < els.length; i++) {
+          if (isAudiblePlayingElement(els[i])) return true;
+        }
+      } catch (_) {}
+      return false;
+    };
+
+    const notifyTabMediaPlaying = (ev) => {
+      const el = ev && ev.target;
+      if (!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return;
+      if (!isAudiblePlayingElement(el)) return;
+      const now = Date.now();
+      if (now - lastPlayNotifyAt < 350) return;
+      lastPlayNotifyAt = now;
+      clearTimeout(pauseReportTimer);
+      try {
+        browser.runtime.sendMessage({ type: 'EXTERNAL_TAB_MEDIA_PLAYING' }).catch(() => {});
+      } catch (_) {}
+    };
+
+    const notifyTabMediaStopped = (ev) => {
+      const el = ev && ev.target;
+      if (!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return;
+      clearTimeout(pauseReportTimer);
+      pauseReportTimer = setTimeout(() => {
+        if (!hasAnyActiveAudibleMediaHere()) {
+          try {
+            browser.runtime.sendMessage({ type: 'EXTERNAL_TAB_MEDIA_STOPPED' }).catch(() => {});
+          } catch (_) {}
+        }
+      }, 220);
+    };
+
+    window.addEventListener('playing', notifyTabMediaPlaying, { capture: true, passive: true });
+    window.addEventListener(
+      'volumechange',
+      (ev) => {
+        const el = ev && ev.target;
+        if (!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return;
+        if (isAudiblePlayingElement(el)) {
+          notifyTabMediaPlaying(ev);
+        } else {
+          notifyTabMediaStopped(ev);
+        }
+      },
+      { capture: true, passive: true }
+    );
+    window.addEventListener('pause', notifyTabMediaStopped, { capture: true, passive: true });
+    window.addEventListener('ended', notifyTabMediaStopped, { capture: true, passive: true });
+    window.addEventListener('emptied', notifyTabMediaStopped, { capture: true, passive: true });
+    window.addEventListener(
+      'timeupdate',
+      (ev) => {
+        if (Date.now() - lastPlayNotifyAt < 1800) return;
+        const el = ev && ev.target;
+        if (el && (el.tagName === 'VIDEO' || el.tagName === 'AUDIO') && isAudiblePlayingElement(el)) {
+          notifyTabMediaPlaying(ev);
+        }
+      },
+      { capture: true, passive: true }
+    );
+
+    try {
+      browser.runtime.onMessage.addListener((msg) => {
+        if (msg && msg.type === 'CHECK_TAB_HAS_ACTIVE_MEDIA') {
+          if (hasAnyActiveAudibleMediaHere()) {
+            return Promise.resolve({ hasActiveMedia: true });
+          }
+        }
+        return undefined;
+      });
+    } catch (_) {}
+  }
 
   const rawWindowName = typeof window.name === 'string' ? window.name : '';
   const pmtIdx = rawWindowName.indexOf('__pmt=');
@@ -59,6 +146,14 @@
         isFoxHubContext = true;
       }
     } catch (_) {}
+  }
+
+  // Never run FoxHub sidebar CSS/DOM optimizations in normal browser tabs or nested third-party iframes
+  if (!isFoxHubContext && !isGoogleAccountWidgetIframe) {
+    if (isTopFrame || isDirectChildIframe) {
+      installExternalTabMediaWatcher();
+    }
+    return;
   }
   if (isFoxHubContext) {
     try {
@@ -191,7 +286,6 @@
 
     const recordUserGesture = () => {
       lastUserGestureAt = Date.now();
-      mirrorAutoPausedByTab = false;
     };
     window.addEventListener('pointerdown', recordUserGesture, { capture: true, passive: true });
     window.addEventListener('mousedown', recordUserGesture, { capture: true, passive: true });
@@ -553,7 +647,7 @@
       });
       el.addEventListener('play', () => {
         if (isFrameUnloading) return;
-        if (IS_YT && !isYtPlayableEl(el)) {
+        if (mirrorAutoPausedByTab || (IS_YT && !isYtPlayableEl(el))) {
           try {
             suppressPauseEvent.add(el);
             el.pause();
@@ -572,7 +666,7 @@
       });
       el.addEventListener('playing', () => {
         if (isFrameUnloading) return;
-        if (IS_YT && !isYtPlayableEl(el)) {
+        if (mirrorAutoPausedByTab || (IS_YT && !isYtPlayableEl(el))) {
           try {
             suppressPauseEvent.add(el);
             el.pause();
@@ -815,7 +909,7 @@
       }
       const origPlay = proto.play;
       define(proto, 'play', function () {
-        if (IS_YT && !isYtPlayableEl(this)) {
+        if (mirrorAutoPausedByTab || (IS_YT && !isYtPlayableEl(this))) {
           try {
             suppressPauseEvent.add(this);
             this.pause();
@@ -829,7 +923,7 @@
           applyPendingYtSeek(this);
         }
         const p = origPlay.call(this);
-        if (isMusic && this.currentTime > 0 && !isFrameUnloading) {
+        if (isMusic && this.currentTime > 0 && !isFrameUnloading && !mirrorAutoPausedByTab) {
           mirrorWasPlaying = true;
           postBridge('SYNC_TIME', { currentTime: this.currentTime, paused: false });
         }
@@ -6604,9 +6698,30 @@
   let sidebarAutoResumeRequested = false;
   let sidebarAutoResumeRequestedAt = 0;
   let spAutoClickInFlight = false;
+  let isTabAudioAutoPaused = false;
+  let spTabPauseVerifyTimer = null;
   let lastSpotifyAutoResumeClickAt = 0;
   let spHydratedAt = 0;
   let lastAutoPlayedWatchKey = '';
+
+  function clickSpotifyToggleOnce(wantPlaying) {
+    const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+    if (!spToggle || spToggle.disabled) return false;
+    const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+    const isPlayingUi = aria.includes('pause') || aria.includes('stop');
+    const isPausedUi = aria.includes('play') && !aria.includes('pause');
+    if (wantPlaying && !isPausedUi) return false;
+    if (!wantPlaying && !isPlayingUi) return false;
+    spAutoClickInFlight = true;
+    try {
+      spToggle.click();
+      return true;
+    } finally {
+      setTimeout(() => {
+        spAutoClickInFlight = false;
+      }, 240);
+    }
+  }
 
   function getActiveMediaElement() {
     if (host.includes('youtube.com') && !host.includes('music.youtube.com')) {
@@ -6758,7 +6873,7 @@
         currentTime = Math.floor(mediaEl.currentTime || 0);
         if (!mediaEl.paused && !mediaEl.ended) {
           isPlaying = true;
-        } else if (bgAudioMseBridgeStarted && mediaEl.paused && !mediaEl.ended && mediaEl.readyState >= 2) {
+        } else if (!isTabAudioAutoPaused && bgAudioMseBridgeStarted && mediaEl.paused && !mediaEl.ended && mediaEl.readyState >= 2) {
           // Keep background bridge video playing if the page's UI framework transiently paused it during hydration
           mediaEl.play().catch(() => {});
           isPlaying = true;
@@ -6859,8 +6974,8 @@
         autoplayBlocked: false
       });
 
-      // 1. If running inside Background Audio Keep-Alive Engine (when sidebar is closed), auto-resume playback ONCE when ready (never fight a later user pause!)
-      if (!bgAudioAutoResumed && isBgAudioFrame) {
+      // 1. If running inside Background Audio Keep-Alive Engine (when sidebar is closed), auto-resume playback ONCE when ready (never fight a later user pause or tab auto-pause!)
+      if (!bgAudioAutoResumed && isBgAudioFrame && !isTabAudioAutoPaused) {
         if (host.includes('spotify.com')) {
           if (spMediaPlaying) {
             bgAudioAutoResumed = true;
@@ -6873,7 +6988,7 @@
               const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
               if (!aria.includes('pause') && Date.now() - lastSpotifyAutoResumeClickAt > 2500) {
                 lastSpotifyAutoResumeClickAt = Date.now();
-                spToggle.click();
+                clickSpotifyToggleOnce(true);
               }
             }
           }
@@ -6908,7 +7023,7 @@
       }
 
       // 2. If the user reopened the Sidebar while Background Audio was playing (or opened a YouTube /watch video before clicking inside iframe), seamlessly play audio!
-      if (!isBgAudioFrame) {
+      if (!isBgAudioFrame && !isTabAudioAutoPaused) {
         if (sidebarAutoResumeRequested && host.includes('spotify.com')) {
           // Reopened sidebar took over from the hidden bg player: resume here once hydrated (buffered audio in background.html bridges the gap)
           const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
@@ -7003,6 +7118,14 @@
 
             if (e.type === 'pointerdown' || e.type === 'mousedown') {
               if (!aria.includes('pause') && !(lastSpPlayBtnEl === playOrPauseBtn && now - lastSpPlayBtnClickAt < 1300)) {
+                isTabAudioAutoPaused = false;
+                window.__pmWasAutoPausedByTabAudio = false;
+                clearTimeout(spTabPauseVerifyTimer);
+                try {
+                  if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmClearTabAutoPaused === 'function') {
+                    window.wrappedJSObject.__pmClearTabAutoPaused();
+                  }
+                } catch (_) {}
                 try {
                   realTopWin.postMessage(
                     {
@@ -7029,6 +7152,14 @@
               if (!aria.includes('pause')) {
                 lastSpPlayBtnEl = playOrPauseBtn;
                 lastSpPlayBtnClickAt = now;
+                isTabAudioAutoPaused = false;
+                window.__pmWasAutoPausedByTabAudio = false;
+                clearTimeout(spTabPauseVerifyTimer);
+                try {
+                  if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmClearTabAutoPaused === 'function') {
+                    window.wrappedJSObject.__pmClearTabAutoPaused();
+                  }
+                } catch (_) {}
 
                 // Instant tactile visual confirmation so user knows the Play click registered at 0ms
                 try {
@@ -7811,17 +7942,16 @@
         break;
       case 'PAUSE_LOCAL_MEDIA':
         sidebarAutoResumeRequested = false;
+        isTabAudioAutoPaused = false;
+        window.__pmWasAutoPausedByTabAudio = false;
+        clearTimeout(spTabPauseVerifyTimer);
         stopLocalMseAudioBridge();
         try {
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmPauseAllSpMedia === 'function') {
             window.wrappedJSObject.__pmPauseAllSpMedia();
           }
           if (host.includes('spotify.com')) {
-            const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-            if (spToggle && !spToggle.disabled) {
-              const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-              if (aria.includes('pause')) spToggle.click();
-            }
+            clickSpotifyToggleOnce(false);
           } else {
             document.querySelectorAll('video, audio').forEach((el) => {
               try {
@@ -7833,23 +7963,17 @@
         reportLivePlaybackState();
         break;
       case 'TAB_AUDIO_AUTO_PAUSE': {
+        clearTimeout(spTabPauseVerifyTimer);
+        const alreadyAutoPaused = isTabAudioAutoPaused;
+        isTabAudioAutoPaused = true;
         try {
           let wasPlayingNow = false;
-          if (host.includes('spotify.com')) {
-            spAutoClickInFlight = true;
-            try {
-              const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-              if (spToggle && !spToggle.disabled) {
-                const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-                if (aria.includes('pause') || aria.includes('stop')) {
-                  wasPlayingNow = true;
-                  spToggle.click();
-                }
-              }
-            } finally {
-              setTimeout(() => {
-                spAutoClickInFlight = false;
-              }, 160);
+          // Only click Spotify's play/pause button on the FIRST transition to auto-paused!
+          // Duplicate TAB_AUDIO_AUTO_PAUSE messages within 5ms would otherwise read stale aria-label="Pause"
+          // before React re-renders and double-click Spotify right back to Play!
+          if (host.includes('spotify.com') && !alreadyAutoPaused) {
+            if (clickSpotifyToggleOnce(false)) {
+              wasPlayingNow = true;
             }
           }
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmTempPauseSpMedia === 'function') {
@@ -7866,49 +7990,51 @@
               }
             } catch (_) {}
           });
-          if (wasPlayingNow) {
+          if (wasPlayingNow || sidebarAutoResumeRequested || Boolean(msg.markShouldResume)) {
             window.__pmWasAutoPausedByTabAudio = true;
           }
+          // Post-React settle verification (340ms later, once Spotify has updated aria-label)
+          spTabPauseVerifyTimer = setTimeout(() => {
+            if (!isTabAudioAutoPaused) return;
+            try {
+              if (host.includes('spotify.com') && clickSpotifyToggleOnce(false)) {
+                window.__pmWasAutoPausedByTabAudio = true;
+              }
+              if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmTempPauseSpMedia === 'function') {
+                window.wrappedJSObject.__pmTempPauseSpMedia();
+              }
+            } catch (_) {}
+          }, 340);
         } catch (_) {}
         reportLivePlaybackState();
         break;
       }
       case 'TAB_AUDIO_AUTO_RESUME': {
+        clearTimeout(spTabPauseVerifyTimer);
+        if (!isTabAudioAutoPaused && !window.__pmWasAutoPausedByTabAudio) {
+          break;
+        }
+        isTabAudioAutoPaused = false;
         try {
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmClearTabAutoPaused === 'function') {
             window.wrappedJSObject.__pmClearTabAutoPaused();
           }
-          const shouldResume = Boolean(window.__pmWasAutoPausedByTabAudio);
+          const shouldResume = Boolean(window.__pmWasAutoPausedByTabAudio || sidebarAutoResumeRequested);
           window.__pmWasAutoPausedByTabAudio = false;
           if (shouldResume) {
             if (host.includes('spotify.com')) {
-              let clickedSpotifyPlay = false;
-              spAutoClickInFlight = true;
-              try {
-                const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-                if (spToggle && !spToggle.disabled) {
-                  const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-                  if (aria.includes('play') && !aria.includes('pause')) {
-                    spToggle.click();
-                    clickedSpotifyPlay = true;
+              const clickedSpotifyPlay = clickSpotifyToggleOnce(true);
+              spTabPauseVerifyTimer = setTimeout(() => {
+                if (isTabAudioAutoPaused) return;
+                try {
+                  if (!clickedSpotifyPlay) {
+                    clickSpotifyToggleOnce(true);
                   }
-                }
-              } finally {
-                setTimeout(() => {
-                  spAutoClickInFlight = false;
-                }, 160);
-              }
-              if (clickedSpotifyPlay) {
-                setTimeout(() => {
-                  try {
-                    if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
-                      window.wrappedJSObject.__pmEnsureMirrorPlay();
-                    }
-                  } catch (_) {}
-                }, 140);
-              } else if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
-                window.wrappedJSObject.__pmEnsureMirrorPlay();
-              }
+                  if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+                    window.wrappedJSObject.__pmEnsureMirrorPlay();
+                  }
+                } catch (_) {}
+              }, clickedSpotifyPlay ? 180 : 340);
             } else if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
               window.wrappedJSObject.__pmEnsureMirrorPlay();
             }
@@ -7925,7 +8051,7 @@
             });
           }
         } catch (_) {}
-        setTimeout(() => reportLivePlaybackState(), 160);
+        setTimeout(() => reportLivePlaybackState(), 180);
         break;
       }
       case 'FREE_HEAVY_MEDIA':

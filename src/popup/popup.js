@@ -4642,8 +4642,18 @@
           } else {
             sourceEntry.frame.classList.remove('is-loading');
           }
-          if (
-            !isAutoPausedByExternalTab &&
+          if (isAutoPausedByExternalTab) {
+            try {
+              sourceEntry.frame.contentWindow?.postMessage(
+                {
+                  target: 'pocketmail-media-frame',
+                  cmd: 'TAB_AUDIO_AUTO_PAUSE',
+                  markShouldResume: pendingSidebarAudioTakeoverSet.has(sourceEntry.appId)
+                },
+                '*'
+              );
+            } catch (_) {}
+          } else if (
             pendingSidebarAudioTakeoverSet.has(sourceEntry.appId) &&
             (!sourceEntry.autoResumeSentAt || Date.now() - sourceEntry.autoResumeSentAt > 4000)
           ) {
@@ -4667,8 +4677,18 @@
           } else {
             sourceEntry.frame.classList.remove('is-loading');
           }
-          if (
-            !isAutoPausedByExternalTab &&
+          if (isAutoPausedByExternalTab) {
+            try {
+              sourceEntry.frame.contentWindow?.postMessage(
+                {
+                  target: 'pocketmail-media-frame',
+                  cmd: 'TAB_AUDIO_AUTO_PAUSE',
+                  markShouldResume: pendingSidebarAudioTakeoverSet.has(sourceEntry.appId)
+                },
+                '*'
+              );
+            } catch (_) {}
+          } else if (
             pendingSidebarAudioTakeoverSet.has(sourceEntry.appId) &&
             (!sourceEntry.autoResumeSentAt || Date.now() - sourceEntry.autoResumeSentAt > 4000)
           ) {
