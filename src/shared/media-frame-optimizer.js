@@ -197,6 +197,33 @@
     window.addEventListener('mousedown', recordUserGesture, { capture: true, passive: true });
     window.addEventListener('keydown', recordUserGesture, { capture: true, passive: true });
     window.addEventListener('touchstart', recordUserGesture, { capture: true, passive: true });
+    window.addEventListener(
+      'pointermove',
+      (ev) => {
+        if (ev && ev.isTrusted && ev.buttons > 0) {
+          lastUserGestureAt = Date.now();
+        }
+      },
+      { capture: true, passive: true }
+    );
+    window.addEventListener(
+      'pointerup',
+      (ev) => {
+        if (ev && ev.isTrusted) {
+          lastUserGestureAt = Date.now();
+        }
+      },
+      { capture: true, passive: true }
+    );
+    window.addEventListener(
+      'wheel',
+      (ev) => {
+        if (ev && ev.isTrusted) {
+          lastUserGestureAt = Date.now();
+        }
+      },
+      { capture: true, passive: true }
+    );
 
     // Clear any persisted muted state in YouTube's player storage so reopened YouTube frames never boot muted
     if (IS_YT) {
@@ -2124,11 +2151,58 @@
 
           #global-nav-bar,
           [data-testid="top-bar"] {
+            --encore-control-size-base: 32px !important;
+            --encore-control-size-smaller: 26px !important;
             width: 100% !important;
             max-width: 100vw !important;
-            padding-left: 8px !important;
-            padding-right: 8px !important;
+            height: 48px !important;
+            min-height: 48px !important;
+            max-height: 48px !important;
+            padding: 4px 10px !important;
             box-sizing: border-box !important;
+            align-items: center !important;
+          }
+          #global-nav-bar a[href="/"] svg,
+          #global-nav-bar > div:first-child a svg {
+            width: 24px !important;
+            height: 24px !important;
+          }
+          #global-nav-bar [data-testid="home-button"],
+          #global-nav-bar [data-testid="user-widget-link"],
+          #global-nav-bar [data-testid="whats-new-feed-button"],
+          #global-nav-bar [data-testid="friend-activity-button"],
+          #global-nav-bar button[aria-label="Search" i] {
+            width: 32px !important;
+            height: 32px !important;
+            min-width: 32px !important;
+            min-height: 32px !important;
+            padding: 0 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+          }
+          #global-nav-bar [data-testid="home-button"] svg,
+          #global-nav-bar [data-testid="whats-new-feed-button"] svg,
+          #global-nav-bar [data-testid="friend-activity-button"] svg,
+          #global-nav-bar [role="search"] svg,
+          #global-nav-bar form svg {
+            width: 17px !important;
+            height: 17px !important;
+          }
+          #global-nav-bar [data-testid="user-widget-link"] figure,
+          #global-nav-bar [data-testid="user-widget-link"] img,
+          #global-nav-bar [data-testid="user-widget-avatar"] {
+            width: 24px !important;
+            height: 24px !important;
+            min-width: 24px !important;
+            min-height: 24px !important;
+          }
+          #global-nav-bar [role="search"],
+          #global-nav-bar form[role="search"],
+          #global-nav-bar [data-testid="search-input"] {
+            min-height: 32px !important;
+            height: 32px !important;
+            font-size: 13px !important;
           }
           #global-nav-bar a[href*="/download"],
           #global-nav-bar [data-testid="upgrade-button"],
@@ -2239,10 +2313,10 @@
           /* Row 2 Left: Current Track Cover + Song Title + Artist */
           [data-testid="now-playing-bar"] > div > div:nth-child(1) {
             order: 2 !important;
-            flex: 1 1 48% !important;
+            flex: 1 1 0% !important;
             width: auto !important;
-            min-width: 0 !important;
-            max-width: 62% !important;
+            min-width: 84px !important;
+            max-width: calc(100% - 172px) !important;
             max-height: 30px !important;
             overflow: hidden !important;
           }
@@ -2253,14 +2327,71 @@
             min-width: 26px !important;
             border-radius: 4px !important;
           }
-          /* Row 2 Right: Compact Volume Bar & Queue (padded on right so ^ Nav pill never overlaps) */
+          /* Row 2 Right: Full-Width Clickable & Draggable Volume Slider + Queue */
           [data-testid="now-playing-bar"] > div > div:nth-child(3) {
             order: 3 !important;
-            flex: 0 1 auto !important;
+            flex: 0 0 auto !important;
             width: auto !important;
             min-width: 0 !important;
-            max-height: 28px !important;
-            padding-right: 52px !important;
+            max-height: 30px !important;
+            padding-right: 4px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+          }
+          [data-testid="now-playing-bar"] > div > div:nth-child(3) > div {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            gap: 2px !important;
+            width: auto !important;
+            min-width: 0 !important;
+          }
+          [data-testid="volume-bar"] {
+            display: flex !important;
+            align-items: center !important;
+            flex: 0 0 auto !important;
+            width: clamp(106px, 26vw, 146px) !important;
+            min-width: 106px !important;
+            gap: 4px !important;
+          }
+          [data-testid="volume-bar"] > button,
+          [data-testid="volume-bar-toggle-mute-button"] {
+            flex: 0 0 28px !important;
+            width: 28px !important;
+            min-width: 28px !important;
+            height: 28px !important;
+            padding: 0 !important;
+          }
+          [data-testid="volume-bar"] > div,
+          [data-testid="volume-bar"] [data-testid="progress-bar"] {
+            flex: 1 1 auto !important;
+            width: 100% !important;
+            min-width: 72px !important;
+            height: 14px !important;
+            display: flex !important;
+            align-items: center !important;
+            cursor: pointer !important;
+          }
+          /* Keep horizontal volume track & draggable white knob always visible so users don't need mouse wheel! */
+          [data-testid="volume-bar"] [data-testid="progress-bar-background"] {
+            width: 100% !important;
+            height: 4px !important;
+            border-radius: 999px !important;
+            background-color: rgba(255, 255, 255, 0.28) !important;
+          }
+          [data-testid="volume-bar"] [data-testid="progress-bar"] button,
+          [data-testid="volume-bar"] .progress-bar__slider {
+            opacity: 1 !important;
+            visibility: visible !important;
+            display: block !important;
+          }
+          @media (max-width: 410px) {
+            [data-testid="now-playing-bar"] [data-testid="lyrics-button"],
+            [data-testid="now-playing-bar"] #device-picker-icon-button,
+            [data-testid="now-playing-bar"] button[aria-label*="Connect to a device" i] {
+              display: none !important;
+            }
           }
           [data-testid="now-playing-bar"] [data-testid="fullscreen-mode-button"],
           [data-testid="now-playing-bar"] [data-testid="pip-toggle-button"],
@@ -7925,6 +8056,395 @@
     } else {
       attemptRestoreSavedScroll();
       setTimeout(attemptRestoreSavedScroll, 220);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Instant Persistent Memory Visual Freeze-Frame Serializer & Content Hydration Detector
+    // Captures a lightweight, script-free CSSOM + Viewport DOM snapshot in <3ms so reopening
+    // FoxHub displays the exact last rendered screen at 0.0ms with zero black screen or --:-- flash!
+    // -----------------------------------------------------------------------------------------
+    if (isFoxHubMediaFrame) {
+      const frameAppId = cleanWindowName.startsWith('pm-media-frame-')
+        ? cleanWindowName.slice('pm-media-frame-'.length)
+        : '';
+      const VOID_HTML_TAGS = new Set([
+        'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+        'link', 'meta', 'param', 'source', 'track', 'wbr'
+      ]);
+      const SKIP_SNAPSHOT_TAGS = new Set([
+        'script', 'noscript', 'iframe', 'frame', 'frameset',
+        'object', 'embed', 'applet', 'audio', 'portal'
+      ]);
+
+      const escapeHtmlText = (str) =>
+        String(str || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+
+      const escapeHtmlAttr = (str) =>
+        String(str || '')
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+
+      let spMainMountedAt = 0;
+      let hydrationNotified = false;
+      let snapshotTimer = null;
+      let lastSnapshotAt = 0;
+
+      const isTransientAuthRoute = () => {
+        const p = (window.location.pathname || '/').toLowerCase();
+        return (
+          window.location.search.includes('pm_boot=1') ||
+          host === 'accounts.google.com' ||
+          host === 'accounts.spotify.com' ||
+          p === '/login' ||
+          p.startsWith('/login/') ||
+          p === '/signin' ||
+          p.startsWith('/signin/') ||
+          p.startsWith('/oauth') ||
+          p.startsWith('/auth/') ||
+          p.startsWith('/i/flow/') ||
+          p.startsWith('/accounts/login')
+        );
+      };
+
+      const checkIsAppHydrated = () => {
+        if (!document.body || document.readyState === 'loading') return false;
+        if (document.documentElement && document.documentElement.hasAttribute('data-pm-x-light-pending')) {
+          return false;
+        }
+        if (host.includes('spotify.com')) {
+          const mainMounted = Boolean(
+            document.querySelector(
+              '[data-testid="component-shelf"], [data-testid="grid-container"], [data-testid="tracklist-row"], [data-testid="playlist-page"], [data-testid="album-page"], [data-testid="artist-page"], [data-testid="search-page"], #Desktop_LeftSidebar_Id li'
+            )
+          );
+          if (!mainMounted) return false;
+          if (!spMainMountedAt) spMainMountedAt = Date.now();
+          const playerMounted = Boolean(
+            document.querySelector('[data-testid="now-playing-widget"], [data-testid="context-item-info-title"]')
+          );
+          return playerMounted || Date.now() - spMainMountedAt > 950;
+        }
+        if (host.includes('youtube.com')) {
+          return Boolean(
+            document.querySelector(
+              'ytd-rich-item-renderer, ytd-video-renderer, ytd-watch-flexy video, ytd-reel-video-renderer, ytmusic-section-list-renderer'
+            )
+          );
+        }
+        if (host.includes('instagram.com')) {
+          return Boolean(document.querySelector('main[role="main"] article, [role="listitem"], header section'));
+        }
+        if (host.includes('x.com') || host.includes('twitter.com')) {
+          return Boolean(
+            document.querySelector(
+              '[data-testid="tweet"], [data-testid="conversation"], [data-testid="UserName"], [data-testid="DMDrawer"]'
+            )
+          );
+        }
+        if (host.includes('discord.com')) {
+          return Boolean(document.querySelector('[class*="sidebar"], main[class*="chatContent"], [data-list-id]'));
+        }
+        if (host.includes('whatsapp.com')) {
+          return Boolean(document.querySelector('#pane-side, #main, [data-testid="chat-list"]'));
+        }
+        if (host.includes('telegram.org')) {
+          return isTelegramVisuallyMounted();
+        }
+        if (host.includes('reddit.com')) {
+          return Boolean(document.querySelector('shreddit-post, rs-room-list, shreddit-feed, faceplate-tracker'));
+        }
+        if (host.includes('tiktok.com')) {
+          return Boolean(
+            document.querySelector('[data-e2e="recommend-list-item-container"], [data-e2e="user-page"], video')
+          );
+        }
+        if (host.includes('messenger.com')) {
+          return Boolean(document.querySelector('[role="navigation"], [role="main"] [role="row"], [role="grid"]'));
+        }
+        return (document.body.innerText || '').trim().length > 40 || document.images.length > 2;
+      };
+
+      const serializeAttributes = (el, extraStyle = '') => {
+        let out = '';
+        let styleVal = '';
+        const isImg = el.tagName && el.tagName.toLowerCase() === 'img';
+        const isInput = el.tagName && el.tagName.toLowerCase() === 'input';
+        const attrs = el.attributes;
+        if (attrs) {
+          for (let i = 0; i < attrs.length; i++) {
+            const a = attrs[i];
+            const nameLower = a.name.toLowerCase();
+            if (nameLower.startsWith('on') || nameLower === 'srcdoc' || nameLower === 'integrity') continue;
+            if (isImg && (nameLower === 'src' || nameLower === 'srcset' || nameLower === 'loading' || nameLower === 'crossorigin' || nameLower === 'decoding')) {
+              continue;
+            }
+            if (isInput && nameLower === 'value') continue;
+            if (nameLower === 'style') {
+              styleVal = a.value || '';
+              continue;
+            }
+            if ((nameLower === 'href' || nameLower === 'xlink:href') && /^\s*javascript:/i.test(a.value || '')) {
+              continue;
+            }
+            out += ` ${a.name}="${escapeHtmlAttr(a.value)}"`;
+          }
+        }
+        if (isImg) {
+          const resolvedSrc = el.currentSrc || el.src || '';
+          if (resolvedSrc && !resolvedSrc.startsWith('javascript:')) {
+            out += ` src="${escapeHtmlAttr(resolvedSrc)}" decoding="sync"`;
+          }
+        } else if (isInput) {
+          const inpType = (el.getAttribute('type') || 'text').toLowerCase();
+          if (inpType !== 'password' && typeof el.value === 'string' && el.value.length > 0 && el.value.length < 300) {
+            out += ` value="${escapeHtmlAttr(el.value)}"`;
+          }
+        }
+        const mergedStyle = extraStyle ? (styleVal ? `${styleVal};${extraStyle}` : extraStyle) : styleVal;
+        if (mergedStyle) {
+          out += ` style="${escapeHtmlAttr(mergedStyle)}"`;
+        }
+        return out;
+      };
+
+      const serializeViewportDom = () => {
+        if (!document.documentElement || !document.body) return null;
+        const vh = window.innerHeight || 720;
+        let charBudget = 680000;
+
+        const walk = (node, depth, inSvg) => {
+          if (!node || charBudget <= 0 || depth > 42) return '';
+          const nt = node.nodeType;
+          if (nt === 3) {
+            const txt = node.nodeValue;
+            if (!txt) return '';
+            const esc = escapeHtmlText(txt);
+            charBudget -= esc.length;
+            return esc;
+          }
+          if (nt !== 1) return '';
+
+          const rawTag = node.tagName || '';
+          const lowerTag = rawTag.toLowerCase();
+          if (!lowerTag || SKIP_SNAPSHOT_TAGS.has(lowerTag)) return '';
+          if (
+            node.id === 'pm-spotify-drm-banner' ||
+            node.id === 'onetrust-consent-sdk' ||
+            node.hasAttribute('hidden')
+          ) {
+            return '';
+          }
+
+          if (lowerTag === 'video' || lowerTag === 'canvas') {
+            const r = node.getBoundingClientRect();
+            const w = Math.max(0, Math.round(r.width));
+            const h = Math.max(0, Math.round(r.height));
+            const poster = lowerTag === 'video' && node.poster ? node.poster : '';
+            if (poster) {
+              return `<img src="${escapeHtmlAttr(poster)}" decoding="sync" style="width:${w ? w + 'px' : '100%'};height:${h ? h + 'px' : '100%'};object-fit:cover;background:#000;display:block;">`;
+            }
+            return `<div style="width:${w ? w + 'px' : '100%'};height:${h ? h + 'px' : '100%'};background:#08080a;display:block;"></div>`;
+          }
+
+          const nextInSvg = inSvg || lowerTag === 'svg';
+          if (!nextInSvg && depth >= 2 && depth <= 8 && node.children && node.children.length > 0) {
+            const r = node.getBoundingClientRect();
+            if (r.height > 28 && (r.bottom < -180 || r.top > vh + 180)) {
+              const spacerH = Math.round(r.height);
+              const s = `<div style="height:${spacerH}px;min-height:${spacerH}px;flex-shrink:0;pointer-events:none;"></div>`;
+              charBudget -= s.length;
+              return s;
+            }
+          }
+
+          const emitTag = nextInSvg ? rawTag : lowerTag;
+          const scTop = !nextInSvg && node.scrollTop > 1 ? Math.round(node.scrollTop) : 0;
+          const scLeft = !nextInSvg && node.scrollLeft > 1 ? Math.round(node.scrollLeft) : 0;
+          const extraStyle = scTop || scLeft ? 'overflow:hidden !important;' : '';
+          const attrStr = serializeAttributes(node, extraStyle);
+
+          if (VOID_HTML_TAGS.has(lowerTag) && !nextInSvg) {
+            const vTag = `<${emitTag}${attrStr}>`;
+            charBudget -= vTag.length;
+            return vTag;
+          }
+
+          let inner = '';
+          if (node.shadowRoot && node.shadowRoot.childNodes && node.shadowRoot.childNodes.length > 0) {
+            let shadowInner = '';
+            const sNodes = node.shadowRoot.childNodes;
+            for (let si = 0; si < sNodes.length && charBudget > 0; si++) {
+              const sChild = sNodes[si];
+              if (sChild.nodeType === 1 && sChild.tagName.toLowerCase() === 'style') {
+                shadowInner += `<style>${sChild.textContent || ''}</style>`;
+              } else {
+                shadowInner += walk(sChild, depth + 1, false);
+              }
+            }
+            if (shadowInner) {
+              inner += `<template shadowrootmode="open">${shadowInner}</template>`;
+            }
+          }
+
+          const kids = node.childNodes;
+          let kidsHtml = '';
+          for (let i = 0; i < kids.length && charBudget > 0; i++) {
+            kidsHtml += walk(kids[i], depth + 1, nextInSvg);
+          }
+
+          if ((scTop || scLeft) && kidsHtml) {
+            inner += `<div style="transform:translate(${-scLeft}px,${-scTop}px);width:100%;">${kidsHtml}</div>`;
+          } else {
+            inner += kidsHtml;
+          }
+
+          const full = `<${emitTag}${attrStr}>${inner}</${emitTag}>`;
+          charBudget -= emitTag.length * 2 + attrStr.length + 5;
+          return full;
+        };
+
+        let headStyles = `<meta charset="utf-8"><base href="${escapeHtmlAttr(window.location.href)}">`;
+        const sheets = document.styleSheets;
+        let inlineCssBuf = '';
+        for (let i = 0; i < sheets.length; i++) {
+          const sh = sheets[i];
+          if (!sh || sh.disabled) continue;
+          try {
+            const rules = sh.cssRules;
+            if (rules && rules.length > 0) {
+              for (let r = 0; r < rules.length; r++) {
+                inlineCssBuf += rules[r].cssText + '\n';
+              }
+              continue;
+            }
+          } catch (_) {
+            if (sh.href) {
+              headStyles += `<link rel="stylesheet" href="${escapeHtmlAttr(sh.href)}">`;
+              continue;
+            }
+          }
+          if (sh.href) {
+            headStyles += `<link rel="stylesheet" href="${escapeHtmlAttr(sh.href)}">`;
+          } else if (sh.ownerNode && sh.ownerNode.textContent) {
+            inlineCssBuf += sh.ownerNode.textContent + '\n';
+          }
+        }
+        if (inlineCssBuf) {
+          headStyles += `<style>${inlineCssBuf.replace(/<\/style/gi, '<\\/style')}</style>`;
+        }
+        headStyles +=
+          '<style>*,*::before,*::after{animation-play-state:paused !important;transition:none !important;}html,body{pointer-events:none !important;user-select:none !important;overflow:hidden !important;scrollbar-width:none !important;}</style>';
+
+        const htmlAttrs = serializeAttributes(document.documentElement);
+        const bodyAttrs = serializeAttributes(document.body);
+        const winScrollY = Math.round(window.scrollY || document.documentElement?.scrollTop || 0);
+        let bodyChildrenHtml = '';
+        const bKids = document.body.childNodes;
+        for (let i = 0; i < bKids.length && charBudget > 0; i++) {
+          bodyChildrenHtml += walk(bKids[i], 1, false);
+        }
+        if (winScrollY > 1 && bodyChildrenHtml) {
+          bodyChildrenHtml = `<div style="transform:translateY(${-winScrollY}px);width:100%;">${bodyChildrenHtml}</div>`;
+        }
+
+        let bgColor = '#0B0B0F';
+        try {
+          const bodyBg = window.getComputedStyle(document.body).backgroundColor;
+          const htmlBg = window.getComputedStyle(document.documentElement).backgroundColor;
+          if (bodyBg && bodyBg !== 'rgba(0, 0, 0, 0)' && bodyBg !== 'transparent') {
+            bgColor = bodyBg;
+          } else if (htmlBg && htmlBg !== 'rgba(0, 0, 0, 0)' && htmlBg !== 'transparent') {
+            bgColor = htmlBg;
+          }
+        } catch (_) {}
+
+        return {
+          html: `<!DOCTYPE html><html${htmlAttrs}><head>${headStyles}</head><body${bodyAttrs}>${bodyChildrenHtml}</body></html>`,
+          bgColor
+        };
+      };
+
+      const captureAndSendVisualSnapshot = (force = false) => {
+        if (!frameAppId || isTransientAuthRoute()) return;
+        if (!force && Date.now() - lastSnapshotAt < 900) return;
+        if (!checkIsAppHydrated()) return;
+        try {
+          const snap = serializeViewportDom();
+          if (!snap || !snap.html || snap.html.length < 250) return;
+          lastSnapshotAt = Date.now();
+          let activeTheme = initialSyncThemeMode || '';
+          try {
+            activeTheme = window.sessionStorage.getItem('__pm_social_theme') || activeTheme || 'native';
+          } catch (_) {
+            activeTheme = activeTheme || 'native';
+          }
+          browser.runtime
+            .sendMessage({
+              type: 'SAVE_VISUAL_SNAPSHOT',
+              appId: frameAppId,
+              url: window.location.href,
+              html: snap.html,
+              bgColor: snap.bgColor,
+              themeMode: activeTheme
+            })
+            .catch(() => {});
+        } catch (_) {}
+      };
+
+      const scheduleVisualSnapshot = (delayMs = 750) => {
+        clearTimeout(snapshotTimer);
+        snapshotTimer = setTimeout(() => captureAndSendVisualSnapshot(false), delayMs);
+      };
+
+      const hydrationPoll = setInterval(() => {
+        if (checkIsAppHydrated()) {
+          clearInterval(hydrationPoll);
+          attemptRestoreSavedScroll();
+          if (!hydrationNotified) {
+            hydrationNotified = true;
+            requestAnimationFrame(() => {
+              notifyParent('PM_APP_HYDRATED');
+            });
+          }
+          scheduleVisualSnapshot(420);
+        }
+      }, 90);
+      setTimeout(() => clearInterval(hydrationPoll), 15000);
+
+      let lastInteractionNotifyAt = 0;
+      const onUserFrameInteraction = (ev) => {
+        if (!ev || !ev.isTrusted) return;
+        if (Date.now() - lastInteractionNotifyAt > 350) {
+          lastInteractionNotifyAt = Date.now();
+          notifyParent('PM_USER_INTERACTED_IN_FRAME');
+        }
+        if (hydrationNotified) {
+          scheduleVisualSnapshot(850);
+        }
+      };
+      window.addEventListener('pointerup', onUserFrameInteraction, { capture: true, passive: true });
+      window.addEventListener('popstate', () => {
+        if (hydrationNotified) scheduleVisualSnapshot(800);
+      }, { passive: true });
+      window.addEventListener('hashchange', () => {
+        if (hydrationNotified) scheduleVisualSnapshot(800);
+      }, { passive: true });
+      let lastSnapHref = window.location.href;
+      setInterval(() => {
+        if (hydrationNotified && window.location.href !== lastSnapHref) {
+          lastSnapHref = window.location.href;
+          scheduleVisualSnapshot(850);
+        }
+      }, 1600);
+      window.addEventListener('scroll', () => {
+        if (hydrationNotified) scheduleVisualSnapshot(750);
+      }, { capture: true, passive: true });
+      window.addEventListener('pagehide', () => captureAndSendVisualSnapshot(true), { capture: true, passive: true });
     }
   }
 })();

@@ -2448,6 +2448,95 @@
     if (fitBtn && entry.appId === activeRailAppId) {
       fitBtn.textContent = Math.abs(z - 1.0) < 0.025 ? 'Fit' : `${Math.round(z * 100)}%`;
     }
+    if (entry.appId === activeFreezeAppId) {
+      syncFreezeFrameZoom(z);
+    }
+  }
+
+  let freezeFrameSafetyTimer = null;
+  let activeFreezeAppId = '';
+
+  function getSyncVisualSnapshot(appId) {
+    if (!appId) return null;
+    try {
+      const bgWin =
+        browser.extension && typeof browser.extension.getBackgroundPage === 'function'
+          ? browser.extension.getBackgroundPage()
+          : null;
+      const snap =
+        bgWin && typeof bgWin.__pmGetVisualSnapshot === 'function'
+          ? bgWin.__pmGetVisualSnapshot(appId)
+          : null;
+      if (!snap || !snap.html) return null;
+      const curTheme = appSettings.socialAppThemeMode || 'native';
+      if (snap.themeMode && snap.themeMode !== curTheme) return null;
+      return snap;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function syncFreezeFrameZoom(z = 1.0) {
+    const freezeEl = document.getElementById('pm-media-freeze-frame');
+    if (!freezeEl) return;
+    if (Math.abs(z - 1.0) < 0.025) {
+      freezeEl.style.width = '100%';
+      freezeEl.style.height = '100%';
+      freezeEl.style.transform = 'none';
+      freezeEl.style.transformOrigin = '0 0';
+    } else {
+      const invPct = (100 / z).toFixed(3);
+      freezeEl.style.width = `${invPct}%`;
+      freezeEl.style.height = `${invPct}%`;
+      freezeEl.style.transform = `scale(${z})`;
+      freezeEl.style.transformOrigin = '0 0';
+    }
+  }
+
+  function showMediaFreezeFrame(appId, snap, zoom = 1.0) {
+    const freezeEl = document.getElementById('pm-media-freeze-frame');
+    if (!freezeEl || !snap || !snap.html) return false;
+    clearTimeout(freezeFrameSafetyTimer);
+    const switchingFreezeApp = Boolean(activeFreezeAppId && activeFreezeAppId !== appId);
+    activeFreezeAppId = appId;
+    freezeEl.style.background = snap.bgColor || '#0B0B0F';
+    syncFreezeFrameZoom(zoom);
+    if (switchingFreezeApp) {
+      freezeEl.classList.add('hidden-freeze');
+      freezeEl.onload = () => {
+        if (activeFreezeAppId === appId) {
+          freezeEl.classList.remove('hidden-freeze');
+        }
+      };
+      freezeEl.srcdoc = snap.html;
+    } else {
+      freezeEl.onload = null;
+      freezeEl.srcdoc = snap.html;
+      freezeEl.classList.remove('hidden-freeze');
+    }
+    freezeFrameSafetyTimer = setTimeout(() => {
+      if (activeFreezeAppId === appId) {
+        hideMediaFreezeFrame(false);
+      }
+    }, 2400);
+    return true;
+  }
+
+  function hideMediaFreezeFrame(immediate = false) {
+    clearTimeout(freezeFrameSafetyTimer);
+    activeFreezeAppId = '';
+    const freezeEl = document.getElementById('pm-media-freeze-frame');
+    if (!freezeEl) return;
+    freezeEl.onload = null;
+    if (immediate) {
+      const prevTrans = freezeEl.style.transition;
+      freezeEl.style.transition = 'none';
+      freezeEl.classList.add('hidden-freeze');
+      void freezeEl.offsetHeight;
+      freezeEl.style.transition = prevTrans;
+    } else {
+      freezeEl.classList.add('hidden-freeze');
+    }
   }
 
   function showMediaBrandLoader(app, frameEl, isFastCachedRestore = false) {
@@ -3067,6 +3156,7 @@
     activeSidebarHubSection = '';
     document.getElementById('rail-btn-manage-apps')?.classList.remove('active');
     document.getElementById('rail-btn-sidebar-settings')?.classList.remove('active');
+    mediaWorkspace.dataset.activeApp = app.id;
     mediaWorkspace.classList.remove('hidden', 'pm-workspace-keepalive');
 
     switchActiveMediaFrame(app.id);
@@ -3121,6 +3211,7 @@
 
     if (canUseSmoothSpaNav) {
       // Smooth 0ms in-app SPA navigation without reloading the iframe!
+      hideMediaFreezeFrame(true);
       entry.currentUrl = targetUrl;
       entry.pendingSpaUrl = targetUrl;
       entry.pendingSpaUntil = Date.now() + 1800;
@@ -3147,6 +3238,9 @@
     }
 
     if (!isWarmAndNavigated || Boolean(customUrl)) {
+      if (subViewMeta) {
+        hideMediaFreezeFrame(true);
+      }
       if (isWarmAndNavigated && app.id === 'tiktok') {
         // Free active video decoders & MSE buffers before switching between TikTok video feed and Messages
         sendCommandToMediaFrame('FREE_HEAVY_MEDIA');
@@ -3179,10 +3273,34 @@
       }
       const needsSwBootClean =
         !alreadyCleanedInProfile && (app.id === 'x' || app.id === 'whatsapp' || app.id === 'telegram');
-      if (isFastCachedRestore && !needsSwBootClean) {
-        // Persistent Memory is active & shell is hard-cached in Firefox RAM: skip the loading screen completely for 0ms instant open!
-        hideMediaBrandLoader(entry.frame);
+      if (isFastCachedRestore && !needsSwBootClean && !subViewMeta) {
+        const syncSnap = getSyncVisualSnapshot(app.id);
+        if (syncSnap) {
+          // 0.0ms Instant Visual Freeze-Frame: exact last rendered screen is already painted while live frame hydrates underneath!
+          hideMediaBrandLoader(entry.frame);
+          showMediaFreezeFrame(app.id, syncSnap, entry.zoom || 1.0);
+        } else {
+          hideMediaFreezeFrame(true);
+          showMediaBrandLoader(app, entry.frame, true);
+          // Fallback for Private Windows where synchronous getBackgroundPage() is unavailable
+          browser.runtime
+            .sendMessage({ type: 'GET_VISUAL_SNAPSHOT', appId: app.id })
+            .then((snapRes) => {
+              const curTheme = appSettings.socialAppThemeMode || 'native';
+              if (
+                snapRes?.snapshot?.html &&
+                activeRailAppId === app.id &&
+                !entry.loaded &&
+                (!snapRes.snapshot.themeMode || snapRes.snapshot.themeMode === curTheme)
+              ) {
+                hideMediaBrandLoader(entry.frame);
+                showMediaFreezeFrame(app.id, snapRes.snapshot, entry.zoom || 1.0);
+              }
+            })
+            .catch(() => {});
+        }
       } else {
+        hideMediaFreezeFrame(true);
         showMediaBrandLoader(app, entry.frame, isFastCachedRestore);
       }
       if (needsSwBootClean) {
@@ -3206,6 +3324,7 @@
       }
     } else {
       // Already warm in Keep-Alive Pool — 0ms instant switch!
+      hideMediaFreezeFrame(true);
       hideMediaBrandLoader(entry.frame);
       broadcastSocialAppTheme();
     }
@@ -4072,6 +4191,7 @@
     document.getElementById('rail-btn-mail')?.addEventListener('click', () => {
       activeRailAppId = 'pocketmail';
       activeSidebarHubSection = '';
+      hideMediaFreezeFrame(true);
       hideMediaWorkspaceKeepAlive();
       mediaAppsDrawer?.classList.add('hidden');
       syncSidebarHubRailButtons();
@@ -4345,6 +4465,7 @@
     });
 
     document.getElementById('btn-media-back')?.addEventListener('click', () => {
+      hideMediaFreezeFrame(true);
       sendCommandToMediaFrame('BACK');
     });
 
@@ -4352,6 +4473,7 @@
       const mediaApi = window.PocketMailMediaApps;
       const app = mediaApi ? mediaApi.getAppById(activeRailAppId, appSettings) : null;
       const entry = getActivePoolEntry();
+      hideMediaFreezeFrame(true);
       if (entry) {
         entry.loaded = false;
         entry.lastNavAt = Date.now();
@@ -4546,6 +4668,7 @@
             sourceEntry.frame.classList.remove('is-loading');
           }
           if (
+            !isAutoPausedByExternalTab &&
             pendingSidebarAudioTakeoverSet.has(sourceEntry.appId) &&
             (!sourceEntry.autoResumeSentAt || Date.now() - sourceEntry.autoResumeSentAt > 4000)
           ) {
@@ -4561,6 +4684,19 @@
           hideMediaBrandLoader();
         }
         broadcastSocialAppTheme();
+      } else if (data.type === 'PM_APP_HYDRATED') {
+        const hydAppId =
+          sourceEntry?.appId ||
+          (typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')
+            ? data.flatFrameName.replace('pm-media-frame-', '')
+            : '');
+        if (hydAppId && hydAppId === activeFreezeAppId) {
+          hideMediaFreezeFrame(false);
+        }
+      } else if (data.type === 'PM_USER_INTERACTED_IN_FRAME') {
+        if (sourceEntry && sourceEntry.loaded && sourceEntry.appId === activeFreezeAppId) {
+          hideMediaFreezeFrame(false);
+        }
       } else if (data.type === 'PM_SIDEBAR_TOOK_OVER_AUDIO') {
         const appId =
           sourceEntry?.appId ||
@@ -6001,51 +6137,85 @@
     const initialAppId = params.get('app');
     let fastBootMountedAppId = '';
 
-    // 0ms Synchronous Fast-Boot Cache for previously loaded persistent apps & themes
+    // 0ms Synchronous Fast-Boot from Background Page RAM + LocalStorage Cache
+    let syncBgState = null;
     try {
-      const rawFast = window.localStorage.getItem('pm_fast_boot_v1');
-      if (rawFast) {
-        const fast = JSON.parse(rawFast);
-        if (fast && fast.settings && Date.now() - (fast.ts || 0) < 7 * 24 * 3600 * 1000) {
-          appSettings = { ...appSettings, ...fast.settings };
-          if (fast.savedUrls && typeof fast.savedUrls === 'object') {
-            Object.entries(fast.savedUrls).forEach(([k, v]) => {
-              if (v && !isTransientAuthOrBootUrl(v) && !hibernatedAppUrls.has(k)) hibernatedAppUrls.set(k, v);
-            });
-          }
-          const openList = Array.isArray(fast.openPersistentAppIds)
-            ? fast.openPersistentAppIds
-            : Array.isArray(appSettings.persistentOpenAppIds)
-              ? appSettings.persistentOpenAppIds
-              : [];
-          openList.forEach((id) => {
-            if (id && isAppPersistent(id)) knownOpenPersistentIds.add(id);
-          });
-          if (window.PocketMailThemes) {
-            window.PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
-          }
-          const fastLastActiveId = initialAppId || fast.activeAppId || appSettings.persistentLastActiveAppId;
-          const canFastRestoreLastApp =
-            !IS_POPOUT_VIEW &&
-            fastLastActiveId &&
-            fastLastActiveId !== 'pocketmail' &&
-            (Boolean(initialAppId) || isAppPersistent(fastLastActiveId));
-          if (canFastRestoreLastApp && window.PocketMailMediaApps) {
-            const fastApp = window.PocketMailMediaApps.getAppById(fastLastActiveId, appSettings);
-            if (fastApp) {
-              activeRailAppId = fastApp.id;
-              fastBootMountedAppId = fastApp.id;
-              if (!IS_SIDEBAR_VIEW) {
-                document.documentElement.classList.add('show-popup-rail');
-              }
-              renderOperaRail();
-              openMediaWorkspace(fastApp, hibernatedAppUrls.get(fastApp.id) || undefined);
-            } else {
-              renderOperaRail();
+      const bgWin =
+        browser.extension && typeof browser.extension.getBackgroundPage === 'function'
+          ? browser.extension.getBackgroundPage()
+          : null;
+      if (bgWin && typeof bgWin.__pmGetSyncBootState === 'function') {
+        syncBgState = bgWin.__pmGetSyncBootState();
+      }
+    } catch (_) {}
+
+    try {
+      if (syncBgState && syncBgState.settings) {
+        appSettings = { ...appSettings, ...syncBgState.settings };
+        currentAudibleBgAppId = syncBgState.audibleAppId || null;
+        isAutoPausedByExternalTab = Boolean(syncBgState.isAutoPausedByTabAudio);
+        if (
+          !IS_POPOUT_VIEW &&
+          (IS_SIDEBAR_VIEW || (Number(syncBgState.sidebarOpenCount) || 0) === 0) &&
+          Array.isArray(syncBgState.activeBgApps)
+        ) {
+          syncBgState.activeBgApps.forEach((bgApp) => {
+            if (bgApp && bgApp.appId && isAppAllowedForBgAudio(bgApp.appId)) {
+              pendingSidebarAudioTakeoverSet.add(bgApp.appId);
+              if (bgApp.url) hibernatedAppUrls.set(bgApp.appId, bgApp.url);
             }
+          });
+        }
+      }
+      const rawFast = window.localStorage.getItem('pm_fast_boot_v1');
+      if (rawFast || syncBgState) {
+        const fast = rawFast ? JSON.parse(rawFast) : null;
+        if (fast && fast.settings && !syncBgState && Date.now() - (fast.ts || 0) < 7 * 24 * 3600 * 1000) {
+          appSettings = { ...appSettings, ...fast.settings };
+        }
+        if (fast && fast.savedUrls && typeof fast.savedUrls === 'object') {
+          Object.entries(fast.savedUrls).forEach(([k, v]) => {
+            if (v && !isTransientAuthOrBootUrl(v) && !hibernatedAppUrls.has(k)) hibernatedAppUrls.set(k, v);
+          });
+        }
+        if (appSettings.persistentSavedAppUrls && typeof appSettings.persistentSavedAppUrls === 'object') {
+          Object.entries(appSettings.persistentSavedAppUrls).forEach(([k, v]) => {
+            if (v && !isTransientAuthOrBootUrl(v) && !hibernatedAppUrls.has(k)) hibernatedAppUrls.set(k, v);
+          });
+        }
+        const openList = Array.isArray(appSettings.persistentOpenAppIds)
+          ? appSettings.persistentOpenAppIds
+          : Array.isArray(fast?.openPersistentAppIds)
+            ? fast.openPersistentAppIds
+            : [];
+        openList.forEach((id) => {
+          if (id && isAppPersistent(id)) knownOpenPersistentIds.add(id);
+        });
+        if (window.PocketMailThemes) {
+          window.PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
+        }
+        const fastLastActiveId =
+          initialAppId || appSettings.persistentLastActiveAppId || fast?.activeAppId;
+        const canFastRestoreLastApp =
+          !IS_POPOUT_VIEW &&
+          fastLastActiveId &&
+          fastLastActiveId !== 'pocketmail' &&
+          (Boolean(initialAppId) || isAppPersistent(fastLastActiveId));
+        if (canFastRestoreLastApp && window.PocketMailMediaApps) {
+          const fastApp = window.PocketMailMediaApps.getAppById(fastLastActiveId, appSettings);
+          if (fastApp) {
+            activeRailAppId = fastApp.id;
+            fastBootMountedAppId = fastApp.id;
+            if (!IS_SIDEBAR_VIEW) {
+              document.documentElement.classList.add('show-popup-rail');
+            }
+            renderOperaRail();
+            openMediaWorkspace(fastApp, hibernatedAppUrls.get(fastApp.id) || undefined);
           } else {
             renderOperaRail();
           }
+        } else {
+          renderOperaRail();
         }
       }
     } catch (_) {}
@@ -6105,6 +6275,21 @@
               pendingSidebarAudioTakeoverSet.add(bgApp.appId);
               if (bgApp.url) {
                 hibernatedAppUrls.set(bgApp.appId, bgApp.url);
+              }
+              const existingEntry = mediaFramePool.get(bgApp.appId);
+              if (
+                !isAutoPausedByExternalTab &&
+                existingEntry &&
+                existingEntry.loaded &&
+                (!existingEntry.autoResumeSentAt || Date.now() - existingEntry.autoResumeSentAt > 4000)
+              ) {
+                existingEntry.autoResumeSentAt = Date.now();
+                try {
+                  existingEntry.frame.contentWindow?.postMessage(
+                    { target: 'pocketmail-media-frame', cmd: 'AUTO_RESUME_PLAYBACK' },
+                    '*'
+                  );
+                } catch (_) {}
               }
             }
           });

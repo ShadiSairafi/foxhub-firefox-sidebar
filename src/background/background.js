@@ -1774,6 +1774,29 @@ function cloneLocalLicAuth(rawUrl, rawHeaders) {
 }
 
 let bypassPersistentCacheUntil = 0;
+const persistentVisualSnapshots = new Map(); // appId -> { html, url, bgColor, themeMode, ts }
+
+try {
+  window.__pmGetVisualSnapshot = (appId) => {
+    if (!appId || !isAppAllowedForPersistence(appId)) return null;
+    const snap = persistentVisualSnapshots.get(appId);
+    if (!snap || !snap.html || Date.now() - (snap.ts || 0) > 12 * 3600 * 1000) return null;
+    return snap;
+  };
+  window.__pmGetSyncBootState = () => {
+    const activeBgApps = [];
+    bgAudioPool.forEach((val, id) => {
+      activeBgApps.push({ appId: id, url: val.url, title: val.title });
+    });
+    return {
+      settings: currentSettings,
+      activeBgApps,
+      audibleAppId: getAudibleBgAudioAppId(),
+      isAutoPausedByTabAudio: isTabAutoPauseEnforced(),
+      sidebarOpenCount: sidebarPortCount
+    };
+  };
+} catch (_) {}
 
 function resolveAppIdForHostname(hostname) {
   if (!hostname) return '';
@@ -3623,6 +3646,16 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         currentSettings = { ...currentSettings, ...patch };
         if (patch.socialAppThemeMode !== undefined && patch.socialAppThemeMode !== prevSocialTheme) {
           bypassPersistentCacheUntil = Date.now() + 12000;
+          persistentVisualSnapshots.clear();
+        }
+        if (patch.persistenceMode === 'eco') {
+          persistentVisualSnapshots.clear();
+        } else if (Array.isArray(patch.persistentAppIds) && currentSettings.persistenceMode === 'selected') {
+          Array.from(persistentVisualSnapshots.keys()).forEach((id) => {
+            if (!patch.persistentAppIds.includes(id)) {
+              persistentVisualSnapshots.delete(id);
+            }
+          });
         }
         if (
           patch.socialAppThemeMode !== undefined &&
@@ -3886,7 +3919,37 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 
     case 'PM_BYPASS_PERSISTENT_CACHE_ONCE': {
       bypassPersistentCacheUntil = Date.now() + 8000;
+      if (msg.appId) {
+        persistentVisualSnapshots.delete(msg.appId);
+      } else {
+        persistentVisualSnapshots.clear();
+      }
       return Promise.resolve({ ok: true });
+    }
+
+    case 'SAVE_VISUAL_SNAPSHOT': {
+      const snapAppId = String(msg.appId || '').trim();
+      const snapHtml = typeof msg.html === 'string' ? msg.html : '';
+      if (snapAppId && snapHtml.length > 180 && snapHtml.length < 1800000 && isAppAllowedForPersistence(snapAppId)) {
+        persistentVisualSnapshots.set(snapAppId, {
+          html: snapHtml,
+          url: String(msg.url || ''),
+          bgColor: String(msg.bgColor || '#0B0B0F'),
+          themeMode: String(msg.themeMode || ''),
+          ts: Date.now()
+        });
+      }
+      return Promise.resolve({ ok: true });
+    }
+
+    case 'GET_VISUAL_SNAPSHOT': {
+      const reqId = String(msg.appId || '').trim();
+      const snap =
+        reqId && isAppAllowedForPersistence(reqId) ? persistentVisualSnapshots.get(reqId) || null : null;
+      if (!snap || Date.now() - (snap.ts || 0) > 12 * 3600 * 1000) {
+        return Promise.resolve({ ok: true, snapshot: null });
+      }
+      return Promise.resolve({ ok: true, snapshot: snap });
     }
 
     case 'SIDEBAR_SP_TAKEOVER_BEGIN': {
@@ -4064,6 +4127,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         stopSingleBackgroundAudioFrame(msg.appId);
         if (msg.clearPlaybackState) {
           liveMediaPlaybackState.delete(msg.appId);
+          persistentVisualSnapshots.delete(msg.appId);
         }
       }
       refreshBgAudioIndicator();
