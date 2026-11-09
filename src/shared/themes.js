@@ -481,6 +481,40 @@
         '--badge-text': '#1C1924',
         '--scrollbar-thumb': 'rgba(244, 239, 234, 0.22)'
       }
+    },
+    'true-night': {
+      id: 'true-night',
+      name: 'True Night OLED',
+      subtitle: 'Pitch-black #000000 OLED dark mode',
+      defaultWallpaper: 'none',
+      previewGradient: 'linear-gradient(135deg, #000000 0%, #09090D 55%, #181822 100%)',
+      accentDot: '#FF6B4A',
+      vars: {
+        '--bg-base': '#000000',
+        '--bg-secondary': '#08080A',
+        '--card-rgb': '12, 12, 16',
+        '--card-bg': 'rgba(12, 12, 16, 0.90)',
+        '--card-bg-hover': 'rgba(22, 22, 28, 0.96)',
+        '--card-bg-solid': '#0C0C10',
+        '--header-bg': 'rgba(0, 0, 0, 0.94)',
+        '--text-primary': '#EDEDEF',
+        '--text-secondary': '#A1A1AA',
+        '--text-muted': '#71717A',
+        '--accent': '#FF6B4A',
+        '--accent-hover': '#FF8266',
+        '--accent-soft': 'rgba(255, 107, 74, 0.16)',
+        '--accent-contrast': '#000000',
+        '--border-color': 'rgba(255, 255, 255, 0.09)',
+        '--border-strong': 'rgba(255, 255, 255, 0.18)',
+        '--shadow-soft': '0 6px 20px rgba(0, 0, 0, 0.75)',
+        '--shadow-hover': '0 10px 28px rgba(0, 0, 0, 0.90)',
+        '--success': '#34D399',
+        '--warning': '#FBBF24',
+        '--danger': '#F87171',
+        '--badge-bg': '#FF6B4A',
+        '--badge-text': '#000000',
+        '--scrollbar-thumb': 'rgba(255, 255, 255, 0.18)'
+      }
     }
   };
 
@@ -779,7 +813,7 @@
     const cardRadius = typeof settings.cardRadius === 'number' ? settings.cardRadius : 15;
     root.style.setProperty('--card-radius', `${cardRadius}px`);
 
-    const popupW = typeof settings.popupWidth === 'number' ? Math.max(380, Math.min(795, settings.popupWidth)) : 520;
+    const popupW = typeof settings.popupWidth === 'number' ? Math.max(380, Math.min(795, settings.popupWidth)) : 560;
     const popupH = typeof settings.popupHeight === 'number' ? Math.max(460, Math.min(600, settings.popupHeight)) : 600;
 
     let isSidebar = false;

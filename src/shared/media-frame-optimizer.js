@@ -820,6 +820,20 @@
       });
       postBridge('STOP_PLAYBACK', { currentTime: 0, paused: true, explicitPause: true });
     });
+    define(pageWin, '__pmTempPauseSpMedia', function () {
+      let pausedAny = false;
+      mediaEls.forEach((el) => {
+        try {
+          if (!el.paused) {
+            pausedAny = true;
+            suppressPauseEvent.add(el);
+            el.pause();
+            postBridge('SYNC_TIME', { currentTime: el.currentTime || 0, paused: true, explicitPause: false, autoPausedByTab: true });
+          }
+        } catch (_) {}
+      });
+      return pausedAny || mirrorWasPlaying;
+    });
     define(pageWin, '__seekActiveSpMediaEl', function (targetTime) {
       try {
         const t = Number(targetTime);
@@ -3100,6 +3114,28 @@
           background: radial-gradient(circle at top left, rgba(108, 92, 231, 0.10), rgba(0, 206, 209, 0.04) 65%, transparent);
           pointer-events: none;
           z-index: 2147483645;
+        }
+      `;
+    } else if (themeMode === 'true-night') {
+      tCss += `
+        :root, html, body {
+          color-scheme: dark !important;
+          background-color: #000000 !important;
+          --ig-primary-background: 0, 0, 0 !important;
+          --ig-secondary-background: 8, 8, 10 !important;
+          --ig-elevated-background: 14, 14, 18 !important;
+          --yt-spec-base-background: #000000 !important;
+          --yt-spec-raised-background: #0A0A0D !important;
+          --yt-spec-menu-background: #0E0E12 !important;
+          --background-primary: #000000 !important;
+          --background-secondary: #070709 !important;
+          --background-secondary-alt: #0B0B0F !important;
+          --background-tertiary: #000000 !important;
+          --background-floating: #0C0C10 !important;
+          --spice-main: #000000 !important;
+          --spice-sidebar: #000000 !important;
+          --spice-player: #050507 !important;
+          --spice-card: #0C0C10 !important;
         }
       `;
     } else if (themeMode === 'rose-twilight') {
@@ -6750,6 +6786,73 @@
         } catch (_) {}
         reportLivePlaybackState();
         break;
+      case 'TAB_AUDIO_AUTO_PAUSE': {
+        try {
+          let wasPlayingNow = false;
+          if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmTempPauseSpMedia === 'function') {
+            if (window.wrappedJSObject.__pmTempPauseSpMedia()) {
+              wasPlayingNow = true;
+            }
+          }
+          if (host.includes('spotify.com')) {
+            const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+            if (spToggle && !spToggle.disabled) {
+              const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+              if (aria.includes('pause') || aria.includes('stop')) {
+                wasPlayingNow = true;
+                spToggle.click();
+              }
+            }
+          }
+          document.querySelectorAll('video, audio').forEach((el) => {
+            try {
+              if (!el.paused && !el.ended) {
+                wasPlayingNow = true;
+                el.dataset.pmTabAutoPaused = '1';
+                el.pause();
+              }
+            } catch (_) {}
+          });
+          if (wasPlayingNow) {
+            window.__pmWasAutoPausedByTabAudio = true;
+          }
+        } catch (_) {}
+        reportLivePlaybackState();
+        break;
+      }
+      case 'TAB_AUDIO_AUTO_RESUME': {
+        try {
+          const shouldResume = Boolean(window.__pmWasAutoPausedByTabAudio);
+          window.__pmWasAutoPausedByTabAudio = false;
+          if (shouldResume) {
+            if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+              window.wrappedJSObject.__pmEnsureMirrorPlay();
+            }
+            if (host.includes('spotify.com')) {
+              const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+              if (spToggle && !spToggle.disabled) {
+                const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+                if (aria.includes('play') && !aria.includes('pause')) {
+                  spToggle.click();
+                }
+              }
+            }
+            document.querySelectorAll('video, audio').forEach((el) => {
+              try {
+                if (el.dataset.pmTabAutoPaused === '1') {
+                  delete el.dataset.pmTabAutoPaused;
+                  if (el.paused && !el.ended) {
+                    const p = el.play();
+                    if (p && typeof p.catch === 'function') p.catch(() => {});
+                  }
+                }
+              } catch (_) {}
+            });
+          }
+        } catch (_) {}
+        setTimeout(() => reportLivePlaybackState(), 120);
+        break;
+      }
       case 'FREE_HEAVY_MEDIA':
         freeHeavyMediaResources();
         break;

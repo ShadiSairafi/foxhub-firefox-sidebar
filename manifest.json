@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "FoxHub: Gmail, Social & Media Sidebar",
   "short_name": "FoxHub",
-  "version": "2.6.5",
+  "version": "2.6.6",
   "description": "Fast local multi-account Gmail, social, and media sidebar for Firefox.",
   "author": "FoxHub",
   "icons": {
@@ -34,6 +34,29 @@
     "default_title": "FoxHub",
     "default_panel": "src/popup/popup.html?sidebar=1",
     "open_at_install": true
+  },
+  "commands": {
+    "_execute_browser_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+F",
+        "mac": "MacCtrl+Shift+F"
+      },
+      "description": "Open FoxHub Floating Dropdown Popup (above webpage)"
+    },
+    "_execute_sidebar_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+M",
+        "mac": "MacCtrl+Shift+M"
+      },
+      "description": "Toggle FoxHub Left Sidebar"
+    },
+    "open-foxhub-popout": {
+      "suggested_key": {
+        "default": "Alt+Shift+W",
+        "mac": "MacCtrl+Shift+W"
+      },
+      "description": "Open FoxHub Desktop Popout Window"
+    }
   },
   "background": {
     "page": "src/background/background.html",

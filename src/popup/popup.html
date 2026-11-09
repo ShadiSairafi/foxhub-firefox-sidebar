@@ -38,6 +38,9 @@
         <!-- Dynamically populated with Instagram, WhatsApp, Discord, Telegram, Spotify, YouTube, TikTok, X, Messenger, Reddit, etc. -->
       </div>
       <div class="pm-rail-sep"></div>
+      <button id="rail-btn-night-mode" class="pm-rail-item" title="Toggle True Night Mode (OLED Pitch-Black)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
       <button id="rail-btn-manage-apps" class="pm-rail-item" title="Add or Customize Sidebar Apps (+)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       </button>
@@ -73,11 +76,14 @@
           <button id="btn-toggle-wide" class="pm-icon-btn" title="Resize Width (Toggle Standard / Wide / Extra-Wide)">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
           </button>
-          <button id="btn-popout-window" class="pm-icon-btn" title="Pop Out into Freely Resizable Desktop Window">
+          <button id="btn-popout-window" class="pm-icon-btn" title="Pop Out into Freely Resizable Desktop Window (Alt+Shift+W)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M14 9l3 3-3 3"/></svg>
           </button>
+          <button id="btn-night-mode" class="pm-icon-btn" title="Toggle True Night Mode (OLED Pitch-Black)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
           <button id="btn-dnd" class="pm-icon-btn" title="Do Not Disturb (Mute notifications for 1 hour)">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
           </button>
           <button id="btn-refresh" class="pm-icon-btn" title="Sync All Accounts Now">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -770,10 +776,16 @@
           <div class="pm-control-card">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
               <span style="font-size:12px;font-weight:700;color:var(--text-primary);">Persistent App Memory &amp; Background Audio:</span>
-              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Keep Spotify &amp; YouTube audio playing even after closing the sidebar for full screen space">
-                <input type="checkbox" id="chk-keep-audio-closed" checked>
-                <span>Play Audio When Closed</span>
-              </label>
+              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;">
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Keep Spotify &amp; YouTube audio playing even after closing the sidebar for full screen space">
+                  <input type="checkbox" id="chk-keep-audio-closed" checked>
+                  <span>Play Audio When Closed</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Opera GX-style smart media pause: automatically pause FoxHub music when any browser tab plays audio/video, and auto-resume when the tab stops">
+                  <input type="checkbox" id="chk-auto-pause-tab-audio" checked>
+                  <span>Auto-Pause on Tab Media</span>
+                </label>
+              </div>
             </div>
             <div class="pm-option-grid" id="opt-persistence-mode-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:8px;">
               <button class="pm-opt-pill" data-persistence-mode="eco" title="Frees all app RAM when closing the sidebar and resets to Mail Inbox">Eco (RAM Saver)</button>
@@ -821,10 +833,14 @@
             <div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:6px;">Social Media App Color Theme:</div>
             <div class="pm-option-grid" id="opt-social-theme-grid">
               <button class="pm-opt-pill" data-social-theme="native">Native Default</button>
+              <button class="pm-opt-pill" data-social-theme="true-night">True Night OLED</button>
               <button class="pm-opt-pill" data-social-theme="match-theme">Match My Palette</button>
               <button class="pm-opt-pill" data-social-theme="warm-glass">Cozy Warm Eye-Care</button>
               <button class="pm-opt-pill" data-social-theme="midnight-oled">Midnight Indigo</button>
               <button class="pm-opt-pill" data-social-theme="rose-twilight">Rose Twilight</button>
+            </div>
+            <div style="font-size:10.7px;line-height:1.42;color:var(--text-secondary);background:rgba(128,128,128,0.08);border-radius:8px;padding:7px 9px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+              <span><strong>Keyboard Shortcuts:</strong> <code>Alt+Shift+F</code> Floating Overlay Popup &bull; <code>Alt+Shift+M</code> Left Sidebar &bull; <code>Alt+Shift+W</code> Popout Window</span>
             </div>
           </div>
 

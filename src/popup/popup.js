@@ -1617,6 +1617,116 @@
     if (existing) existing.remove();
   }
 
+  function createRailUiSvg(iconType, size = 14) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('width', String(size));
+    svg.setAttribute('height', String(size));
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2.1');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+
+    const el = (tag, attrs) => {
+      const node = document.createElementNS(ns, tag);
+      Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+      return node;
+    };
+
+    if (iconType === 'stop') {
+      svg.appendChild(el('rect', { x: '5', y: '5', width: '14', height: '14', rx: '2.5' }));
+    } else if (iconType === 'remove') {
+      svg.appendChild(el('polyline', { points: '3 6 5 6 21 6' }));
+      svg.appendChild(el('path', { d: 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2' }));
+      svg.appendChild(el('line', { x1: '10', y1: '11', x2: '10', y2: '17' }));
+      svg.appendChild(el('line', { x1: '14', y1: '11', x2: '14', y2: '17' }));
+    } else if (iconType === 'external') {
+      svg.appendChild(el('path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }));
+      svg.appendChild(el('polyline', { points: '15 3 21 3 21 9' }));
+      svg.appendChild(el('line', { x1: '10', y1: '14', x2: '21', y2: '3' }));
+    } else if (iconType === 'settings') {
+      svg.appendChild(el('circle', { cx: '12', cy: '12', r: '3' }));
+      svg.appendChild(
+        el('path', {
+          d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z'
+        })
+      );
+    } else if (iconType === 'play') {
+      svg.appendChild(el('polygon', { points: '6 4 20 12 6 20 6 4', fill: 'currentColor', stroke: 'none' }));
+    } else if (iconType === 'moon') {
+      svg.appendChild(el('path', { d: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z' }));
+    } else if (iconType === 'sun') {
+      svg.appendChild(el('circle', { cx: '12', cy: '12', r: '5' }));
+      svg.appendChild(el('line', { x1: '12', y1: '1', x2: '12', y2: '3' }));
+      svg.appendChild(el('line', { x1: '12', y1: '21', x2: '12', y2: '23' }));
+      svg.appendChild(el('line', { x1: '4.22', y1: '4.22', x2: '5.64', y2: '5.64' }));
+      svg.appendChild(el('line', { x1: '18.36', y1: '18.36', x2: '19.78', y2: '19.78' }));
+      svg.appendChild(el('line', { x1: '1', y1: '12', x2: '3', y2: '12' }));
+      svg.appendChild(el('line', { x1: '21', y1: '12', x2: '23', y2: '12' }));
+      svg.appendChild(el('line', { x1: '4.22', y1: '19.78', x2: '5.64', y2: '18.36' }));
+      svg.appendChild(el('line', { x1: '18.36', y1: '5.64', x2: '19.78', y2: '4.22' }));
+    }
+    return svg;
+  }
+
+  function syncNightModeButtons() {
+    const isTrueNight = appSettings.theme === 'true-night';
+    const railNightBtn = document.getElementById('rail-btn-night-mode');
+    const hdrNightBtn = document.getElementById('btn-night-mode');
+    [railNightBtn, hdrNightBtn].forEach((btn) => {
+      if (!btn) return;
+      btn.classList.toggle('is-night-active', isTrueNight);
+      btn.title = isTrueNight
+        ? 'True Night OLED Mode is ON (#000000) — Click to restore Day Theme'
+        : 'Toggle True Night Mode (OLED Pitch-Black #000000)';
+      btn.replaceChildren(createRailUiSvg(isTrueNight ? 'sun' : 'moon', 15));
+    });
+  }
+
+  async function toggleTrueNightMode() {
+    const isCurrentlyNight = appSettings.theme === 'true-night';
+    if (!isCurrentlyNight) {
+      const patch = {
+        previousDayTheme: appSettings.theme || 'warm-linen',
+        previousDayWallpaper: appSettings.wallpaper || 'watercolor-hills',
+        previousDaySocialTheme: appSettings.socialAppThemeMode || 'native',
+        theme: 'true-night',
+        wallpaper: 'none',
+        socialAppThemeMode: 'true-night'
+      };
+      await saveSettingsPatch(patch);
+      if (window.PocketMailThemes) {
+        window.PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
+      }
+      broadcastSocialAppTheme();
+      renderAll();
+      showToast('True Night OLED Mode enabled (#000000)');
+    } else {
+      const restoredTheme =
+        appSettings.previousDayTheme && appSettings.previousDayTheme !== 'true-night'
+          ? appSettings.previousDayTheme
+          : 'warm-linen';
+      const restoredWall = appSettings.previousDayWallpaper || 'watercolor-hills';
+      const restoredSocial =
+        appSettings.previousDaySocialTheme && appSettings.previousDaySocialTheme !== 'true-night'
+          ? appSettings.previousDaySocialTheme
+          : 'native';
+      await saveSettingsPatch({
+        theme: restoredTheme,
+        wallpaper: restoredWall,
+        socialAppThemeMode: restoredSocial
+      });
+      if (window.PocketMailThemes) {
+        window.PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
+      }
+      broadcastSocialAppTheme();
+      renderAll();
+      showToast('Restored previous theme');
+    }
+  }
+
   function openRailAppContextMenu(app, anchorBtn, clientY) {
     closeRailContextMenu();
     const mediaApi = window.PocketMailMediaApps;
@@ -1636,11 +1746,17 @@
     hdr.appendChild(hdrText);
     menu.appendChild(hdr);
 
-    const addItem = (labelText, onClick, isDanger = false) => {
+    const addItem = (iconType, labelText, onClick, isDanger = false) => {
       const item = document.createElement('button');
       item.type = 'button';
       item.className = `pm-rail-ctx-item${isDanger ? ' is-danger' : ''}`;
-      item.textContent = labelText;
+      const iconWrap = document.createElement('span');
+      iconWrap.className = 'pm-rail-ctx-icon';
+      iconWrap.appendChild(createRailUiSvg(iconType, 14));
+      const textSpan = document.createElement('span');
+      textSpan.textContent = labelText;
+      item.appendChild(iconWrap);
+      item.appendChild(textSpan);
       item.addEventListener('click', (ev) => {
         ev.stopPropagation();
         closeRailContextMenu();
@@ -1655,14 +1771,15 @@
       app.id === currentAudibleBgAppId;
 
     if (isAlive) {
-      addItem('⏹ Close Background Session', () => {
+      addItem('stop', 'Close Background Session', () => {
         closeMediaAppFrame(app.id);
         showToast(`Closed ${app.name} background session`);
       });
     }
 
     addItem(
-      `📌 Remove ${app.name} from Sidebar`,
+      'remove',
+      `Remove ${app.name} from Sidebar`,
       async () => {
         if (isAlive || activeRailAppId === app.id) {
           closeMediaAppFrame(app.id);
@@ -1690,13 +1807,13 @@
       true
     );
 
-    addItem('↗ Open in Browser Tab', () => {
+    addItem('external', 'Open in Browser Tab', () => {
       if (app.defaultUrl) {
         browser.tabs.create({ url: app.defaultUrl });
       }
     });
 
-    addItem('⚙️ Customize Sidebar Apps (+)', () => {
+    addItem('settings', 'Customize Sidebar Apps (+)', () => {
       document.getElementById('rail-btn-manage-apps')?.click();
     });
 
@@ -1725,6 +1842,8 @@
   function renderOperaRail() {
     const mediaApi = window.PocketMailMediaApps;
     if (!mediaApi) return;
+
+    syncNightModeButtons();
 
     const mailBtn = document.getElementById('rail-btn-mail');
     const mailIconWrap = document.getElementById('rail-mail-icon');
@@ -1777,7 +1896,7 @@
         if (!badgeEl) {
           badgeEl = document.createElement('span');
           badgeEl.className = 'pm-rail-playing-badge';
-          badgeEl.textContent = '▶';
+          badgeEl.appendChild(createRailUiSvg('play', 8));
           sBtn.style.position = 'relative';
           sBtn.appendChild(badgeEl);
         }
@@ -1879,7 +1998,7 @@
         if (!playingBadge) {
           playingBadge = document.createElement('span');
           playingBadge.className = 'pm-rail-playing-badge';
-          playingBadge.textContent = '▶';
+          playingBadge.appendChild(createRailUiSvg('play', 8));
           btn.appendChild(playingBadge);
         }
       } else {
@@ -3015,6 +3134,11 @@
       chkKeepAudio.disabled = pMode === 'eco';
     }
 
+    const chkAutoPauseTab = document.getElementById('chk-auto-pause-tab-audio');
+    if (chkAutoPauseTab) {
+      chkAutoPauseTab.checked = appSettings.autoPauseOnTabAudio !== false;
+    }
+
     const resNoteEl = document.getElementById('pm-persistence-resource-note');
     if (resNoteEl) {
       resNoteEl.replaceChildren();
@@ -3749,6 +3873,8 @@
     document.getElementById('rail-btn-open-sidebar')?.addEventListener('click', openFirefoxLeftSidebar);
     document.getElementById('btn-open-sidebar')?.addEventListener('click', openFirefoxLeftSidebar);
     document.getElementById('btn-open-firefox-sidebar-top')?.addEventListener('click', openFirefoxLeftSidebar);
+    document.getElementById('rail-btn-night-mode')?.addEventListener('click', toggleTrueNightMode);
+    document.getElementById('btn-night-mode')?.addEventListener('click', toggleTrueNightMode);
 
     document.getElementById('rail-btn-manage-apps')?.addEventListener('click', () => {
       hideMediaWorkspaceKeepAlive();
@@ -3816,6 +3942,17 @@
         enabled
           ? 'Background audio keep-alive enabled when sidebar closes'
           : 'Background audio will pause when sidebar closes'
+      );
+    });
+
+    document.getElementById('chk-auto-pause-tab-audio')?.addEventListener('change', async (e) => {
+      const enabled = Boolean(e.target.checked);
+      await saveSettingsPatch({ autoPauseOnTabAudio: enabled });
+      renderMediaAppsManager();
+      showToast(
+        enabled
+          ? 'Smart Media Auto-Pause enabled — FoxHub music pauses when a browser tab plays audio'
+          : 'Smart Media Auto-Pause disabled'
       );
     });
 
@@ -3891,7 +4028,8 @@
     document.getElementById('btn-media-theme')?.addEventListener('click', async () => {
       const modes = [
         { id: 'native', label: 'Native Default' },
-        { id: 'match-theme', label: 'Match PocketHub Palette' },
+        { id: 'true-night', label: 'True Night OLED (#000)' },
+        { id: 'match-theme', label: 'Match FoxHub Palette' },
         { id: 'warm-glass', label: 'Cozy Warm Eye-Care' },
         { id: 'midnight-oled', label: 'Midnight Indigo' },
         { id: 'rose-twilight', label: 'Rose Twilight' }
@@ -5413,6 +5551,42 @@
             '*'
           );
         } catch (_) {}
+      } else if (msg.type === 'PM_TAB_AUDIO_AUTO_PAUSE_STATE') {
+        const autoPaused = Boolean(msg.autoPaused);
+        if (autoPaused) {
+          sidebarMsePlayers.forEach((player) => {
+            if (player && player.audioEl && !player.audioEl.paused) {
+              player.autoPausedByTab = true;
+              try {
+                player.audioEl.pause();
+              } catch (_) {}
+            }
+          });
+          mediaFramePool.forEach((entry) => {
+            try {
+              entry?.frame?.contentWindow?.postMessage(
+                { target: 'pocketmail-media-frame', cmd: 'TAB_AUDIO_AUTO_PAUSE' },
+                '*'
+              );
+            } catch (_) {}
+          });
+        } else {
+          sidebarMsePlayers.forEach((player) => {
+            if (player && player.autoPausedByTab && player.audioEl && player.audioEl.paused) {
+              player.autoPausedByTab = false;
+              player.audioEl.play().catch(() => {});
+            }
+          });
+          mediaFramePool.forEach((entry) => {
+            try {
+              entry?.frame?.contentWindow?.postMessage(
+                { target: 'pocketmail-media-frame', cmd: 'TAB_AUDIO_AUTO_RESUME' },
+                '*'
+              );
+            } catch (_) {}
+          });
+        }
+        renderOperaRail();
       }
     });
 
@@ -5615,7 +5789,7 @@
       } catch (_) {}
     }
 
-    const [res, handoffRes] = await Promise.all([
+    let [res, handoffRes] = await Promise.all([
       browser.runtime.sendMessage({ type: 'GET_STATE' }).catch(() => null),
       IS_SIDEBAR_VIEW && !IS_POPOUT_VIEW
         ? browser.runtime.sendMessage({ type: 'STOP_BG_AUDIO_HANDOFF' }).catch(() => null)
@@ -5628,7 +5802,22 @@
       snoozedMap = res.snoozed || {};
       currentAudibleBgAppId = res.audibleAppId || null;
 
-      if (IS_SIDEBAR_VIEW && !IS_POPOUT_VIEW && handoffRes) {
+      // If opened as the Top-Right Floating Dropdown Popup while the Left Sidebar is closed,
+      // connect the lifecycle port and hand off background audio identically to the Left Sidebar!
+      const actAsPrimaryHub =
+        !IS_POPOUT_VIEW && (IS_SIDEBAR_VIEW || (Number(res.sidebarOpenCount) || 0) === 0);
+      if (actAsPrimaryHub && !sidebarLifecyclePort) {
+        try {
+          if (browser.runtime && typeof browser.runtime.connect === 'function') {
+            sidebarLifecyclePort = browser.runtime.connect({ name: 'foxhub-sidebar-lifecycle' });
+          }
+        } catch (_) {}
+      }
+      if (actAsPrimaryHub && !handoffRes) {
+        handoffRes = await browser.runtime.sendMessage({ type: 'STOP_BG_AUDIO_HANDOFF' }).catch(() => null);
+      }
+
+      if (actAsPrimaryHub && handoffRes) {
         if (handoffRes.settings) {
           appSettings = handoffRes.settings;
         }

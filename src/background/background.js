@@ -22,13 +22,13 @@ const DEFAULT_SETTINGS = {
   fontStyle: 'editorial',     // 'editorial' | 'modern-sans' | 'literary-serif' | 'rounded-cozy'
   ambientEffect: 'sunbeams',  // 'none' | 'sunbeams' | 'soft-bokeh' | 'paper-grain'
   badgeCountMode: 'feed',     // 'feed' (visible list count) | 'total' (Gmail fullcount)
-  popupWidth: 540,            // Resizable popup width (380px - 790px)
+  popupWidth: 560,            // Resizable popup width (380px - 790px)
   popupHeight: 600,           // Resizable popup height (460px - 600px)
   autoFitEmail: true,         // Automatically scale wide HTML emails to fit reader width
   enabledMediaApps: ['instagram', 'whatsapp', 'discord', 'telegram', 'spotify', 'youtube', 'tiktok', 'x', 'messenger', 'reddit'],
   customMediaApps: [],        // [{ id, name, url, color }]
   sidebarOpenMode: 'auto',    // 'auto' | 'sidebar' | 'embedded' | 'window'
-  socialAppThemeMode: 'native', // 'native' | 'match-theme' | 'warm-glass' | 'midnight-oled' | 'cozy-sepia'
+  socialAppThemeMode: 'native', // 'native' | 'match-theme' | 'warm-glass' | 'midnight-oled' | 'cozy-sepia' | 'true-night'
   socialAppNotifySounds: true,  // Play chime when social app receives new messages
   socialAppSoundMap: {},        // { whatsapp: 'crystal-drop', discord: 'zen-bell', ... }
   hideMediaBottomBar: false,    // Toggleable bottom navigation bar with icons
@@ -41,6 +41,7 @@ const DEFAULT_SETTINGS = {
   persistentLastActiveAppId: 'pocketmail',
   persistentSavedAppUrls: {},   // { spotify: 'https://...', youtube: 'https://...', ... }
   keepAudioPlayingWhenClosed: true,
+  autoPauseOnTabAudio: true,    // Opera GX-style: automatically pause FoxHub music when a browser tab plays audio, and resume when tab stops
   bgAudioAppIds: ['spotify', 'youtube'], // Only Spotify & YouTube play audio when closed by default (Twitter/X, TikTok, etc. off by default!)
   bgAudioAppIdsMigratedV1: true,
   persistenceDefaultSelectedMigratedV1: true,
@@ -2398,12 +2399,15 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
   }
 
   if (bt === 'USER_PLAY_INTENT') {
+    isAutoPausedByTabAudio = false;
+    tabAutoPausedSpAppIds.delete(appId);
     if (bgStagingSpPlayers.has(appId)) {
       promoteStagingSpPlayer(appId, false);
     }
     const activeSp = bgSpEmePlayers.get(appId);
     if (activeSp && !activeSp.disposed) {
       activeSp.awaitingBgFrameHandoff = false;
+      activeSp.autoPausedByTab = false;
       activeSp.remotePaused = false;
       activeSp.explicitUserPause = false;
       activeSp.lastPlayedAt = Date.now();
@@ -2632,7 +2636,15 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       return;
     }
     sp.remotePaused = Boolean(data.paused);
-    if (!data.paused) {
+    if (data.autoPausedByTab) {
+      sp.autoPausedByTab = true;
+      sp.explicitUserPause = false;
+    } else if (!data.paused) {
+      if (isAutoPausedByTabAudio && sp.autoPausedByTab && currentSettings.autoPauseOnTabAudio !== false) {
+        // Ignore residual unpaused ticks while auto-paused by external tab audio
+        return;
+      }
+      sp.autoPausedByTab = false;
       sp.explicitUserPause = false;
       if (!sp.handoffSource || sp.handoffSource === sourceType) {
         sp.awaitingBgFrameHandoff = false;
@@ -2642,6 +2654,7 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       }
       sp.lastPlayedAt = Date.now();
     } else if (data.explicitPause) {
+      sp.autoPausedByTab = false;
       sp.explicitUserPause = true;
       sp.awaitingBgFrameHandoff = false;
     }
@@ -3187,7 +3200,9 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         state: cachedState,
         settings: currentSettings,
         snoozed: localOverlay.snoozed,
-        audibleAppId: getAudibleBgAudioAppId()
+        audibleAppId: getAudibleBgAudioAppId(),
+        sidebarOpenCount: sidebarPortCount,
+        isAutoPausedByTabAudio
       });
 
     case 'PREWARM_APP_SESSION':
@@ -3331,6 +3346,9 @@ browser.runtime.onMessage.addListener((msg, sender) => {
           });
         }
         refreshBgAudioIndicator();
+        if (patch.autoPauseOnTabAudio !== undefined) {
+          checkExternalTabAudioState();
+        }
         if (patch.pollIntervalSeconds !== undefined && patch.pollIntervalSeconds !== prevPoll) {
           restartPollingTimer();
         }
@@ -3733,6 +3751,180 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       return Promise.resolve({ ok: false });
   }
 });
+
+// Opera GX-style Auto-Pause & Auto-Resume when external browser tabs play audio
+let isAutoPausedByTabAudio = false;
+const tabAutoPausedSpAppIds = new Set();
+const tabAutoPausedMseAppIds = new Set();
+
+function pauseAllForTabAudioAutoPause() {
+  tabAutoPausedSpAppIds.clear();
+  tabAutoPausedMseAppIds.clear();
+
+  bgSpEmePlayers.forEach((sp, appId) => {
+    if (!sp || sp.disposed || sp.explicitUserPause) return;
+    const isPlayingNow = Boolean(
+      (sp.videoEl && !sp.videoEl.paused) ||
+      !sp.remotePaused ||
+      liveMediaPlaybackState.get(appId)?.isPlaying
+    );
+    if (isPlayingNow) {
+      sp.autoPausedByTab = true;
+      sp.remotePaused = true;
+      tabAutoPausedSpAppIds.add(appId);
+      if (sp.videoEl && !sp.videoEl.paused) {
+        try {
+          sp.videoEl.pause();
+        } catch (_) {}
+      }
+    }
+  });
+
+  bgMsePlayers.forEach((player, appId) => {
+    if (player && player.audioEl && !player.audioEl.paused) {
+      tabAutoPausedMseAppIds.add(appId);
+      try {
+        player.audioEl.pause();
+      } catch (_) {}
+    }
+  });
+
+  bgAudioPool.forEach((entry) => {
+    try {
+      if (entry && entry.iframe && entry.iframe.contentWindow) {
+        entry.iframe.contentWindow.postMessage(
+          { target: 'pocketmail-media-frame', cmd: 'TAB_AUDIO_AUTO_PAUSE' },
+          '*'
+        );
+      }
+    } catch (_) {}
+  });
+
+  browser.runtime
+    .sendMessage({
+      type: 'PM_TAB_AUDIO_AUTO_PAUSE_STATE',
+      autoPaused: true
+    })
+    .catch(() => {});
+
+  refreshBgAudioIndicator();
+}
+
+function resumeAllFromTabAudioAutoPause() {
+  isAutoPausedByTabAudio = false;
+
+  bgSpEmePlayers.forEach((sp, appId) => {
+    if (!sp || sp.disposed) return;
+    if ((sp.autoPausedByTab || tabAutoPausedSpAppIds.has(appId)) && !sp.explicitUserPause) {
+      sp.autoPausedByTab = false;
+      sp.remotePaused = false;
+      sp.lastPlayedAt = Date.now();
+      if (sp.videoEl) {
+        if (sp.isClear) {
+          const p = sp.videoEl.play();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        } else {
+          syncSpInstanceTimeAndPlay(sp, false);
+        }
+      }
+      const st = liveMediaPlaybackState.get(appId);
+      if (st) {
+        st.isPlaying = true;
+        st.updatedAt = Date.now();
+      }
+    }
+  });
+  tabAutoPausedSpAppIds.clear();
+
+  tabAutoPausedMseAppIds.forEach((appId) => {
+    const player = bgMsePlayers.get(appId);
+    if (player && player.audioEl && player.audioEl.paused) {
+      player.audioEl.play().catch(() => {});
+    }
+  });
+  tabAutoPausedMseAppIds.clear();
+
+  bgAudioPool.forEach((entry) => {
+    try {
+      if (entry && entry.iframe && entry.iframe.contentWindow) {
+        entry.iframe.contentWindow.postMessage(
+          { target: 'pocketmail-media-frame', cmd: 'TAB_AUDIO_AUTO_RESUME' },
+          '*'
+        );
+      }
+    } catch (_) {}
+  });
+
+  browser.runtime
+    .sendMessage({
+      type: 'PM_TAB_AUDIO_AUTO_PAUSE_STATE',
+      autoPaused: false
+    })
+    .catch(() => {});
+
+  refreshBgAudioIndicator();
+}
+
+async function checkExternalTabAudioState() {
+  if (currentSettings.autoPauseOnTabAudio === false) {
+    if (isAutoPausedByTabAudio) {
+      resumeAllFromTabAudioAutoPause();
+    }
+    return;
+  }
+  try {
+    const audibleTabs = await browser.tabs.query({ audible: true });
+    const externalAudible = (audibleTabs || []).filter((t) => {
+      if (!t || !t.audible) return false;
+      if (t.mutedInfo && t.mutedInfo.muted) return false;
+      if (t.windowId && companionWindowIds.has(t.windowId)) return false;
+      if (t.id && t.id === activeCompanionTabId) return false;
+      const url = String(t.url || '');
+      if (url.startsWith('moz-extension://')) return false;
+      return true;
+    });
+
+    if (externalAudible.length > 0) {
+      if (!isAutoPausedByTabAudio) {
+        isAutoPausedByTabAudio = true;
+        pauseAllForTabAudioAutoPause();
+      }
+    } else if (isAutoPausedByTabAudio) {
+      resumeAllFromTabAudioAutoPause();
+    }
+  } catch (_) {}
+}
+
+if (browser.tabs && browser.tabs.onUpdated) {
+  browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.audible !== undefined || changeInfo.mutedInfo !== undefined) {
+      checkExternalTabAudioState();
+    }
+  });
+}
+
+if (browser.tabs && browser.tabs.onRemoved) {
+  browser.tabs.onRemoved.addListener(() => {
+    setTimeout(checkExternalTabAudioState, 60);
+  });
+}
+
+if (browser.commands && browser.commands.onCommand) {
+  browser.commands.onCommand.addListener(async (command) => {
+    if (command === 'open-foxhub-popout') {
+      const url = browser.runtime.getURL('src/popup/popup.html?popout=1');
+      const win = await browser.windows.create({
+        url,
+        type: 'popup',
+        width: 560,
+        height: 820
+      });
+      if (win && win.id) {
+        companionWindowIds.add(win.id);
+      }
+    }
+  });
+}
 
 // Initialize on extension startup
 (async function init() {

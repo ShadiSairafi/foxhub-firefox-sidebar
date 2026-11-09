@@ -38,7 +38,7 @@
 }
 
 html, body {
-  width: var(--popup-width, 520px);
+  width: var(--popup-width, 560px);
   height: var(--popup-height, 600px);
   overflow: hidden;
   background-color: var(--bg-base);
@@ -72,15 +72,14 @@ html[data-sidebar="true"] body {
   }
 }
 
-/* Two Distinct Versions:
-   1. Top-Right Extensions Popup (data-view-mode="popup"): Clean Email Companion Popup
-   2. Left Sidebar (data-view-mode="sidebar"): Full-Height 100vh Opera Sidebar with Media & Social Rail */
+/* Both Top-Right Floating Popup (data-view-mode="popup") and Left Sidebar (data-view-mode="sidebar")
+   include the full Opera-Style Social & Media Sidebar Rail by default */
 html[data-view-mode="popup"] .pm-opera-rail {
-  display: none;
+  display: flex;
 }
 
-html[data-view-mode="popup"].show-popup-rail .pm-opera-rail {
-  display: flex;
+html[data-view-mode="popup"].hide-popup-rail .pm-opera-rail {
+  display: none;
 }
 
 html[data-sidebar="true"] #btn-open-sidebar,
@@ -3304,4 +3303,21 @@ html[data-sidebar="true"] .pm-card-actions {
   background: rgba(220, 53, 69, 0.13);
   color: #d93025;
 }
+
+.pm-rail-ctx-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.pm-rail-item.is-night-active,
+.pm-icon-btn.is-night-active {
+  background: rgba(255, 107, 74, 0.18) !important;
+  color: #FF6B4A !important;
+  border-color: rgba(255, 107, 74, 0.42) !important;
+}
+
 
