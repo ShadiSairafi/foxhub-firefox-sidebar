@@ -2465,6 +2465,86 @@ html[data-sidebar="true"] .pm-resize-grip {
   flex-shrink: 0;
 }
 
+/* First-Install Curved-Arrow Coachmark Pointing at Bottom-Left Settings Gear (Max 2 Times) */
+.pm-settings-gear-coachmark {
+  position: fixed;
+  left: 44px;
+  bottom: 8px;
+  z-index: 950;
+  max-width: min(350px, calc(100vw - 56px));
+  padding: 9px 11px 9px 9px;
+  border-radius: 13px;
+  background: rgba(20, 16, 15, 0.95);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid var(--accent);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: #FAF3E8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: pmCoachmarkPopIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pm-settings-gear-coachmark.hidden {
+  display: none !important;
+}
+
+.pm-settings-coachmark-arrow {
+  width: 32px;
+  height: 28px;
+  color: var(--accent);
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
+  animation: pmCurvedArrowNudge 1.05s ease-in-out infinite alternate;
+}
+
+.pm-settings-coachmark-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 1.32;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.pm-settings-coachmark-body strong {
+  font-size: 11.5px;
+  color: #FFFFFF;
+}
+
+.pm-settings-coachmark-body span {
+  color: rgba(250, 243, 232, 0.84);
+}
+
+#rail-btn-sidebar-settings.is-coachmark-target {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 12px var(--accent) !important;
+}
+
+@keyframes pmCurvedArrowNudge {
+  0% {
+    transform: translate(2px, -2px);
+  }
+  100% {
+    transform: translate(-3px, 2px);
+  }
+}
+
+@keyframes pmCoachmarkPopIn {
+  0% {
+    opacity: 0;
+    transform: translate(-8px, 8px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
 @keyframes pmHintSlideIn {
   0% { opacity: 0; transform: translate(-50%, -8px); }
   100% { opacity: 1; transform: translate(-50%, 0); }

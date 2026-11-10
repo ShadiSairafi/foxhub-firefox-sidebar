@@ -853,6 +853,43 @@
               <button class="pm-opt-pill" data-social-theme="midnight-oled">Midnight Indigo</button>
               <button class="pm-opt-pill" data-social-theme="rose-twilight">Rose Twilight</button>
             </div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color);">
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+                <span style="font-size:12px;font-weight:700;color:var(--text-primary);display:inline-flex;align-items:center;gap:5px;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="20" y2="12"/><circle cx="14" cy="12" r="3" fill="var(--accent)"/></svg>
+                  <span>Custom Video Loadbar (TikTok, Reels &amp; Shorts):</span>
+                </span>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Show our interactive bottom video progress &amp; seek bar on TikTok, Instagram Reels, and YouTube Shorts (On by default)">
+                  <input type="checkbox" id="chk-custom-video-loadbar" checked>
+                  <span>Enabled (On by Default)</span>
+                </label>
+              </div>
+              <div id="pm-loadbar-customizer-wrap">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:5px;">
+                  <span style="font-size:10.8px;font-weight:600;color:var(--text-secondary);">Loadbar Color Style:</span>
+                  <label style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--text-secondary);cursor:pointer;" title="Pick a custom hex color for the video loadbar">
+                    <span>Custom Hex:</span>
+                    <input type="color" id="input-loadbar-custom-color" value="#FF3366" style="width:24px;height:20px;border:none;background:none;cursor:pointer;padding:0;">
+                  </label>
+                </div>
+                <div class="pm-option-grid" id="opt-loadbar-style-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:7px;">
+                  <button class="pm-opt-pill" data-loadbar-style="sunset" title="Default Sunset Glow (#ff3366 → #ff6b3d → #a29bfe)">Sunset Glow</button>
+                  <button class="pm-opt-pill" data-loadbar-style="accent" title="Matches your active FoxHub theme accent color">Match Theme</button>
+                  <button class="pm-opt-pill" data-loadbar-style="cyber" title="Neon Cyber (#00f2fe → #4facfe → #f093fb)">Neon Cyber</button>
+                  <button class="pm-opt-pill" data-loadbar-style="emerald" title="Emerald Mint (#1DB954 → #00d2d3)">Emerald Mint</button>
+                  <button class="pm-opt-pill" data-loadbar-style="minimal-white" title="Minimalist Crisp White">Minimal White</button>
+                  <button class="pm-opt-pill" data-loadbar-style="custom" title="Uses your Custom Hex color picker above">Custom Color</button>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                  <span style="font-size:10.8px;font-weight:600;color:var(--text-secondary);">Bar Thickness:</span>
+                  <div class="pm-option-grid" id="opt-loadbar-size-grid" style="grid-template-columns:repeat(3,1fr);flex:1;max-width:250px;">
+                    <button class="pm-opt-pill" data-loadbar-size="slim">Slim (3px)</button>
+                    <button class="pm-opt-pill" data-loadbar-size="normal">Normal (4px)</button>
+                    <button class="pm-opt-pill" data-loadbar-size="bold">Bold (6px)</button>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div style="font-size:10.7px;line-height:1.42;color:var(--text-secondary);background:rgba(128,128,128,0.08);border-radius:8px;padding:7px 9px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
               <span><strong>Keyboard Shortcuts:</strong> <code>Alt+Shift+F</code> Floating Overlay Popup &bull; <code>Alt+Shift+M</code> Left Sidebar &bull; <code>Alt+Shift+W</code> Popout Window</span>
             </div>
@@ -890,6 +927,19 @@
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         <span id="lbl-selection-copy-pill">Copy Selection</span>
       </button>
+
+      <!-- First-Install Curved-Arrow Coachmark Pointing at the Bottom-Left Settings Gear (Shows at most 2 times) -->
+      <div id="pm-settings-gear-coachmark" class="pm-settings-gear-coachmark hidden" role="status">
+        <svg class="pm-settings-coachmark-arrow" width="34" height="30" viewBox="0 0 34 30" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M31 6C21 6 15 11 9 21" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+          <polyline points="4 14 7 23 16 20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div id="pm-settings-coachmark-body" class="pm-settings-coachmark-body" title="Click to open Sidebar &amp; Media Settings">
+          <strong>Sidebar &amp; Media Settings Here</strong>
+          <span>Configure Persistent App Memory, Background Audio, Tab Auto-Pause, Custom Video Loadbar &amp; Dark Themes.</span>
+        </div>
+        <button type="button" id="btn-dismiss-settings-coachmark" class="pm-topbar-hint-btn">Got it</button>
+      </div>
 
       <!-- Toast Notification Pill -->
       <div id="pm-toast" class="pm-toast hidden"></div>

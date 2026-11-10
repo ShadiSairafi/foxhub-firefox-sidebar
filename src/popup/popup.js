@@ -1690,12 +1690,38 @@
                 target: 'pocketmail-media-frame',
                 cmd: 'APPLY_APP_THEME',
                 themeMode,
-                accentColor
+                accentColor,
+                customVideoLoadbar: appSettings.customVideoLoadbar !== false,
+                videoLoadbarStyle: appSettings.videoLoadbarStyle || 'sunset',
+                videoLoadbarColor: appSettings.videoLoadbarColor || '#FF3366',
+                videoLoadbarSize: appSettings.videoLoadbarSize || 'normal'
               },
               '*'
             );
           } catch (_) {}
         }
+      }
+    });
+  }
+
+  function broadcastVideoLoadbarConfig() {
+    const accentColor = getSocialAppAccentColor();
+    mediaFramePool.forEach((entry) => {
+      if (entry.frame && entry.frame.contentWindow) {
+        try {
+          entry.frame.contentWindow.postMessage(
+            {
+              target: 'pocketmail-media-frame',
+              cmd: 'APPLY_LOADBAR_CONFIG',
+              accentColor,
+              customVideoLoadbar: appSettings.customVideoLoadbar !== false,
+              videoLoadbarStyle: appSettings.videoLoadbarStyle || 'sunset',
+              videoLoadbarColor: appSettings.videoLoadbarColor || '#FF3366',
+              videoLoadbarSize: appSettings.videoLoadbarSize || 'normal'
+            },
+            '*'
+          );
+        } catch (_) {}
       }
     });
   }
@@ -3119,6 +3145,7 @@
     renderMediaBottomBar(app);
     maybeShowFirstTimeTopBarHint();
     maybeShowPersistentMemoryHint();
+    maybeShowSettingsGearCoachmark();
 
     if (canUseSmoothSpaNav) {
       // Smooth 0ms in-app SPA navigation without reloading the iframe!
@@ -3252,6 +3279,43 @@
     }, 1600);
   }
 
+  let hasShownSettingsGearHintThisSession = false;
+  let settingsGearCoachmarkTimer = null;
+
+  function hideSettingsGearCoachmark(markCompleted = false) {
+    clearTimeout(settingsGearCoachmarkTimer);
+    document.getElementById('pm-settings-gear-coachmark')?.classList.add('hidden');
+    document.getElementById('rail-btn-sidebar-settings')?.classList.remove('is-coachmark-target');
+    if (markCompleted && (Number(appSettings.settingsGearHintCount) || 0) < 2) {
+      appSettings.settingsGearHintCount = 2;
+      saveSettingsPatch({ settingsGearHintCount: 2 });
+    }
+  }
+
+  function maybeShowSettingsGearCoachmark() {
+    if (hasShownSettingsGearHintThisSession) return;
+    const shownCount = Number(appSettings.settingsGearHintCount) || 0;
+    if (shownCount >= 2) return;
+    const coachEl = document.getElementById('pm-settings-gear-coachmark');
+    const gearBtn = document.getElementById('rail-btn-sidebar-settings');
+    if (!coachEl || !gearBtn) return;
+
+    hasShownSettingsGearHintThisSession = true;
+    const nextCount = shownCount + 1;
+    appSettings.settingsGearHintCount = nextCount;
+    saveSettingsPatch({ settingsGearHintCount: nextCount });
+
+    setTimeout(() => {
+      if (mediaAppsDrawer && !mediaAppsDrawer.classList.contains('hidden')) return;
+      coachEl.classList.remove('hidden');
+      gearBtn.classList.add('is-coachmark-target');
+      clearTimeout(settingsGearCoachmarkTimer);
+      settingsGearCoachmarkTimer = setTimeout(() => {
+        hideSettingsGearCoachmark(false);
+      }, 10500);
+    }, 900);
+  }
+
   function syncMediaTopBarAutoHideState() {
     const mode = getTopBarMode();
     const isAutoHide = mode === 'hover';
@@ -3294,6 +3358,29 @@
     if (chkSocialSounds) {
       chkSocialSounds.checked = appSettings.socialAppNotifySounds !== false;
     }
+
+    // Custom Video Progress Loadbar Controls
+    const loadbarEnabled = appSettings.customVideoLoadbar !== false;
+    const chkVideoLoadbar = document.getElementById('chk-custom-video-loadbar');
+    if (chkVideoLoadbar) {
+      chkVideoLoadbar.checked = loadbarEnabled;
+    }
+    const loadbarCustomizerWrap = document.getElementById('pm-loadbar-customizer-wrap');
+    if (loadbarCustomizerWrap) {
+      loadbarCustomizerWrap.classList.toggle('hidden', !loadbarEnabled);
+    }
+    const loadbarStyle = appSettings.videoLoadbarStyle || 'sunset';
+    document.querySelectorAll('[data-loadbar-style]').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-loadbar-style') === loadbarStyle);
+    });
+    const loadbarColorInput = document.getElementById('input-loadbar-custom-color');
+    if (loadbarColorInput && appSettings.videoLoadbarColor) {
+      loadbarColorInput.value = appSettings.videoLoadbarColor;
+    }
+    const loadbarSize = appSettings.videoLoadbarSize || 'normal';
+    document.querySelectorAll('[data-loadbar-size]').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-loadbar-size') === loadbarSize);
+    });
 
     // Persistent App Memory & Background Audio Controls
     const pMode = appSettings.persistenceMode || 'selected';
@@ -3853,6 +3940,14 @@
 
   function renderAll() {
     PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
+    if (
+      activeRailAppId === 'pocketmail' &&
+      mediaWorkspace &&
+      !mediaWorkspace.classList.contains('hidden') &&
+      !mediaWorkspace.classList.contains('pm-workspace-keepalive')
+    ) {
+      hideMediaWorkspaceKeepAlive();
+    }
     renderOperaRail();
     renderHeaderStatus();
     renderAccountsBar();
@@ -4068,7 +4163,6 @@
     document.getElementById('rail-btn-mail')?.addEventListener('click', () => {
       activeRailAppId = 'pocketmail';
       activeSidebarHubSection = '';
-      hideMediaFreezeFrame(true);
       hideMediaWorkspaceKeepAlive();
       mediaAppsDrawer?.classList.add('hidden');
       syncSidebarHubRailButtons();
@@ -4111,6 +4205,17 @@
     });
 
     document.getElementById('rail-btn-sidebar-settings')?.addEventListener('click', () => {
+      hideSettingsGearCoachmark(true);
+      openSidebarHubDrawer('settings');
+    });
+
+    document.getElementById('btn-dismiss-settings-coachmark')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hideSettingsGearCoachmark(false);
+    });
+
+    document.getElementById('pm-settings-coachmark-body')?.addEventListener('click', () => {
+      hideSettingsGearCoachmark(true);
       openSidebarHubDrawer('settings');
     });
 
@@ -4142,6 +4247,65 @@
       const enabled = Boolean(e.target.checked);
       await saveSettingsPatch({ socialAppNotifySounds: enabled });
       showToast(enabled ? 'Social app message sounds enabled' : 'Social app message sounds muted');
+    });
+
+    document.getElementById('chk-custom-video-loadbar')?.addEventListener('change', async (e) => {
+      const enabled = Boolean(e.target.checked);
+      await saveSettingsPatch({ customVideoLoadbar: enabled });
+      renderMediaAppsManager();
+      broadcastVideoLoadbarConfig();
+      showToast(
+        enabled
+          ? 'Custom Video Loadbar enabled for TikTok, Reels & Shorts'
+          : 'Custom Video Loadbar turned off'
+      );
+    });
+
+    document.querySelectorAll('[data-loadbar-style]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const styleVal = btn.getAttribute('data-loadbar-style') || 'sunset';
+        await saveSettingsPatch({
+          customVideoLoadbar: true,
+          videoLoadbarStyle: styleVal
+        });
+        renderMediaAppsManager();
+        broadcastVideoLoadbarConfig();
+        showToast(`Video Loadbar Style: ${btn.textContent.trim()}`);
+      });
+    });
+
+    document.getElementById('input-loadbar-custom-color')?.addEventListener('input', async (e) => {
+      const colorVal = e.target.value || '#FF3366';
+      appSettings.customVideoLoadbar = true;
+      appSettings.videoLoadbarStyle = 'custom';
+      appSettings.videoLoadbarColor = colorVal;
+      renderMediaAppsManager();
+      broadcastVideoLoadbarConfig();
+    });
+
+    document.getElementById('input-loadbar-custom-color')?.addEventListener('change', async (e) => {
+      const colorVal = e.target.value || '#FF3366';
+      await saveSettingsPatch({
+        customVideoLoadbar: true,
+        videoLoadbarStyle: 'custom',
+        videoLoadbarColor: colorVal
+      });
+      renderMediaAppsManager();
+      broadcastVideoLoadbarConfig();
+      showToast(`Custom Loadbar Color: ${colorVal.toUpperCase()}`);
+    });
+
+    document.querySelectorAll('[data-loadbar-size]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const sizeVal = btn.getAttribute('data-loadbar-size') || 'normal';
+        await saveSettingsPatch({
+          customVideoLoadbar: true,
+          videoLoadbarSize: sizeVal
+        });
+        renderMediaAppsManager();
+        broadcastVideoLoadbarConfig();
+        showToast(`Video Loadbar Thickness: ${btn.textContent.trim()}`);
+      });
     });
 
     document.querySelectorAll('[data-persistence-mode]').forEach((btn) => {
@@ -4493,6 +4657,7 @@
 
       if (data.type === 'PM_FRAME_START') {
         broadcastSocialAppTheme();
+        broadcastVideoLoadbarConfig();
       } else if (data.type === 'PM_FRAME_NAV_START') {
         if (sourceEntry) {
           sourceEntry.lastNavAt = Date.now();
@@ -4544,6 +4709,7 @@
           hideMediaBrandLoader();
         }
         broadcastSocialAppTheme();
+        broadcastVideoLoadbarConfig();
       } else if (data.type === 'PM_FRAME_VISUAL_READY' || data.type === 'PM_FRAME_LOADED') {
         if (sourceEntry) {
           sourceEntry.loaded = true;
@@ -5808,6 +5974,14 @@
         appState = msg.state;
         appSettings = msg.settings;
         renderAll();
+      } else if (msg.type === 'OPEN_MAIL_WORKSPACE') {
+        activeRailAppId = 'pocketmail';
+        activeSidebarHubSection = '';
+        hideMediaWorkspaceKeepAlive();
+        mediaAppsDrawer?.classList.add('hidden');
+        syncSidebarHubRailButtons();
+        renderAll();
+        triggerSilentMailSync(2500);
       } else if (msg.type === 'BG_AUDIO_STATUS_CHANGED') {
         currentAudibleBgAppId = msg.audibleAppId || null;
         renderOperaRail();
@@ -6213,6 +6387,7 @@
       renderAll();
       sidebarInitCompleted = true;
       saveFastBootCache();
+      maybeShowSettingsGearCoachmark();
 
       // Immediately trigger a non-blocking fresh Gmail sync on open, window focus, and every 10s while Mail is visible
       // so newly requested 2FA codes arrive in seconds without waiting for the 30s background poll timer!

@@ -38,6 +38,11 @@ const DEFAULT_SETTINGS = {
   persistenceMode: 'selected',  // 'eco' (reset & free RAM) | 'selected' (custom picked apps) | 'all' (all apps persistent)
   persistentAppIds: [],         // All apps OFF by default! User can toggle individual apps ON anytime
   persistentMemoryHintCount: 0, // Shows a gentle 1-or-2-time-ever notice when all persistent apps are OFF
+  settingsGearHintCount: 0,     // Shows a curved-arrow coachmark pointing at the Settings gear up to 2 times
+  customVideoLoadbar: true,     // On by default: custom interactive video progress/seek bar on TikTok, Reels & Shorts
+  videoLoadbarStyle: 'sunset',  // 'sunset' | 'accent' | 'cyber' | 'emerald' | 'minimal-white' | 'custom'
+  videoLoadbarColor: '#FF3366', // Custom hex color when videoLoadbarStyle === 'custom'
+  videoLoadbarSize: 'normal',   // 'slim' | 'normal' | 'bold'
   persistentLastActiveAppId: 'pocketmail',
   persistentSavedAppUrls: {},   // { spotify: 'https://...', youtube: 'https://...', ... }
   keepAudioPlayingWhenClosed: true,
@@ -538,6 +543,22 @@ async function syncAllAccounts(options = {}) {
     return cachedState;
   }
 }
+
+try {
+  if (browser.notifications && browser.notifications.onClicked) {
+    browser.notifications.onClicked.addListener((notificationId) => {
+      if (typeof notificationId === 'string' && (notificationId.startsWith('pm-msg-') || notificationId.startsWith('pm-snooze-'))) {
+        browser.runtime
+          .sendMessage({
+            type: 'OPEN_MAIL_WORKSPACE',
+            state: cachedState,
+            settings: currentSettings
+          })
+          .catch(() => {});
+      }
+    });
+  }
+} catch (_) {}
 
 /**
  * Check Snoozed Emails every minute and wake due emails

@@ -2688,7 +2688,7 @@
       `;
     } else if (host.includes('reddit.com')) {
       css += `
-        /* 7. Reddit & Reddit Chat Narrow Sidebar Optimization */
+        /* 7. Reddit & Reddit Chat Sidebar Optimization (All Sidebar & Fit-Zoom Widths) */
         shreddit-experience-tree,
         xpromo-app-selector,
         shreddit-async-loader[bundlename*="xpromo"],
@@ -2696,10 +2696,25 @@
           display: none !important;
         }
 
-        @media (max-width: 960px) {
-          /* Hide ONLY the desktop right-hand info sidebar; keep #left-sidebar-container / reddit-sidebar-nav functional when the ☰ drawer opens! */
-          #right-sidebar-container {
+        @media (max-width: 2400px) {
+          /* Hide the desktop right-hand info sidebar so the post/feed fills 100% of the FoxHub sidebar width */
+          #right-sidebar-container,
+          aside[aria-label*="sidebar" i],
+          div[id*="right-sidebar"] {
             display: none !important;
+            width: 0 !important;
+            min-width: 0 !important;
+            max-width: 0 !important;
+          }
+
+          /* At wide Fit-zoom or wide sidebar widths (>960px), keep #left-sidebar-container collapsed unless opened via ☰ so it never steals a 272px column or stacks above the feed */
+          @media (min-width: 961px) {
+            #left-sidebar-container:not([open]):not(:focus-within) {
+              display: none !important;
+              width: 0 !important;
+              min-width: 0 !important;
+              max-width: 0 !important;
+            }
           }
 
           /* Ensure the ☰ hamburger left drawer opens cleanly on top of the backdrop */
@@ -2707,18 +2722,30 @@
           #left-sidebar-container:focus-within,
           reddit-sidebar-nav {
             z-index: 9999 !important;
-            max-width: 82vw !important;
+            max-width: min(320px, 82vw) !important;
           }
 
+          /* Collapse .main-container's 2-column grid (minmax(0,1fr) 316px) into a single 100%-width column so no 340px black void remains on the right! */
+          shreddit-app,
           div.grid-container,
           .subgrid-container,
+          .main-container,
+          div[class*="grid-container"],
+          div[class*="subgrid-container"],
+          div[class*="main-container"],
           main.main,
+          main,
           #main-content,
           shreddit-feed,
           shreddit-post,
+          shreddit-comment-tree,
+          div[slot="text-body"],
+          shreddit-post [slot="post-media-container"],
+          shreddit-post figure,
           article {
             grid-template-columns: minmax(0, 1fr) !important;
-            max-width: 100vw !important;
+            flex: 1 1 100% !important;
+            max-width: 100% !important;
             width: 100% !important;
             min-width: 0 !important;
             margin-left: 0 !important;
@@ -2726,9 +2753,10 @@
             box-sizing: border-box !important;
           }
           .subgrid-container,
+          .main-container,
           main.main {
-            padding-left: 6px !important;
-            padding-right: 6px !important;
+            padding-left: 8px !important;
+            padding-right: 8px !important;
           }
 
           /* Fix Top-Right Profile Avatar Overflow in Reddit Header */
@@ -5026,6 +5054,37 @@
     window.addEventListener('click', interceptStoryPortalClick, true);
   }
 
+  let videoLoadbarConfig = {
+    enabled: true,
+    style: 'sunset',
+    customColor: '#FF3366',
+    size: 'normal',
+    accentColor: initialSyncAccent || '#D95032'
+  };
+  let applyVideoLoadbarVisualsNow = null;
+
+  function updateVideoLoadbarConfig(patch = {}) {
+    if (!patch || typeof patch !== 'object') return;
+    if (patch.customVideoLoadbar !== undefined) {
+      videoLoadbarConfig.enabled = patch.customVideoLoadbar !== false;
+    }
+    if (typeof patch.videoLoadbarStyle === 'string' && patch.videoLoadbarStyle) {
+      videoLoadbarConfig.style = patch.videoLoadbarStyle;
+    }
+    if (typeof patch.videoLoadbarColor === 'string' && patch.videoLoadbarColor) {
+      videoLoadbarConfig.customColor = patch.videoLoadbarColor;
+    }
+    if (typeof patch.videoLoadbarSize === 'string' && patch.videoLoadbarSize) {
+      videoLoadbarConfig.size = patch.videoLoadbarSize;
+    }
+    if (typeof patch.accentColor === 'string' && patch.accentColor) {
+      videoLoadbarConfig.accentColor = patch.accentColor;
+    }
+    if (typeof applyVideoLoadbarVisualsNow === 'function') {
+      applyVideoLoadbarVisualsNow();
+    }
+  }
+
   function setupScrollingVideoScrubberBar() {
     if (isBgAudioFrame) return;
     const isSupportedHost =
@@ -5045,6 +5104,37 @@
     let boundVideo = null;
     let videoResizeObs = null;
     let rafPending = false;
+
+    const getLoadbarStyleSpec = () => {
+      const st = videoLoadbarConfig.style || 'sunset';
+      const sz = videoLoadbarConfig.size || 'normal';
+      const acc = videoLoadbarConfig.accentColor || '#D95032';
+      const customCol = videoLoadbarConfig.customColor || '#FF3366';
+
+      let fillBg = 'linear-gradient(90deg, #ff3366 0%, #ff6b3d 55%, #a29bfe 100%)';
+      let ringCol = '#ff3366';
+      if (st === 'accent') {
+        fillBg = `linear-gradient(90deg, ${acc} 0%, #ff7675 60%, ${acc} 100%)`;
+        ringCol = acc;
+      } else if (st === 'cyber') {
+        fillBg = 'linear-gradient(90deg, #00f2fe 0%, #4facfe 50%, #f093fb 100%)';
+        ringCol = '#00f2fe';
+      } else if (st === 'emerald') {
+        fillBg = 'linear-gradient(90deg, #1DB954 0%, #00d2d3 100%)';
+        ringCol = '#1DB954';
+      } else if (st === 'minimal-white') {
+        fillBg = '#ffffff';
+        ringCol = '#ffffff';
+      } else if (st === 'custom') {
+        fillBg = customCol;
+        ringCol = customCol;
+      }
+
+      const baseH = sz === 'slim' ? '3px' : sz === 'bold' ? '6px' : '4px';
+      const hoverH = sz === 'slim' ? '6px' : sz === 'bold' ? '9px' : '7px';
+      const thumbDim = sz === 'slim' ? '10px' : sz === 'bold' ? '14px' : '12px';
+      return { fillBg, ringCol, baseH, hoverH, thumbDim };
+    };
 
     const isScrollingVideoRoute = () => {
       const p = window.location.pathname || '/';
@@ -5223,13 +5313,19 @@
 
       const setHoverVisual = (active) => {
         isHovering = active;
-        if (!trackEl || !thumbEl || !tooltipEl) return;
-        trackEl.style.height = active || isDragging ? '7px' : '4px';
+        if (!trackEl || !thumbEl || !tooltipEl || !fillEl) return;
+        const spec = getLoadbarStyleSpec();
+        fillEl.style.background = spec.fillBg;
+        thumbEl.style.width = spec.thumbDim;
+        thumbEl.style.height = spec.thumbDim;
+        thumbEl.style.boxShadow = `0 0 8px rgba(0,0,0,0.65), 0 0 0 2px ${spec.ringCol}`;
+        trackEl.style.height = active || isDragging ? spec.hoverH : spec.baseH;
         trackEl.style.background = active || isDragging ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.26)';
         thumbEl.style.transform = active || isDragging ? 'translate(-50%, -50%) scale(1.08)' : 'translate(-50%, -50%) scale(0.75)';
         thumbEl.style.opacity = active || isDragging ? '1' : '0.85';
         tooltipEl.style.opacity = active || isDragging ? '1' : '0';
       };
+      setHoverVisual(false);
 
       const updateScrubFromEvent = (ev, commitSeek = true) => {
         const v = dragVideo || findActiveReelVideo();
@@ -5368,9 +5464,17 @@
       if (host.includes('instagram.com')) {
         syncInstagramModalVideoControls();
       }
-      if (!isScrollingVideoRoute()) {
+      if (!videoLoadbarConfig.enabled || !isScrollingVideoRoute()) {
         if (scrubberEl) scrubberEl.style.display = 'none';
         return;
+      }
+      if (trackEl && fillEl && thumbEl) {
+        const spec = getLoadbarStyleSpec();
+        fillEl.style.background = spec.fillBg;
+        thumbEl.style.width = spec.thumbDim;
+        thumbEl.style.height = spec.thumbDim;
+        thumbEl.style.boxShadow = `0 0 8px rgba(0,0,0,0.65), 0 0 0 2px ${spec.ringCol}`;
+        trackEl.style.height = isHovering || isDragging ? spec.hoverH : spec.baseH;
       }
       const vh = window.innerHeight || 600;
       const vw = window.innerWidth || 420;
@@ -5480,6 +5584,7 @@
         syncInstagramModalVideoControls();
       }
     };
+    applyVideoLoadbarVisualsNow = () => syncScrubberUi(false);
 
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const createIgSpeakerSvg = (muted) => {
@@ -8112,6 +8217,10 @@
         break;
       case 'APPLY_APP_THEME':
         injectAppThemeCss(msg.themeMode || 'native', msg.accentColor || '#6C5CE7');
+        updateVideoLoadbarConfig(msg);
+        break;
+      case 'APPLY_LOADBAR_CONFIG':
+        updateVideoLoadbarConfig(msg);
         break;
       case 'ZOOM_FIT': {
         if (Math.abs(currentZoom - 1.0) > 0.04) {
@@ -8157,18 +8266,26 @@
     try {
       if (browser.storage.local && typeof browser.storage.local.get === 'function') {
         browser.storage.local
-          .get('pmTabAudioTrigger')
+          .get(['pmTabAudioTrigger', 'settings'])
           .then((res) => {
             if (res && res.pmTabAudioTrigger && res.pmTabAudioTrigger.active) {
               applyTriggerState(res.pmTabAudioTrigger);
+            }
+            if (res && res.settings) {
+              updateVideoLoadbarConfig(res.settings);
             }
           })
           .catch(() => {});
       }
       if (browser.storage.onChanged && typeof browser.storage.onChanged.addListener === 'function') {
         browser.storage.onChanged.addListener((changes, area) => {
-          if (area === 'local' && changes && changes.pmTabAudioTrigger && changes.pmTabAudioTrigger.newValue) {
-            applyTriggerState(changes.pmTabAudioTrigger.newValue);
+          if (area === 'local' && changes) {
+            if (changes.pmTabAudioTrigger && changes.pmTabAudioTrigger.newValue) {
+              applyTriggerState(changes.pmTabAudioTrigger.newValue);
+            }
+            if (changes.settings && changes.settings.newValue) {
+              updateVideoLoadbarConfig(changes.settings.newValue);
+            }
           }
         });
       }
