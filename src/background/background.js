@@ -1774,15 +1774,8 @@ function cloneLocalLicAuth(rawUrl, rawHeaders) {
 }
 
 let bypassPersistentCacheUntil = 0;
-const persistentVisualSnapshots = new Map(); // appId -> { html, url, bgColor, themeMode, ts }
 
 try {
-  window.__pmGetVisualSnapshot = (appId) => {
-    if (!appId || !isAppAllowedForPersistence(appId)) return null;
-    const snap = persistentVisualSnapshots.get(appId);
-    if (!snap || !snap.html || Date.now() - (snap.ts || 0) > 12 * 3600 * 1000) return null;
-    return snap;
-  };
   window.__pmGetSyncBootState = () => {
     const activeBgApps = [];
     bgAudioPool.forEach((val, id) => {
@@ -1908,6 +1901,8 @@ function disposeSpPlayerInstance(sp) {
   sp.pendingGenReqs = [];
   try {
     if (sp.videoEl) {
+      sp.videoEl.muted = true;
+      sp.videoEl.volume = 0;
       sp.videoEl.pause();
       sp.videoEl.removeAttribute('src');
       sp.videoEl.load();
@@ -2028,15 +2023,35 @@ let lastExternalTabAudioCheckAt = 0;
 let pendingTabResumeTimer = null;
 let silentMediaRecheckTimer = null;
 const knownActiveMediaTabIds = new Set();
+const recentlyStoppedMediaTabMap = new Map(); // tabId -> stoppedAt
 const audibleOverrideTabIds = new Set();
 const tabAutoPausedSpAppIds = new Set();
 const tabAutoPausedMseAppIds = new Set();
 
+function setTabAudioPauseTrigger(active, stayStopped = false) {
+  const nextActive = Boolean(active);
+  isAutoPausedByTabAudio = nextActive;
+  try {
+    window.__pmTabAudioPauseTrigger = nextActive;
+    window.localStorage.setItem('__pm_tab_audio_trigger', nextActive ? '1' : '0');
+  } catch (_) {}
+  try {
+    browser.storage.local
+      .set({
+        pmTabAudioTrigger: {
+          active: nextActive,
+          stayStopped: Boolean(stayStopped),
+          ts: Date.now()
+        }
+      })
+      .catch(() => {});
+  } catch (_) {}
+}
+
 function isExternalBrowserTab(t) {
   if (!t) return false;
   if (t.mutedInfo && t.mutedInfo.muted) return false;
-  if (t.windowId && companionWindowIds.has(t.windowId)) return false;
-  if (t.id && t.id === activeCompanionTabId) return false;
+  if (t.windowId && (companionWindowIds.has(t.windowId) || t.windowId === activeLoginWindowId)) return false;
   const url = String(t.url || '');
   if (url.startsWith('moz-extension://')) return false;
   return true;
@@ -2054,7 +2069,7 @@ function getTabAudioBehavior() {
 }
 
 function isTabAutoPauseEnforced() {
-  return Boolean(isAutoPausedByTabAudio && !manualOverrideWhileTabAudible && getTabAudioBehavior() !== 'off');
+  return Boolean(isAutoPausedByTabAudio && getTabAudioBehavior() !== 'off');
 }
 
 function syncSpInstanceTimeAndPlay(sp, forceSeek = false) {
@@ -2093,6 +2108,7 @@ function syncSpInstanceTimeAndPlay(sp, forceSeek = false) {
         sp.autoPausedByTab = true;
         if (sp.appId) tabAutoPausedSpAppIds.add(sp.appId);
       }
+      sp.videoEl.muted = true;
       if (!sp.videoEl.paused) {
         sp.videoEl.pause();
       }
@@ -2100,6 +2116,10 @@ function syncSpInstanceTimeAndPlay(sp, forceSeek = false) {
     }
     if (!sp.isStaging && !sp.remotePaused) {
       sp.lastPlayedAt = Date.now();
+      sp.videoEl.muted = Boolean(sp.desiredMuted);
+      if (sp.desiredVolume > 0) {
+        sp.videoEl.volume = sp.desiredVolume;
+      }
       if (sp.videoEl.paused) {
         sp.videoEl.play().catch(() => {});
       }
@@ -2119,12 +2139,16 @@ function syncClearMirrorToFrame(sp, frameTime) {
         sp.autoPausedByTab = true;
         if (sp.appId) tabAutoPausedSpAppIds.add(sp.appId);
       }
+      v.muted = true;
       if (!v.paused) {
         v.pause();
       }
       return;
     }
-    if (!sp.remotePaused) sp.lastPlayedAt = Date.now();
+    if (!sp.remotePaused) {
+      sp.lastPlayedAt = Date.now();
+      v.muted = Boolean(sp.desiredMuted);
+    }
     if (sp.syncHoldUntil && Date.now() < sp.syncHoldUntil) {
       if (sp.minSyncFrameTime && frameTime < sp.minSyncFrameTime) {
         if (v.paused && !sp.remotePaused) v.play().catch(() => {});
@@ -2236,9 +2260,9 @@ function promoteStagingSpPlayer(appId, syncFromActive = true) {
   stagingSp.isStaging = false;
   stagingSp.awaitingBgFrameHandoff = false;
   stagingSp.desiredVolume = activeSp && activeSp.desiredVolume > 0 ? activeSp.desiredVolume : 1.0;
-  stagingSp.desiredMuted = false;
+  stagingSp.desiredMuted = Boolean(activeSp && activeSp.desiredMuted);
   if (stagingSp.videoEl) {
-    stagingSp.videoEl.muted = false;
+    stagingSp.videoEl.muted = isTabAutoPauseEnforced() ? true : stagingSp.desiredMuted;
     stagingSp.videoEl.volume = stagingSp.desiredVolume;
     stagingSp.videoEl.playbackRate = 1.0;
   }
@@ -2251,10 +2275,13 @@ function promoteStagingSpPlayer(appId, syncFromActive = true) {
       stagingSp.autoPausedByTab = true;
       tabAutoPausedSpAppIds.add(appId);
     }
-    if (stagingSp.videoEl && !stagingSp.videoEl.paused) {
-      try {
-        stagingSp.videoEl.pause();
-      } catch (_) {}
+    if (stagingSp.videoEl) {
+      stagingSp.videoEl.muted = true;
+      if (!stagingSp.videoEl.paused) {
+        try {
+          stagingSp.videoEl.pause();
+        } catch (_) {}
+      }
     }
   } else {
     syncSpInstanceTimeAndPlay(stagingSp, shouldForceSeek);
@@ -2283,7 +2310,7 @@ function checkAndPromoteStagingSpPlayer(appId) {
     !activeSp ||
     activeSp.disposed ||
     !activeSp.videoEl ||
-    activeSp.videoEl.paused ||
+    (activeSp.videoEl.paused && !isTabAutoPauseEnforced() && !activeSp.autoPausedByTab) ||
     activeSp.videoEl.ended ||
     (getSpBufferedEnd(activeSp) > 0 && getSpBufferedEnd(activeSp) - (activeSp.videoEl.currentTime || 0) < 0.25);
 
@@ -2509,7 +2536,7 @@ function initSpPlayerInstance(sp) {
     try {
       const v = document.createElement('video');
       v.autoplay = false;
-      v.muted = sp.isStaging ? true : sp.desiredMuted;
+      v.muted = sp.isStaging || isTabAutoPauseEnforced() ? true : sp.desiredMuted;
       v.volume = sp.isStaging ? 0 : sp.desiredVolume;
       document.body.appendChild(v);
       sp.videoEl = v;
@@ -2618,6 +2645,30 @@ function activateSidebarSpTakeover(appId) {
 function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
   if (!appId || !data) return;
   const bt = data.bridgeType;
+
+  if (bt === 'BRIDGE_HELLO') {
+    if (isTabAutoPauseEnforced()) {
+      const stayStopped = getTabAudioBehavior() === 'pause-only';
+      const pauseCmd = stayStopped ? 'PAUSE_LOCAL_MEDIA' : 'TAB_AUDIO_AUTO_PAUSE';
+      const directPort = emeBridgePorts.get(`${sourceType}:${appId}`);
+      if (directPort) {
+        try {
+          directPort.postMessage({ cmd: pauseCmd, markShouldResume: !stayStopped });
+        } catch (_) {}
+      }
+      const bgEntryForPause = bgAudioPool.get(appId);
+      const bgFrameForPause = bgEntryForPause && (bgEntryForPause.frame || bgEntryForPause.iframe);
+      if (bgFrameForPause && bgFrameForPause.contentWindow) {
+        try {
+          bgFrameForPause.contentWindow.postMessage(
+            { target: 'pocketmail-media-frame', cmd: pauseCmd, markShouldResume: !stayStopped },
+            '*'
+          );
+        } catch (_) {}
+      }
+    }
+    return;
+  }
 
   if (bt === 'STOP_PLAYBACK') {
     const curActiveSp = bgSpEmePlayers.get(appId);
@@ -2865,7 +2916,7 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
     if (typeof data.volume === 'number') target.desiredVolume = data.volume;
     if (typeof data.muted === 'boolean') target.desiredMuted = data.muted;
     if (!target.isStaging && target.videoEl) {
-      target.videoEl.muted = target.desiredMuted;
+      target.videoEl.muted = isTabAutoPauseEnforced() ? true : target.desiredMuted;
       target.videoEl.volume = target.desiredVolume;
     }
     return;
@@ -2880,6 +2931,38 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       const st = bgStagingSpPlayers.get(appId);
       if (!st) return;
       st.targetTime = Number(data.currentTime) || 0;
+      if (isTabAutoPauseEnforced() && !data.paused) {
+        const stayStopped = getTabAudioBehavior() === 'pause-only';
+        st.remotePaused = true;
+        st.autoPausedByTab = !stayStopped;
+        if (!stayStopped) tabAutoPausedSpAppIds.add(appId);
+        if (st.videoEl) {
+          st.videoEl.muted = true;
+          if (!st.videoEl.paused) {
+            try {
+              st.videoEl.pause();
+            } catch (_) {}
+          }
+        }
+        const pauseCmd = stayStopped ? 'PAUSE_LOCAL_MEDIA' : 'TAB_AUDIO_AUTO_PAUSE';
+        const directPort = emeBridgePorts.get(`${sourceType}:${appId}`);
+        if (directPort) {
+          try {
+            directPort.postMessage({ cmd: pauseCmd, markShouldResume: !stayStopped });
+          } catch (_) {}
+        }
+        const bgEntryForPause = bgAudioPool.get(appId);
+        const bgFrameForPause = bgEntryForPause && (bgEntryForPause.frame || bgEntryForPause.iframe);
+        if (bgFrameForPause && bgFrameForPause.contentWindow) {
+          try {
+            bgFrameForPause.contentWindow.postMessage(
+              { target: 'pocketmail-media-frame', cmd: pauseCmd, markShouldResume: !stayStopped },
+              '*'
+            );
+          } catch (_) {}
+        }
+        return;
+      }
       if (!data.fromSeek || !data.paused) {
         st.remotePaused = Boolean(data.paused);
       }
@@ -2924,23 +3007,29 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
           sp.autoPausedByTab = true;
           tabAutoPausedSpAppIds.add(appId);
         }
-        if (sp.videoEl && !sp.videoEl.paused) {
-          try {
-            sp.videoEl.pause();
-          } catch (_) {}
+        if (sp.videoEl) {
+          sp.videoEl.muted = true;
+          if (!sp.videoEl.paused) {
+            try {
+              sp.videoEl.pause();
+            } catch (_) {}
+          }
         }
         const pauseCmd = stayStopped ? 'PAUSE_LOCAL_MEDIA' : 'TAB_AUDIO_AUTO_PAUSE';
         const directPort = emeBridgePorts.get(`${sourceType}:${appId}`);
         if (directPort) {
           try {
-            directPort.postMessage({ cmd: pauseCmd });
+            directPort.postMessage({ cmd: pauseCmd, markShouldResume: !stayStopped });
           } catch (_) {}
         }
         const bgEntryForPause = bgAudioPool.get(appId);
         const bgFrameForPause = bgEntryForPause && (bgEntryForPause.frame || bgEntryForPause.iframe);
         if (bgFrameForPause && bgFrameForPause.contentWindow) {
           try {
-            bgFrameForPause.contentWindow.postMessage({ target: 'pocketmail-media-frame', cmd: pauseCmd }, '*');
+            bgFrameForPause.contentWindow.postMessage(
+              { target: 'pocketmail-media-frame', cmd: pauseCmd, markShouldResume: !stayStopped },
+              '*'
+            );
           } catch (_) {}
         }
         const prevPausedSt = liveMediaPlaybackState.get(appId);
@@ -2951,7 +3040,7 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
         refreshBgAudioIndicator();
         return;
       }
-      if (!isAutoPausedByTabAudio && !manualOverrideWhileTabAudible && getTabAudioBehavior() !== 'off') {
+      if (!isAutoPausedByTabAudio && getTabAudioBehavior() !== 'off') {
         const nowChk = Date.now();
         if (nowChk - lastExternalTabAudioCheckAt > 900) {
           lastExternalTabAudioCheckAt = nowChk;
@@ -3152,7 +3241,7 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
       activeSp.handoffStartedAt = Date.now();
       activeSp.handoffSource = 'bg';
       activeSp.sourceType = 'bg';
-      activeSp.videoEl.muted = false;
+      activeSp.videoEl.muted = isTabAutoPauseEnforced() ? true : false;
       activeSp.videoEl.volume = activeSp.desiredVolume > 0 ? activeSp.desiredVolume : 1.0;
       const remBuf = getSpBufferedEnd(activeSp) - (activeSp.videoEl.currentTime || 0);
       activeSp.videoEl.playbackRate = !activeSp.isClear && remBuf > 0 && remBuf < 9.5 ? 0.88 : 1.0;
@@ -3160,6 +3249,7 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
         activeSp.remotePaused = true;
         activeSp.autoPausedByTab = getTabAudioBehavior() === 'pause-resume';
         if (activeSp.autoPausedByTab) tabAutoPausedSpAppIds.add(appId);
+        activeSp.videoEl.muted = true;
         if (!activeSp.videoEl.paused) {
           try {
             activeSp.videoEl.pause();
@@ -3664,16 +3754,6 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         currentSettings = { ...currentSettings, ...patch };
         if (patch.socialAppThemeMode !== undefined && patch.socialAppThemeMode !== prevSocialTheme) {
           bypassPersistentCacheUntil = Date.now() + 12000;
-          persistentVisualSnapshots.clear();
-        }
-        if (patch.persistenceMode === 'eco') {
-          persistentVisualSnapshots.clear();
-        } else if (Array.isArray(patch.persistentAppIds) && currentSettings.persistenceMode === 'selected') {
-          Array.from(persistentVisualSnapshots.keys()).forEach((id) => {
-            if (!patch.persistentAppIds.includes(id)) {
-              persistentVisualSnapshots.delete(id);
-            }
-          });
         }
         if (
           patch.socialAppThemeMode !== undefined &&
@@ -3707,7 +3787,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
           audibleOverrideTabIds.clear();
           const nextBehavior = getTabAudioBehavior();
           if (nextBehavior !== 'off') {
-            isAutoPausedByTabAudio = false;
+            setTabAudioPauseTrigger(false, false);
           }
           checkExternalTabAudioState();
         }
@@ -3943,37 +4023,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 
     case 'PM_BYPASS_PERSISTENT_CACHE_ONCE': {
       bypassPersistentCacheUntil = Date.now() + 8000;
-      if (msg.appId) {
-        persistentVisualSnapshots.delete(msg.appId);
-      } else {
-        persistentVisualSnapshots.clear();
-      }
       return Promise.resolve({ ok: true });
-    }
-
-    case 'SAVE_VISUAL_SNAPSHOT': {
-      const snapAppId = String(msg.appId || '').trim();
-      const snapHtml = typeof msg.html === 'string' ? msg.html : '';
-      if (snapAppId && snapHtml.length > 180 && snapHtml.length < 1800000 && isAppAllowedForPersistence(snapAppId)) {
-        persistentVisualSnapshots.set(snapAppId, {
-          html: snapHtml,
-          url: String(msg.url || ''),
-          bgColor: String(msg.bgColor || '#0B0B0F'),
-          themeMode: String(msg.themeMode || ''),
-          ts: Date.now()
-        });
-      }
-      return Promise.resolve({ ok: true });
-    }
-
-    case 'GET_VISUAL_SNAPSHOT': {
-      const reqId = String(msg.appId || '').trim();
-      const snap =
-        reqId && isAppAllowedForPersistence(reqId) ? persistentVisualSnapshots.get(reqId) || null : null;
-      if (!snap || Date.now() - (snap.ts || 0) > 12 * 3600 * 1000) {
-        return Promise.resolve({ ok: true, snapshot: null });
-      }
-      return Promise.resolve({ ok: true, snapshot: snap });
     }
 
     case 'SIDEBAR_SP_TAKEOVER_BEGIN': {
@@ -3986,10 +4036,13 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         if (activeSp && !activeSp.disposed) {
           activeSp.remotePaused = true;
           activeSp.autoPausedByTab = getTabAudioBehavior() === 'pause-resume';
-          if (activeSp.videoEl && !activeSp.videoEl.paused) {
-            try {
-              activeSp.videoEl.pause();
-            } catch (_) {}
+          if (activeSp.videoEl) {
+            activeSp.videoEl.muted = true;
+            if (!activeSp.videoEl.paused) {
+              try {
+                activeSp.videoEl.pause();
+              } catch (_) {}
+            }
           }
         }
         return Promise.resolve({ ok: true, resume: false, autoPausedByTab: true });
@@ -4151,7 +4204,6 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         stopSingleBackgroundAudioFrame(msg.appId);
         if (msg.clearPlaybackState) {
           liveMediaPlaybackState.delete(msg.appId);
-          persistentVisualSnapshots.delete(msg.appId);
         }
       }
       refreshBgAudioIndicator();
@@ -4182,8 +4234,12 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         const tid = sender.tab.id;
         if (typeof tid === 'number') {
           knownActiveMediaTabIds.add(tid);
+          recentlyStoppedMediaTabMap.delete(tid);
         }
-        clearTimeout(pendingTabResumeTimer);
+        if (pendingTabResumeTimer) {
+          clearTimeout(pendingTabResumeTimer);
+          pendingTabResumeTimer = null;
+        }
         manualOverrideWhileTabAudible = false;
         audibleOverrideTabIds.clear();
         checkExternalTabAudioState();
@@ -4193,6 +4249,11 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 
     case 'EXTERNAL_TAB_MEDIA_STOPPED': {
       if (sender && sender.tab) {
+        const tid = sender.tab.id;
+        if (typeof tid === 'number') {
+          knownActiveMediaTabIds.delete(tid);
+          recentlyStoppedMediaTabMap.set(tid, Date.now());
+        }
         checkExternalTabAudioState();
       }
       return Promise.resolve({ ok: true });
@@ -4205,6 +4266,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 
 // Opera GX-style Auto-Pause & Auto-Resume when external browser tabs play audio
 function pauseAllForTabAudioAutoPause(stayStopped = false) {
+  setTabAudioPauseTrigger(true, stayStopped);
   const pauseCmd = stayStopped ? 'PAUSE_LOCAL_MEDIA' : 'TAB_AUDIO_AUTO_PAUSE';
 
   bgSpEmePlayers.forEach((sp, appId) => {
@@ -4233,10 +4295,13 @@ function pauseAllForTabAudioAutoPause(stayStopped = false) {
         st.isPlaying = false;
         st.updatedAt = Date.now();
       }
-      if (sp.videoEl && !sp.videoEl.paused) {
-        try {
-          sp.videoEl.pause();
-        } catch (_) {}
+      if (sp.videoEl) {
+        sp.videoEl.muted = true;
+        if (!sp.videoEl.paused) {
+          try {
+            sp.videoEl.pause();
+          } catch (_) {}
+        }
       }
     }
   });
@@ -4248,21 +4313,27 @@ function pauseAllForTabAudioAutoPause(stayStopped = false) {
       stSp.autoPausedByTab = true;
       tabAutoPausedSpAppIds.add(appId);
     }
-    if (stSp.videoEl && !stSp.videoEl.paused) {
-      try {
-        stSp.videoEl.pause();
-      } catch (_) {}
+    if (stSp.videoEl) {
+      stSp.videoEl.muted = true;
+      if (!stSp.videoEl.paused) {
+        try {
+          stSp.videoEl.pause();
+        } catch (_) {}
+      }
     }
   });
 
   bgMsePlayers.forEach((player, appId) => {
-    if (player && player.audioEl && !player.audioEl.paused) {
-      if (!stayStopped) {
+    if (player && player.audioEl) {
+      if (!stayStopped && !player.audioEl.paused) {
         tabAutoPausedMseAppIds.add(appId);
       }
-      try {
-        player.audioEl.pause();
-      } catch (_) {}
+      player.audioEl.muted = true;
+      if (!player.audioEl.paused) {
+        try {
+          player.audioEl.pause();
+        } catch (_) {}
+      }
       const st = liveMediaPlaybackState.get(appId);
       if (st) {
         st.isPlaying = false;
@@ -4273,7 +4344,7 @@ function pauseAllForTabAudioAutoPause(stayStopped = false) {
 
   emeBridgePorts.forEach((port) => {
     try {
-      port.postMessage({ cmd: pauseCmd });
+      port.postMessage({ cmd: pauseCmd, markShouldResume: !stayStopped });
     } catch (_) {}
   });
 
@@ -4284,7 +4355,8 @@ function pauseAllForTabAudioAutoPause(stayStopped = false) {
         bgFrame.contentWindow.postMessage(
           {
             target: 'pocketmail-media-frame',
-            cmd: pauseCmd
+            cmd: pauseCmd,
+            markShouldResume: !stayStopped
           },
           '*'
         );
@@ -4304,7 +4376,7 @@ function pauseAllForTabAudioAutoPause(stayStopped = false) {
 }
 
 function resumeAllFromTabAudioAutoPause() {
-  isAutoPausedByTabAudio = false;
+  setTabAudioPauseTrigger(false, false);
   manualOverrideWhileTabAudible = false;
 
   bgSpEmePlayers.forEach((sp, appId) => {
@@ -4314,6 +4386,8 @@ function resumeAllFromTabAudioAutoPause() {
       sp.remotePaused = false;
       sp.lastPlayedAt = Date.now();
       if (sp.videoEl) {
+        sp.videoEl.muted = Boolean(sp.desiredMuted);
+        sp.videoEl.volume = sp.desiredVolume > 0 ? sp.desiredVolume : 1.0;
         if (sp.isClear) {
           const p = sp.videoEl.play();
           if (p && typeof p.catch === 'function') p.catch(() => {});
@@ -4330,10 +4404,20 @@ function resumeAllFromTabAudioAutoPause() {
   });
   tabAutoPausedSpAppIds.clear();
 
+  bgStagingSpPlayers.forEach((stSp) => {
+    if (!stSp || stSp.disposed) return;
+    stSp.autoPausedByTab = false;
+    stSp.remotePaused = false;
+  });
+
   tabAutoPausedMseAppIds.forEach((appId) => {
     const player = bgMsePlayers.get(appId);
-    if (player && player.audioEl && player.audioEl.paused) {
-      player.audioEl.play().catch(() => {});
+    if (player && player.audioEl) {
+      player.audioEl.muted = false;
+      player.audioEl.volume = 1.0;
+      if (player.audioEl.paused) {
+        player.audioEl.play().catch(() => {});
+      }
       const st = liveMediaPlaybackState.get(appId);
       if (st) {
         st.isPlaying = true;
@@ -4375,8 +4459,12 @@ async function checkExternalTabAudioState() {
   clearTimeout(silentMediaRecheckTimer);
   const behavior = getTabAudioBehavior();
   if (behavior === 'off') {
-    clearTimeout(pendingTabResumeTimer);
+    if (pendingTabResumeTimer) {
+      clearTimeout(pendingTabResumeTimer);
+      pendingTabResumeTimer = null;
+    }
     knownActiveMediaTabIds.clear();
+    recentlyStoppedMediaTabMap.clear();
     audibleOverrideTabIds.clear();
     if (isAutoPausedByTabAudio) {
       resumeAllFromTabAudioAutoPause();
@@ -4385,14 +4473,30 @@ async function checkExternalTabAudioState() {
   }
   try {
     const audibleTabs = await browser.tabs.query({ audible: true });
-    const externalAudible = (audibleTabs || []).filter((t) => Boolean(t && t.audible && isExternalBrowserTab(t)));
+    const rawExternalAudible = (audibleTabs || []).filter((t) => Boolean(t && t.audible && isExternalBrowserTab(t)));
+    const externalAudible = [];
+    for (let i = 0; i < rawExternalAudible.length; i++) {
+      const t = rawExternalAudible[i];
+      const tid = t.id;
+      const stoppedAt = typeof tid === 'number' ? recentlyStoppedMediaTabMap.get(tid) || 0 : 0;
+      if (stoppedAt && Date.now() - stoppedAt < 2400) {
+        const mediaCheck = await Promise.race([
+          browser.tabs.sendMessage(tid, { type: 'CHECK_TAB_HAS_ACTIVE_MEDIA' }).catch(() => null),
+          new Promise((resolve) => setTimeout(() => resolve(null), 180))
+        ]);
+        if (!(mediaCheck && mediaCheck.hasActiveMedia)) {
+          knownActiveMediaTabIds.delete(tid);
+          continue;
+        }
+        recentlyStoppedMediaTabMap.delete(tid);
+      }
+      externalAudible.push(t);
+    }
+
     externalAudible.forEach((t) => {
       if (typeof t.id === 'number') {
         knownActiveMediaTabIds.add(t.id);
-        if (manualOverrideWhileTabAudible && !audibleOverrideTabIds.has(t.id)) {
-          manualOverrideWhileTabAudible = false;
-          audibleOverrideTabIds.clear();
-        }
+        recentlyStoppedMediaTabMap.delete(t.id);
       }
     });
 
@@ -4422,13 +4526,19 @@ async function checkExternalTabAudioState() {
     const hasActiveExternalMedia = externalAudible.length > 0 || knownActiveMediaTabIds.size > 0;
 
     if (hasActiveExternalMedia) {
-      clearTimeout(pendingTabResumeTimer);
-      if (!manualOverrideWhileTabAudible) {
-        const anyBgStillAudible = Boolean(getAudibleBgAudioAppId());
-        if (!isAutoPausedByTabAudio || anyBgStillAudible) {
-          isAutoPausedByTabAudio = true;
-          pauseAllForTabAudioAutoPause(behavior === 'pause-only');
+      if (pendingTabResumeTimer) {
+        clearTimeout(pendingTabResumeTimer);
+        pendingTabResumeTimer = null;
+      }
+      const anyBgStillAudible = Boolean(getAudibleBgAudioAppId());
+      let anySpUnmutedOrPlaying = false;
+      bgSpEmePlayers.forEach((sp) => {
+        if (sp && !sp.disposed && sp.videoEl && (!sp.videoEl.paused || !sp.videoEl.muted)) {
+          anySpUnmutedOrPlaying = true;
         }
+      });
+      if (!isAutoPausedByTabAudio || anyBgStillAudible || anySpUnmutedOrPlaying) {
+        pauseAllForTabAudioAutoPause(behavior === 'pause-only');
       }
       if (externalAudible.length === 0 && knownActiveMediaTabIds.size > 0) {
         silentMediaRecheckTimer = setTimeout(checkExternalTabAudioState, 1200);
@@ -4437,15 +4547,19 @@ async function checkExternalTabAudioState() {
       manualOverrideWhileTabAudible = false;
       audibleOverrideTabIds.clear();
       if (isAutoPausedByTabAudio) {
-        clearTimeout(pendingTabResumeTimer);
         if (behavior === 'pause-only') {
-          isAutoPausedByTabAudio = false;
+          if (pendingTabResumeTimer) {
+            clearTimeout(pendingTabResumeTimer);
+            pendingTabResumeTimer = null;
+          }
+          setTabAudioPauseTrigger(false, true);
           tabAutoPausedSpAppIds.clear();
           tabAutoPausedMseAppIds.clear();
           refreshBgAudioIndicator();
-        } else {
+        } else if (!pendingTabResumeTimer) {
           // Clean 340ms settle debounce prevents quarter-second blips during YouTube playlist track transitions
           pendingTabResumeTimer = setTimeout(() => {
+            pendingTabResumeTimer = null;
             if (isAutoPausedByTabAudio && knownActiveMediaTabIds.size === 0) {
               resumeAllFromTabAudioAutoPause();
             }
@@ -4456,11 +4570,52 @@ async function checkExternalTabAudioState() {
   } catch (_) {}
 }
 
+// Continuous background watchdog: enforces the in-memory auto-pause trigger on all active/staging audio elements
+// and periodically polls tab audio state whenever background audio is active or auto-paused.
+let lastWatchdogTabPollAt = 0;
+setInterval(() => {
+  if (isTabAutoPauseEnforced()) {
+    bgSpEmePlayers.forEach((sp) => {
+      if (sp && !sp.disposed && sp.videoEl) {
+        sp.videoEl.muted = true;
+        if (!sp.videoEl.paused) {
+          try {
+            sp.videoEl.pause();
+          } catch (_) {}
+        }
+      }
+    });
+    bgMsePlayers.forEach((player) => {
+      if (player && player.audioEl) {
+        player.audioEl.muted = true;
+        if (!player.audioEl.paused) {
+          try {
+            player.audioEl.pause();
+          } catch (_) {}
+        }
+      }
+    });
+  }
+  const hasAnyBgAudioOrAutoPaused =
+    isAutoPausedByTabAudio || bgAudioPool.size > 0 || bgSpEmePlayers.size > 0 || bgMsePlayers.size > 0;
+  if (hasAnyBgAudioOrAutoPaused && getTabAudioBehavior() !== 'off') {
+    const now = Date.now();
+    if (now - lastWatchdogTabPollAt >= 900) {
+      lastWatchdogTabPollAt = now;
+      checkExternalTabAudioState();
+    }
+  }
+}, 450);
+
 if (browser.tabs && browser.tabs.onUpdated) {
   browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.audible === true && isExternalBrowserTab(tab)) {
       knownActiveMediaTabIds.add(tabId);
-      clearTimeout(pendingTabResumeTimer);
+      recentlyStoppedMediaTabMap.delete(tabId);
+      if (pendingTabResumeTimer) {
+        clearTimeout(pendingTabResumeTimer);
+        pendingTabResumeTimer = null;
+      }
       if (!audibleOverrideTabIds.has(tabId)) {
         manualOverrideWhileTabAudible = false;
         audibleOverrideTabIds.clear();
@@ -4468,10 +4623,12 @@ if (browser.tabs && browser.tabs.onUpdated) {
     }
     if (changeInfo.mutedInfo && changeInfo.mutedInfo.muted) {
       knownActiveMediaTabIds.delete(tabId);
+      recentlyStoppedMediaTabMap.delete(tabId);
       audibleOverrideTabIds.delete(tabId);
     }
     if (changeInfo.status === 'loading' && changeInfo.url) {
       knownActiveMediaTabIds.delete(tabId);
+      recentlyStoppedMediaTabMap.delete(tabId);
     }
     if (
       changeInfo.audible !== undefined ||
@@ -4492,6 +4649,7 @@ if (browser.tabs && browser.tabs.onActivated) {
 if (browser.tabs && browser.tabs.onRemoved) {
   browser.tabs.onRemoved.addListener((tabId) => {
     knownActiveMediaTabIds.delete(tabId);
+    recentlyStoppedMediaTabMap.delete(tabId);
     audibleOverrideTabIds.delete(tabId);
     setTimeout(checkExternalTabAudioState, 60);
   });

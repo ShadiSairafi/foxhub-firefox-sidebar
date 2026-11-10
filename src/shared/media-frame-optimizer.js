@@ -353,14 +353,43 @@
               msg.cmd === 'TAB_AUDIO_AUTO_RESUME' ||
               msg.cmd === 'PAUSE_LOCAL_MEDIA'
             ) {
+              if (msg.cmd === 'TAB_AUDIO_AUTO_PAUSE') {
+                mirrorAutoPausedByTab = true;
+              } else if (msg.cmd === 'TAB_AUDIO_AUTO_RESUME' || msg.cmd === 'PAUSE_LOCAL_MEDIA') {
+                mirrorAutoPausedByTab = false;
+              }
               try {
-                window.postMessage({ target: 'pocketmail-media-frame', cmd: msg.cmd }, '*');
+                if (typeof window.__pmHandleMediaFrameCommand === 'function') {
+                  window.__pmHandleMediaFrameCommand({
+                    target: 'pocketmail-media-frame',
+                    cmd: msg.cmd,
+                    markShouldResume: Boolean(msg.markShouldResume)
+                  });
+                } else {
+                  window.postMessage(
+                    {
+                      target: 'pocketmail-media-frame',
+                      cmd: msg.cmd,
+                      markShouldResume: Boolean(msg.markShouldResume)
+                    },
+                    '*'
+                  );
+                }
               } catch (_) {}
             }
           });
           emeBridgePort.onDisconnect.addListener(() => {
             emeBridgePort = null;
           });
+          try {
+            emeBridgePort.postMessage({
+              source: 'pocketmail-media-frame',
+              type: 'PM_SP_EME_BRIDGE',
+              flatFrameName: frameName,
+              bridgeType: 'BRIDGE_HELLO',
+              href: window.location.href
+            });
+          } catch (_) {}
         }
       } catch (_) {
         emeBridgePort = null;
@@ -7913,8 +7942,7 @@
   }
 
   // Listen for navigation, zoom & theme commands from parent PocketHub toolbar
-  window.addEventListener('message', (e) => {
-    const msg = e.data;
+  function handleMediaFrameCommand(msg) {
     if (!msg || msg.target !== 'pocketmail-media-frame') return;
 
     switch (msg.cmd) {
@@ -7952,13 +7980,12 @@
           }
           if (host.includes('spotify.com')) {
             clickSpotifyToggleOnce(false);
-          } else {
-            document.querySelectorAll('video, audio').forEach((el) => {
-              try {
-                if (!el.paused) el.pause();
-              } catch (_) {}
-            });
           }
+          document.querySelectorAll('video, audio').forEach((el) => {
+            try {
+              if (!el.paused) el.pause();
+            } catch (_) {}
+          });
         } catch (_) {}
         reportLivePlaybackState();
         break;
@@ -8019,11 +8046,16 @@
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmClearTabAutoPaused === 'function') {
             window.wrappedJSObject.__pmClearTabAutoPaused();
           }
-          const shouldResume = Boolean(window.__pmWasAutoPausedByTabAudio || sidebarAutoResumeRequested);
+          const shouldResume = Boolean(
+            window.__pmWasAutoPausedByTabAudio ||
+              sidebarAutoResumeRequested ||
+              (isBgAudioFrame && !bgAudioAutoResumed)
+          );
           window.__pmWasAutoPausedByTabAudio = false;
           if (shouldResume) {
+            let clickedSpotifyPlay = false;
             if (host.includes('spotify.com')) {
-              const clickedSpotifyPlay = clickSpotifyToggleOnce(true);
+              clickedSpotifyPlay = clickSpotifyToggleOnce(true);
               spTabPauseVerifyTimer = setTimeout(() => {
                 if (isTabAudioAutoPaused) return;
                 try {
@@ -8042,7 +8074,7 @@
               try {
                 if (el.dataset.pmTabAutoPaused === '1') {
                   delete el.dataset.pmTabAutoPaused;
-                  if (!host.includes('spotify.com') && el.paused && !el.ended) {
+                  if ((!host.includes('spotify.com') || !clickedSpotifyPlay) && el.paused && !el.ended) {
                     const p = el.play();
                     if (p && typeof p.catch === 'function') p.catch(() => {});
                   }
@@ -8099,7 +8131,49 @@
       default:
         break;
     }
+  }
+  window.__pmHandleMediaFrameCommand = handleMediaFrameCommand;
+  window.addEventListener('message', (e) => {
+    handleMediaFrameCommand(e.data);
   });
+
+  if (isFoxHubMediaFrame && typeof browser !== 'undefined' && browser.storage) {
+    const applyTriggerState = (trig) => {
+      if (!trig || typeof trig !== 'object') return;
+      if (trig.active) {
+        const cmd = trig.stayStopped ? 'PAUSE_LOCAL_MEDIA' : 'TAB_AUDIO_AUTO_PAUSE';
+        handleMediaFrameCommand({
+          target: 'pocketmail-media-frame',
+          cmd,
+          markShouldResume: isBgAudioFrame
+        });
+      } else if (isTabAudioAutoPaused || window.__pmWasAutoPausedByTabAudio) {
+        handleMediaFrameCommand({
+          target: 'pocketmail-media-frame',
+          cmd: 'TAB_AUDIO_AUTO_RESUME'
+        });
+      }
+    };
+    try {
+      if (browser.storage.local && typeof browser.storage.local.get === 'function') {
+        browser.storage.local
+          .get('pmTabAudioTrigger')
+          .then((res) => {
+            if (res && res.pmTabAudioTrigger && res.pmTabAudioTrigger.active) {
+              applyTriggerState(res.pmTabAudioTrigger);
+            }
+          })
+          .catch(() => {});
+      }
+      if (browser.storage.onChanged && typeof browser.storage.onChanged.addListener === 'function') {
+        browser.storage.onChanged.addListener((changes, area) => {
+          if (area === 'local' && changes && changes.pmTabAudioTrigger && changes.pmTabAudioTrigger.newValue) {
+            applyTriggerState(changes.pmTabAudioTrigger.newValue);
+          }
+        });
+      }
+    } catch (_) {}
+  }
 
   // Persistent Scroll Position Save & Instant Restore across FoxHub Close & Reopen
   if (!isBgAudioFrame && !window.location.search.includes('pm_boot=1')) {
@@ -8182,395 +8256,6 @@
     } else {
       attemptRestoreSavedScroll();
       setTimeout(attemptRestoreSavedScroll, 220);
-    }
-
-    // -----------------------------------------------------------------------------------------
-    // Instant Persistent Memory Visual Freeze-Frame Serializer & Content Hydration Detector
-    // Captures a lightweight, script-free CSSOM + Viewport DOM snapshot in <3ms so reopening
-    // FoxHub displays the exact last rendered screen at 0.0ms with zero black screen or --:-- flash!
-    // -----------------------------------------------------------------------------------------
-    if (isFoxHubMediaFrame) {
-      const frameAppId = cleanWindowName.startsWith('pm-media-frame-')
-        ? cleanWindowName.slice('pm-media-frame-'.length)
-        : '';
-      const VOID_HTML_TAGS = new Set([
-        'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-        'link', 'meta', 'param', 'source', 'track', 'wbr'
-      ]);
-      const SKIP_SNAPSHOT_TAGS = new Set([
-        'script', 'noscript', 'iframe', 'frame', 'frameset',
-        'object', 'embed', 'applet', 'audio', 'portal'
-      ]);
-
-      const escapeHtmlText = (str) =>
-        String(str || '')
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
-
-      const escapeHtmlAttr = (str) =>
-        String(str || '')
-          .replace(/&/g, '&amp;')
-          .replace(/"/g, '&quot;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
-
-      let spMainMountedAt = 0;
-      let hydrationNotified = false;
-      let snapshotTimer = null;
-      let lastSnapshotAt = 0;
-
-      const isTransientAuthRoute = () => {
-        const p = (window.location.pathname || '/').toLowerCase();
-        return (
-          window.location.search.includes('pm_boot=1') ||
-          host === 'accounts.google.com' ||
-          host === 'accounts.spotify.com' ||
-          p === '/login' ||
-          p.startsWith('/login/') ||
-          p === '/signin' ||
-          p.startsWith('/signin/') ||
-          p.startsWith('/oauth') ||
-          p.startsWith('/auth/') ||
-          p.startsWith('/i/flow/') ||
-          p.startsWith('/accounts/login')
-        );
-      };
-
-      const checkIsAppHydrated = () => {
-        if (!document.body || document.readyState === 'loading') return false;
-        if (document.documentElement && document.documentElement.hasAttribute('data-pm-x-light-pending')) {
-          return false;
-        }
-        if (host.includes('spotify.com')) {
-          const mainMounted = Boolean(
-            document.querySelector(
-              '[data-testid="component-shelf"], [data-testid="grid-container"], [data-testid="tracklist-row"], [data-testid="playlist-page"], [data-testid="album-page"], [data-testid="artist-page"], [data-testid="search-page"], #Desktop_LeftSidebar_Id li'
-            )
-          );
-          if (!mainMounted) return false;
-          if (!spMainMountedAt) spMainMountedAt = Date.now();
-          const playerMounted = Boolean(
-            document.querySelector('[data-testid="now-playing-widget"], [data-testid="context-item-info-title"]')
-          );
-          return playerMounted || Date.now() - spMainMountedAt > 950;
-        }
-        if (host.includes('youtube.com')) {
-          return Boolean(
-            document.querySelector(
-              'ytd-rich-item-renderer, ytd-video-renderer, ytd-watch-flexy video, ytd-reel-video-renderer, ytmusic-section-list-renderer'
-            )
-          );
-        }
-        if (host.includes('instagram.com')) {
-          return Boolean(document.querySelector('main[role="main"] article, [role="listitem"], header section'));
-        }
-        if (host.includes('x.com') || host.includes('twitter.com')) {
-          return Boolean(
-            document.querySelector(
-              '[data-testid="tweet"], [data-testid="conversation"], [data-testid="UserName"], [data-testid="DMDrawer"]'
-            )
-          );
-        }
-        if (host.includes('discord.com')) {
-          return Boolean(document.querySelector('[class*="sidebar"], main[class*="chatContent"], [data-list-id]'));
-        }
-        if (host.includes('whatsapp.com')) {
-          return Boolean(document.querySelector('#pane-side, #main, [data-testid="chat-list"]'));
-        }
-        if (host.includes('telegram.org')) {
-          return isTelegramVisuallyMounted();
-        }
-        if (host.includes('reddit.com')) {
-          return Boolean(document.querySelector('shreddit-post, rs-room-list, shreddit-feed, faceplate-tracker'));
-        }
-        if (host.includes('tiktok.com')) {
-          return Boolean(
-            document.querySelector('[data-e2e="recommend-list-item-container"], [data-e2e="user-page"], video')
-          );
-        }
-        if (host.includes('messenger.com')) {
-          return Boolean(document.querySelector('[role="navigation"], [role="main"] [role="row"], [role="grid"]'));
-        }
-        return (document.body.innerText || '').trim().length > 40 || document.images.length > 2;
-      };
-
-      const serializeAttributes = (el, extraStyle = '') => {
-        let out = '';
-        let styleVal = '';
-        const isImg = el.tagName && el.tagName.toLowerCase() === 'img';
-        const isInput = el.tagName && el.tagName.toLowerCase() === 'input';
-        const attrs = el.attributes;
-        if (attrs) {
-          for (let i = 0; i < attrs.length; i++) {
-            const a = attrs[i];
-            const nameLower = a.name.toLowerCase();
-            if (nameLower.startsWith('on') || nameLower === 'srcdoc' || nameLower === 'integrity') continue;
-            if (isImg && (nameLower === 'src' || nameLower === 'srcset' || nameLower === 'loading' || nameLower === 'crossorigin' || nameLower === 'decoding')) {
-              continue;
-            }
-            if (isInput && nameLower === 'value') continue;
-            if (nameLower === 'style') {
-              styleVal = a.value || '';
-              continue;
-            }
-            if ((nameLower === 'href' || nameLower === 'xlink:href') && /^\s*javascript:/i.test(a.value || '')) {
-              continue;
-            }
-            out += ` ${a.name}="${escapeHtmlAttr(a.value)}"`;
-          }
-        }
-        if (isImg) {
-          const resolvedSrc = el.currentSrc || el.src || '';
-          if (resolvedSrc && !resolvedSrc.startsWith('javascript:')) {
-            out += ` src="${escapeHtmlAttr(resolvedSrc)}" decoding="sync"`;
-          }
-        } else if (isInput) {
-          const inpType = (el.getAttribute('type') || 'text').toLowerCase();
-          if (inpType !== 'password' && typeof el.value === 'string' && el.value.length > 0 && el.value.length < 300) {
-            out += ` value="${escapeHtmlAttr(el.value)}"`;
-          }
-        }
-        const mergedStyle = extraStyle ? (styleVal ? `${styleVal};${extraStyle}` : extraStyle) : styleVal;
-        if (mergedStyle) {
-          out += ` style="${escapeHtmlAttr(mergedStyle)}"`;
-        }
-        return out;
-      };
-
-      const serializeViewportDom = () => {
-        if (!document.documentElement || !document.body) return null;
-        const vh = window.innerHeight || 720;
-        let charBudget = 680000;
-
-        const walk = (node, depth, inSvg) => {
-          if (!node || charBudget <= 0 || depth > 42) return '';
-          const nt = node.nodeType;
-          if (nt === 3) {
-            const txt = node.nodeValue;
-            if (!txt) return '';
-            const esc = escapeHtmlText(txt);
-            charBudget -= esc.length;
-            return esc;
-          }
-          if (nt !== 1) return '';
-
-          const rawTag = node.tagName || '';
-          const lowerTag = rawTag.toLowerCase();
-          if (!lowerTag || SKIP_SNAPSHOT_TAGS.has(lowerTag)) return '';
-          if (
-            node.id === 'pm-spotify-drm-banner' ||
-            node.id === 'onetrust-consent-sdk' ||
-            node.hasAttribute('hidden')
-          ) {
-            return '';
-          }
-
-          if (lowerTag === 'video' || lowerTag === 'canvas') {
-            const r = node.getBoundingClientRect();
-            const w = Math.max(0, Math.round(r.width));
-            const h = Math.max(0, Math.round(r.height));
-            const poster = lowerTag === 'video' && node.poster ? node.poster : '';
-            if (poster) {
-              return `<img src="${escapeHtmlAttr(poster)}" decoding="sync" style="width:${w ? w + 'px' : '100%'};height:${h ? h + 'px' : '100%'};object-fit:cover;background:#000;display:block;">`;
-            }
-            return `<div style="width:${w ? w + 'px' : '100%'};height:${h ? h + 'px' : '100%'};background:#08080a;display:block;"></div>`;
-          }
-
-          const nextInSvg = inSvg || lowerTag === 'svg';
-          if (!nextInSvg && depth >= 2 && depth <= 8 && node.children && node.children.length > 0) {
-            const r = node.getBoundingClientRect();
-            if (r.height > 28 && (r.bottom < -180 || r.top > vh + 180)) {
-              const spacerH = Math.round(r.height);
-              const s = `<div style="height:${spacerH}px;min-height:${spacerH}px;flex-shrink:0;pointer-events:none;"></div>`;
-              charBudget -= s.length;
-              return s;
-            }
-          }
-
-          const emitTag = nextInSvg ? rawTag : lowerTag;
-          const scTop = !nextInSvg && node.scrollTop > 1 ? Math.round(node.scrollTop) : 0;
-          const scLeft = !nextInSvg && node.scrollLeft > 1 ? Math.round(node.scrollLeft) : 0;
-          const extraStyle = scTop || scLeft ? 'overflow:hidden !important;' : '';
-          const attrStr = serializeAttributes(node, extraStyle);
-
-          if (VOID_HTML_TAGS.has(lowerTag) && !nextInSvg) {
-            const vTag = `<${emitTag}${attrStr}>`;
-            charBudget -= vTag.length;
-            return vTag;
-          }
-
-          let inner = '';
-          if (node.shadowRoot && node.shadowRoot.childNodes && node.shadowRoot.childNodes.length > 0) {
-            let shadowInner = '';
-            const sNodes = node.shadowRoot.childNodes;
-            for (let si = 0; si < sNodes.length && charBudget > 0; si++) {
-              const sChild = sNodes[si];
-              if (sChild.nodeType === 1 && sChild.tagName.toLowerCase() === 'style') {
-                shadowInner += `<style>${sChild.textContent || ''}</style>`;
-              } else {
-                shadowInner += walk(sChild, depth + 1, false);
-              }
-            }
-            if (shadowInner) {
-              inner += `<template shadowrootmode="open">${shadowInner}</template>`;
-            }
-          }
-
-          const kids = node.childNodes;
-          let kidsHtml = '';
-          for (let i = 0; i < kids.length && charBudget > 0; i++) {
-            kidsHtml += walk(kids[i], depth + 1, nextInSvg);
-          }
-
-          if ((scTop || scLeft) && kidsHtml) {
-            inner += `<div style="transform:translate(${-scLeft}px,${-scTop}px);width:100%;">${kidsHtml}</div>`;
-          } else {
-            inner += kidsHtml;
-          }
-
-          const full = `<${emitTag}${attrStr}>${inner}</${emitTag}>`;
-          charBudget -= emitTag.length * 2 + attrStr.length + 5;
-          return full;
-        };
-
-        let headStyles = `<meta charset="utf-8"><base href="${escapeHtmlAttr(window.location.href)}">`;
-        const sheets = document.styleSheets;
-        let inlineCssBuf = '';
-        for (let i = 0; i < sheets.length; i++) {
-          const sh = sheets[i];
-          if (!sh || sh.disabled) continue;
-          try {
-            const rules = sh.cssRules;
-            if (rules && rules.length > 0) {
-              for (let r = 0; r < rules.length; r++) {
-                inlineCssBuf += rules[r].cssText + '\n';
-              }
-              continue;
-            }
-          } catch (_) {
-            if (sh.href) {
-              headStyles += `<link rel="stylesheet" href="${escapeHtmlAttr(sh.href)}">`;
-              continue;
-            }
-          }
-          if (sh.href) {
-            headStyles += `<link rel="stylesheet" href="${escapeHtmlAttr(sh.href)}">`;
-          } else if (sh.ownerNode && sh.ownerNode.textContent) {
-            inlineCssBuf += sh.ownerNode.textContent + '\n';
-          }
-        }
-        if (inlineCssBuf) {
-          headStyles += `<style>${inlineCssBuf.replace(/<\/style/gi, '<\\/style')}</style>`;
-        }
-        headStyles +=
-          '<style>*,*::before,*::after{animation-play-state:paused !important;transition:none !important;}html,body{pointer-events:none !important;user-select:none !important;overflow:hidden !important;scrollbar-width:none !important;}</style>';
-
-        const htmlAttrs = serializeAttributes(document.documentElement);
-        const bodyAttrs = serializeAttributes(document.body);
-        const winScrollY = Math.round(window.scrollY || document.documentElement?.scrollTop || 0);
-        let bodyChildrenHtml = '';
-        const bKids = document.body.childNodes;
-        for (let i = 0; i < bKids.length && charBudget > 0; i++) {
-          bodyChildrenHtml += walk(bKids[i], 1, false);
-        }
-        if (winScrollY > 1 && bodyChildrenHtml) {
-          bodyChildrenHtml = `<div style="transform:translateY(${-winScrollY}px);width:100%;">${bodyChildrenHtml}</div>`;
-        }
-
-        let bgColor = '#0B0B0F';
-        try {
-          const bodyBg = window.getComputedStyle(document.body).backgroundColor;
-          const htmlBg = window.getComputedStyle(document.documentElement).backgroundColor;
-          if (bodyBg && bodyBg !== 'rgba(0, 0, 0, 0)' && bodyBg !== 'transparent') {
-            bgColor = bodyBg;
-          } else if (htmlBg && htmlBg !== 'rgba(0, 0, 0, 0)' && htmlBg !== 'transparent') {
-            bgColor = htmlBg;
-          }
-        } catch (_) {}
-
-        return {
-          html: `<!DOCTYPE html><html${htmlAttrs}><head>${headStyles}</head><body${bodyAttrs}>${bodyChildrenHtml}</body></html>`,
-          bgColor
-        };
-      };
-
-      const captureAndSendVisualSnapshot = (force = false) => {
-        if (!frameAppId || isTransientAuthRoute()) return;
-        if (!force && Date.now() - lastSnapshotAt < 900) return;
-        if (!checkIsAppHydrated()) return;
-        try {
-          const snap = serializeViewportDom();
-          if (!snap || !snap.html || snap.html.length < 250) return;
-          lastSnapshotAt = Date.now();
-          let activeTheme = initialSyncThemeMode || '';
-          try {
-            activeTheme = window.sessionStorage.getItem('__pm_social_theme') || activeTheme || 'native';
-          } catch (_) {
-            activeTheme = activeTheme || 'native';
-          }
-          browser.runtime
-            .sendMessage({
-              type: 'SAVE_VISUAL_SNAPSHOT',
-              appId: frameAppId,
-              url: window.location.href,
-              html: snap.html,
-              bgColor: snap.bgColor,
-              themeMode: activeTheme
-            })
-            .catch(() => {});
-        } catch (_) {}
-      };
-
-      const scheduleVisualSnapshot = (delayMs = 750) => {
-        clearTimeout(snapshotTimer);
-        snapshotTimer = setTimeout(() => captureAndSendVisualSnapshot(false), delayMs);
-      };
-
-      const hydrationPoll = setInterval(() => {
-        if (checkIsAppHydrated()) {
-          clearInterval(hydrationPoll);
-          attemptRestoreSavedScroll();
-          if (!hydrationNotified) {
-            hydrationNotified = true;
-            requestAnimationFrame(() => {
-              notifyParent('PM_APP_HYDRATED');
-            });
-          }
-          scheduleVisualSnapshot(420);
-        }
-      }, 90);
-      setTimeout(() => clearInterval(hydrationPoll), 15000);
-
-      let lastInteractionNotifyAt = 0;
-      const onUserFrameInteraction = (ev) => {
-        if (!ev || !ev.isTrusted) return;
-        if (Date.now() - lastInteractionNotifyAt > 350) {
-          lastInteractionNotifyAt = Date.now();
-          notifyParent('PM_USER_INTERACTED_IN_FRAME');
-        }
-        if (hydrationNotified) {
-          scheduleVisualSnapshot(850);
-        }
-      };
-      window.addEventListener('pointerup', onUserFrameInteraction, { capture: true, passive: true });
-      window.addEventListener('popstate', () => {
-        if (hydrationNotified) scheduleVisualSnapshot(800);
-      }, { passive: true });
-      window.addEventListener('hashchange', () => {
-        if (hydrationNotified) scheduleVisualSnapshot(800);
-      }, { passive: true });
-      let lastSnapHref = window.location.href;
-      setInterval(() => {
-        if (hydrationNotified && window.location.href !== lastSnapHref) {
-          lastSnapHref = window.location.href;
-          scheduleVisualSnapshot(850);
-        }
-      }, 1600);
-      window.addEventListener('scroll', () => {
-        if (hydrationNotified) scheduleVisualSnapshot(750);
-      }, { capture: true, passive: true });
-      window.addEventListener('pagehide', () => captureAndSendVisualSnapshot(true), { capture: true, passive: true });
     }
   }
 })();

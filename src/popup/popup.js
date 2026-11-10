@@ -2448,95 +2448,6 @@
     if (fitBtn && entry.appId === activeRailAppId) {
       fitBtn.textContent = Math.abs(z - 1.0) < 0.025 ? 'Fit' : `${Math.round(z * 100)}%`;
     }
-    if (entry.appId === activeFreezeAppId) {
-      syncFreezeFrameZoom(z);
-    }
-  }
-
-  let freezeFrameSafetyTimer = null;
-  let activeFreezeAppId = '';
-
-  function getSyncVisualSnapshot(appId) {
-    if (!appId) return null;
-    try {
-      const bgWin =
-        browser.extension && typeof browser.extension.getBackgroundPage === 'function'
-          ? browser.extension.getBackgroundPage()
-          : null;
-      const snap =
-        bgWin && typeof bgWin.__pmGetVisualSnapshot === 'function'
-          ? bgWin.__pmGetVisualSnapshot(appId)
-          : null;
-      if (!snap || !snap.html) return null;
-      const curTheme = appSettings.socialAppThemeMode || 'native';
-      if (snap.themeMode && snap.themeMode !== curTheme) return null;
-      return snap;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function syncFreezeFrameZoom(z = 1.0) {
-    const freezeEl = document.getElementById('pm-media-freeze-frame');
-    if (!freezeEl) return;
-    if (Math.abs(z - 1.0) < 0.025) {
-      freezeEl.style.width = '100%';
-      freezeEl.style.height = '100%';
-      freezeEl.style.transform = 'none';
-      freezeEl.style.transformOrigin = '0 0';
-    } else {
-      const invPct = (100 / z).toFixed(3);
-      freezeEl.style.width = `${invPct}%`;
-      freezeEl.style.height = `${invPct}%`;
-      freezeEl.style.transform = `scale(${z})`;
-      freezeEl.style.transformOrigin = '0 0';
-    }
-  }
-
-  function showMediaFreezeFrame(appId, snap, zoom = 1.0) {
-    const freezeEl = document.getElementById('pm-media-freeze-frame');
-    if (!freezeEl || !snap || !snap.html) return false;
-    clearTimeout(freezeFrameSafetyTimer);
-    const switchingFreezeApp = Boolean(activeFreezeAppId && activeFreezeAppId !== appId);
-    activeFreezeAppId = appId;
-    freezeEl.style.background = snap.bgColor || '#0B0B0F';
-    syncFreezeFrameZoom(zoom);
-    if (switchingFreezeApp) {
-      freezeEl.classList.add('hidden-freeze');
-      freezeEl.onload = () => {
-        if (activeFreezeAppId === appId) {
-          freezeEl.classList.remove('hidden-freeze');
-        }
-      };
-      freezeEl.srcdoc = snap.html;
-    } else {
-      freezeEl.onload = null;
-      freezeEl.srcdoc = snap.html;
-      freezeEl.classList.remove('hidden-freeze');
-    }
-    freezeFrameSafetyTimer = setTimeout(() => {
-      if (activeFreezeAppId === appId) {
-        hideMediaFreezeFrame(false);
-      }
-    }, 2400);
-    return true;
-  }
-
-  function hideMediaFreezeFrame(immediate = false) {
-    clearTimeout(freezeFrameSafetyTimer);
-    activeFreezeAppId = '';
-    const freezeEl = document.getElementById('pm-media-freeze-frame');
-    if (!freezeEl) return;
-    freezeEl.onload = null;
-    if (immediate) {
-      const prevTrans = freezeEl.style.transition;
-      freezeEl.style.transition = 'none';
-      freezeEl.classList.add('hidden-freeze');
-      void freezeEl.offsetHeight;
-      freezeEl.style.transition = prevTrans;
-    } else {
-      freezeEl.classList.add('hidden-freeze');
-    }
   }
 
   function showMediaBrandLoader(app, frameEl, isFastCachedRestore = false) {
@@ -3211,7 +3122,6 @@
 
     if (canUseSmoothSpaNav) {
       // Smooth 0ms in-app SPA navigation without reloading the iframe!
-      hideMediaFreezeFrame(true);
       entry.currentUrl = targetUrl;
       entry.pendingSpaUrl = targetUrl;
       entry.pendingSpaUntil = Date.now() + 1800;
@@ -3238,9 +3148,6 @@
     }
 
     if (!isWarmAndNavigated || Boolean(customUrl)) {
-      if (subViewMeta) {
-        hideMediaFreezeFrame(true);
-      }
       if (isWarmAndNavigated && app.id === 'tiktok') {
         // Free active video decoders & MSE buffers before switching between TikTok video feed and Messages
         sendCommandToMediaFrame('FREE_HEAVY_MEDIA');
@@ -3273,36 +3180,7 @@
       }
       const needsSwBootClean =
         !alreadyCleanedInProfile && (app.id === 'x' || app.id === 'whatsapp' || app.id === 'telegram');
-      if (isFastCachedRestore && !needsSwBootClean && !subViewMeta) {
-        const syncSnap = getSyncVisualSnapshot(app.id);
-        if (syncSnap) {
-          // 0.0ms Instant Visual Freeze-Frame: exact last rendered screen is already painted while live frame hydrates underneath!
-          hideMediaBrandLoader(entry.frame);
-          showMediaFreezeFrame(app.id, syncSnap, entry.zoom || 1.0);
-        } else {
-          hideMediaFreezeFrame(true);
-          showMediaBrandLoader(app, entry.frame, true);
-          // Fallback for Private Windows where synchronous getBackgroundPage() is unavailable
-          browser.runtime
-            .sendMessage({ type: 'GET_VISUAL_SNAPSHOT', appId: app.id })
-            .then((snapRes) => {
-              const curTheme = appSettings.socialAppThemeMode || 'native';
-              if (
-                snapRes?.snapshot?.html &&
-                activeRailAppId === app.id &&
-                !entry.loaded &&
-                (!snapRes.snapshot.themeMode || snapRes.snapshot.themeMode === curTheme)
-              ) {
-                hideMediaBrandLoader(entry.frame);
-                showMediaFreezeFrame(app.id, snapRes.snapshot, entry.zoom || 1.0);
-              }
-            })
-            .catch(() => {});
-        }
-      } else {
-        hideMediaFreezeFrame(true);
-        showMediaBrandLoader(app, entry.frame, isFastCachedRestore);
-      }
+      showMediaBrandLoader(app, entry.frame, isFastCachedRestore);
       if (needsSwBootClean) {
         entry.swCleaned = true;
         entry.bootingSwClean = true;
@@ -3324,7 +3202,6 @@
       }
     } else {
       // Already warm in Keep-Alive Pool — 0ms instant switch!
-      hideMediaFreezeFrame(true);
       hideMediaBrandLoader(entry.frame);
       broadcastSocialAppTheme();
     }
@@ -4465,7 +4342,6 @@
     });
 
     document.getElementById('btn-media-back')?.addEventListener('click', () => {
-      hideMediaFreezeFrame(true);
       sendCommandToMediaFrame('BACK');
     });
 
@@ -4473,7 +4349,6 @@
       const mediaApi = window.PocketMailMediaApps;
       const app = mediaApi ? mediaApi.getAppById(activeRailAppId, appSettings) : null;
       const entry = getActivePoolEntry();
-      hideMediaFreezeFrame(true);
       if (entry) {
         entry.loaded = false;
         entry.lastNavAt = Date.now();
@@ -4704,19 +4579,6 @@
           hideMediaBrandLoader();
         }
         broadcastSocialAppTheme();
-      } else if (data.type === 'PM_APP_HYDRATED') {
-        const hydAppId =
-          sourceEntry?.appId ||
-          (typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')
-            ? data.flatFrameName.replace('pm-media-frame-', '')
-            : '');
-        if (hydAppId && hydAppId === activeFreezeAppId) {
-          hideMediaFreezeFrame(false);
-        }
-      } else if (data.type === 'PM_USER_INTERACTED_IN_FRAME') {
-        if (sourceEntry && sourceEntry.loaded && sourceEntry.appId === activeFreezeAppId) {
-          hideMediaFreezeFrame(false);
-        }
       } else if (data.type === 'PM_SIDEBAR_TOOK_OVER_AUDIO') {
         const appId =
           sourceEntry?.appId ||
@@ -6225,12 +6087,12 @@
           const fastApp = window.PocketMailMediaApps.getAppById(fastLastActiveId, appSettings);
           if (fastApp) {
             activeRailAppId = fastApp.id;
-            fastBootMountedAppId = fastApp.id;
             if (!IS_SIDEBAR_VIEW) {
               document.documentElement.classList.add('show-popup-rail');
             }
             renderOperaRail();
             openMediaWorkspace(fastApp, hibernatedAppUrls.get(fastApp.id) || undefined);
+            fastBootMountedAppId = fastApp.id;
           } else {
             renderOperaRail();
           }
@@ -6335,7 +6197,7 @@
       const lastActiveId =
         rawLastActiveId && rawLastActiveId !== 'pocketmail' && isAppPersistent(rawLastActiveId)
           ? rawLastActiveId
-          : firstBgPlayingId && isAppPersistent(firstBgPlayingId)
+          : firstBgPlayingId && (isAppPersistent(firstBgPlayingId) || isAppAllowedForBgAudio(firstBgPlayingId))
             ? firstBgPlayingId
             : rawLastActiveId;
       const shouldAutoRestoreApp =
@@ -6343,7 +6205,7 @@
         !initialAppId &&
         lastActiveId &&
         lastActiveId !== 'pocketmail' &&
-        isAppPersistent(lastActiveId);
+        (isAppPersistent(lastActiveId) || pendingSidebarAudioTakeoverSet.has(lastActiveId));
       if (shouldAutoRestoreApp) {
         activeRailAppId = lastActiveId;
       }
