@@ -268,6 +268,16 @@
     const urlToMs = new Map();
     const msToEl = new WeakMap();
     const msSbStates = new WeakMap(); // MediaSource -> sbState
+    const dealerSockets = new Set(); // Active Spotify dealer.spotify.com WebSockets
+    const spMediaSessionHandlers = {}; // action -> page callback
+    let spMediaSessionDuration = 0;
+    const spConnectState = {
+      origin: 'https://gew4-spclient.spotify.com',
+      deviceId: '',
+      activeDeviceId: '',
+      headers: {},
+      lastTransferAt: 0
+    };
     let msCounter = Date.now();
     let isFrameUnloading = false;
     let lastUserGestureAt = 0;
@@ -277,12 +287,58 @@
     let mirrorAutoPausedByTab = false;
     let pendingYtSeekTarget = null; // { time: number, expiresAt: number }
 
-    const markUnloading = () => {
+    const closeDealerSocketsForHandoff = () => {
       isFrameUnloading = true;
+      dealerSockets.forEach((ws) => {
+        try {
+          if (ws && ws.readyState <= 1) {
+            ws.close(1000, 'foxhub-handoff');
+          }
+        } catch (_) {}
+      });
+      dealerSockets.clear();
+    };
+
+    const markUnloading = () => {
+      closeDealerSocketsForHandoff();
     };
     window.addEventListener('pagehide', markUnloading, true);
     window.addEventListener('beforeunload', markUnloading, true);
     window.addEventListener('unload', markUnloading, true);
+
+    // Prevent Firefox compositor from freezing requestAnimationFrame to 0fps inside hidden background audio keep-alive frames!
+    if (isBgAudioFrame && pageWin.requestAnimationFrame) {
+      try {
+        let rafSeq = 1;
+        const rafTimers = new Map();
+        exportFunction(
+          function (cb) {
+            const id = ++rafSeq;
+            const tid = window.setTimeout(() => {
+              rafTimers.delete(id);
+              try {
+                cb(window.performance && typeof window.performance.now === 'function' ? window.performance.now() : Date.now());
+              } catch (_) {}
+            }, 33);
+            rafTimers.set(id, tid);
+            return id;
+          },
+          pageWin,
+          { defineAs: 'requestAnimationFrame' }
+        );
+        exportFunction(
+          function (id) {
+            const tid = rafTimers.get(Number(id));
+            if (tid !== undefined) {
+              rafTimers.delete(Number(id));
+              window.clearTimeout(tid);
+            }
+          },
+          pageWin,
+          { defineAs: 'cancelAnimationFrame' }
+        );
+      } catch (_) {}
+    }
 
     const recordUserGesture = () => {
       lastUserGestureAt = Date.now();
@@ -340,10 +396,22 @@
           emeBridgePort = browser.runtime.connect({ name: 'foxhub-eme-bridge' });
           emeBridgePort.onMessage.addListener((msg) => {
             if (!msg || !msg.cmd) return;
+            if (msg.cmd === 'PREPARE_HANDOFF_UNLOAD') {
+              closeDealerSocketsForHandoff();
+              return;
+            }
             if (msg.cmd === 'SEEK_SP_MEDIA') {
               try {
                 if (pageWin && typeof pageWin.__seekActiveSpMediaEl === 'function') {
-                  pageWin.__seekActiveSpMediaEl(Number(msg.currentTime) || 0);
+                  pageWin.__seekActiveSpMediaEl(Number(msg.currentTime) || 0, Boolean(msg.forceHarmonySeek));
+                }
+              } catch (_) {}
+              return;
+            }
+            if (msg.cmd === 'SKIP_NEXT_SP_TRACK') {
+              try {
+                if (pageWin && typeof pageWin.__skipNextSpTrack === 'function') {
+                  pageWin.__skipNextSpTrack();
                 }
               } catch (_) {}
               return;
@@ -419,7 +487,60 @@
       }
     };
 
+    const parseDomSpotifyDuration = () => {
+      try {
+        const durEl = document.querySelector('[data-testid="playback-duration"]');
+        const txt = durEl ? (durEl.textContent || '').trim() : '';
+        if (txt && txt.includes(':')) {
+          const parts = txt.split(':').map((n) => parseInt(n, 10));
+          if (parts.length === 2 && !Number.isNaN(parts[0]) && !Number.isNaN(parts[1])) {
+            return parts[0] * 60 + parts[1];
+          }
+          if (parts.length === 3 && !Number.isNaN(parts[0]) && !Number.isNaN(parts[1]) && !Number.isNaN(parts[2])) {
+            return parts[0] * 3600 + parts[1] * 60 + parts[2];
+          }
+        }
+      } catch (_) {}
+      return 0;
+    };
+
+    const getSpCurrentTrackMeta = (el) => {
+      if (IS_YT) return {};
+      let msId = 0;
+      let duration = 0;
+      let trackTitle = '';
+      try {
+        if (el && el.src) {
+          const ms = urlToMs.get(el.src);
+          const sbState = ms ? msSbStates.get(ms) : null;
+          if (sbState && sbState.msId) msId = sbState.msId;
+        }
+        if (el && Number.isFinite(el.duration) && el.duration > 0 && el.duration < 86400) {
+          duration = el.duration;
+        } else if (spMediaSessionDuration > 0) {
+          duration = spMediaSessionDuration;
+        } else {
+          duration = parseDomSpotifyDuration();
+        }
+        const metaTitle = pageWin.navigator && pageWin.navigator.mediaSession && pageWin.navigator.mediaSession.metadata
+          ? String(pageWin.navigator.mediaSession.metadata.title || '').trim()
+          : '';
+        if (metaTitle) {
+          trackTitle = metaTitle;
+        } else {
+          const domTitle = document.querySelector('[data-testid="context-item-info-title"]');
+          if (domTitle) trackTitle = (domTitle.textContent || '').trim();
+        }
+      } catch (_) {}
+      return { msId, duration, trackTitle };
+    };
+
     const postBridge = (bridgeType, extra) => {
+      let enriched = extra || {};
+      if (bridgeType === 'SYNC_TIME' && !IS_YT) {
+        const meta = getSpCurrentTrackMeta(getActiveEl());
+        enriched = Object.assign({}, meta, enriched);
+      }
       const payload = Object.assign(
         {
           source: 'pocketmail-media-frame',
@@ -428,7 +549,7 @@
           bridgeType,
           href: window.location.href
         },
-        extra || {}
+        enriched
       );
       const port = ensureBridgePort();
       if (port) {
@@ -798,12 +919,92 @@
       });
     }
 
-    // Spotify: capture the Widevine license endpoint + auth headers so background.html can license its own copy
+    // Spotify: capture Widevine license auth + Connect device/cluster state + MediaSession handlers + dealer WebSockets
+    if (!IS_YT && pageWin.WebSocket) {
+      try {
+        const OrigWS = pageWin.WebSocket;
+        const WrappedWS = exportFunction(function (url, protocols) {
+          const uStr = String(url || '');
+          const ws =
+            protocols !== undefined ? new OrigWS(url, protocols) : new OrigWS(url);
+          if (uStr.includes('dealer.spotify.com')) {
+            dealerSockets.add(ws);
+            ws.addEventListener(
+              'close',
+              () => {
+                dealerSockets.delete(ws);
+              },
+              { once: true }
+            );
+          }
+          return ws;
+        }, pageWin);
+        WrappedWS.prototype = OrigWS.prototype;
+        try {
+          Object.defineProperty(WrappedWS, 'CONNECTING', { value: 0 });
+          Object.defineProperty(WrappedWS, 'OPEN', { value: 1 });
+          Object.defineProperty(WrappedWS, 'CLOSING', { value: 2 });
+          Object.defineProperty(WrappedWS, 'CLOSED', { value: 3 });
+        } catch (_) {}
+        pageWin.WebSocket = WrappedWS;
+      } catch (_) {}
+    }
+
+    if (!IS_YT && pageWin.MediaSession && pageWin.MediaSession.prototype) {
+      if (typeof pageWin.MediaSession.prototype.setActionHandler === 'function') {
+        const origSetAction = pageWin.MediaSession.prototype.setActionHandler;
+        define(pageWin.MediaSession.prototype, 'setActionHandler', function (action, handler) {
+          try {
+            const act = String(action || '');
+            if (act) {
+              if (typeof handler === 'function') {
+                spMediaSessionHandlers[act] = handler;
+              } else {
+                delete spMediaSessionHandlers[act];
+              }
+            }
+          } catch (_) {}
+          return origSetAction.call(this, action, handler);
+        });
+      }
+      if (typeof pageWin.MediaSession.prototype.setPositionState === 'function') {
+        const origSetPos = pageWin.MediaSession.prototype.setPositionState;
+        define(pageWin.MediaSession.prototype, 'setPositionState', function (state) {
+          try {
+            if (state && Number(state.duration) > 0) {
+              spMediaSessionDuration = Number(state.duration);
+            }
+          } catch (_) {}
+          return origSetPos.call(this, state);
+        });
+      }
+    }
+
     if (!IS_YT && pageWin.fetch) {
       const origFetch = pageWin.fetch;
-      define(pageWin, 'fetch', function (input, init) {
+      const extractFetchHeaders = (input, init) => {
+        const hdrs = {};
         try {
-          const url = typeof input === 'string' ? input : input && input.url ? String(input.url) : '';
+          const h = (init && init.headers) || (input && input.headers);
+          if (h) {
+            if (typeof h.forEach === 'function') {
+              h.forEach((v, k) => {
+                hdrs[String(k).toLowerCase()] = String(v);
+              });
+            } else {
+              const rawH = h.wrappedJSObject || h;
+              Object.keys(rawH).forEach((k) => {
+                hdrs[String(k).toLowerCase()] = String(rawH[k]);
+              });
+            }
+          }
+        } catch (_) {}
+        return hdrs;
+      };
+      define(pageWin, 'fetch', function (input, init) {
+        let url = '';
+        try {
+          url = typeof input === 'string' ? input : input && input.url ? String(input.url) : '';
           if (url.includes('widevine-license') && !url.includes('certificate')) {
             const hdrs = {};
             const h = (init && init.headers) || (input && input.headers);
@@ -820,9 +1021,40 @@
               }
             }
             postBridge('LIC_AUTH', { url, headers: hdrs });
+          } else if (url.includes('spclient.spotify.com') || url.includes('api-partner.spotify.com')) {
+            const lowerHdrs = extractFetchHeaders(input, init);
+            if (lowerHdrs.authorization) {
+              spConnectState.headers.authorization = lowerHdrs.authorization;
+            }
+            if (lowerHdrs['client-token']) {
+              spConnectState.headers['client-token'] = lowerHdrs['client-token'];
+            }
+            const devMatch = url.match(/^(https:\/\/[^/]*spclient\.spotify\.com)\/connect-state\/v1\/devices\/hobs_([^/?#]+)/i);
+            if (devMatch) {
+              spConnectState.origin = devMatch[1];
+              spConnectState.deviceId = devMatch[2];
+            }
           }
         } catch (_) {}
-        return origFetch.call(pageWin, input, init);
+        const fetchPromise = origFetch.call(pageWin, input, init);
+        if (url && url.includes('/connect-state/v1/devices/hobs_')) {
+          try {
+            Promise.resolve(fetchPromise)
+              .then((resp) => {
+                if (resp && resp.ok && typeof resp.clone === 'function') {
+                  return resp.clone().json();
+                }
+                return null;
+              })
+              .then((json) => {
+                if (json && typeof json.active_device_id === 'string') {
+                  spConnectState.activeDeviceId = json.active_device_id;
+                }
+              })
+              .catch(() => {});
+          } catch (_) {}
+        }
+        return fetchPromise;
       });
     }
 
@@ -1069,25 +1301,132 @@
       }
       return pausedAny || hadMirrorPlaying;
     });
-    define(pageWin, '__seekActiveSpMediaEl', function (targetTime) {
+    define(pageWin, '__pmPrepareHandoffUnload', function () {
+      closeDealerSocketsForHandoff();
+    });
+    define(pageWin, '__skipNextSpTrack', function () {
+      try {
+        if (!IS_YT && typeof spMediaSessionHandlers.nexttrack === 'function') {
+          spMediaSessionHandlers.nexttrack();
+          return true;
+        }
+        const nextBtn = document.querySelector('[data-testid="control-button-skip-forward"]');
+        if (nextBtn && !nextBtn.disabled) {
+          nextBtn.click();
+          return true;
+        }
+      } catch (_) {}
+      return false;
+    });
+    define(pageWin, '__pmEnsureSpotifyLocalTakeover', function (forceTransfer) {
+      try {
+        const el = getActiveEl();
+        if (el && !el.paused && !el.ended && el.readyState >= 1) {
+          return 'playing';
+        }
+        if (
+          forceTransfer &&
+          spConnectState.deviceId &&
+          spConnectState.headers.authorization &&
+          Date.now() - spConnectState.lastTransferAt > 2600
+        ) {
+          spConnectState.lastTransferAt = Date.now();
+          const fromDev = spConnectState.activeDeviceId || spConnectState.deviceId;
+          const transferUrl = `${spConnectState.origin}/connect-state/v1/connect/transfer/from/${encodeURIComponent(
+            fromDev
+          )}/to/${encodeURIComponent(spConnectState.deviceId)}`;
+          const reqHeaders = Object.assign({}, spConnectState.headers, {
+            'content-type': 'application/json'
+          });
+          window
+            .fetch(transferUrl, {
+              method: 'POST',
+              headers: reqHeaders,
+              body: JSON.stringify({
+                transfer_options: {
+                  restore_paused: 'resume'
+                }
+              })
+            })
+            .catch(() => {});
+          return 'transferred';
+        }
+        // Fallback if Connect headers aren't captured yet or button needs toggle:
+        if (!forceTransfer && typeof spMediaSessionHandlers.play === 'function') {
+          spMediaSessionHandlers.play();
+          return 'mediasession-play';
+        }
+        const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+        if (spToggle && !spToggle.disabled) {
+          const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
+          if (!aria.includes('pause')) {
+            spToggle.click();
+            return 'clicked-play';
+          }
+          if (forceTransfer) {
+            // Remote ghost device is still marked active: pause ghost, then play locally 240ms later
+            spToggle.click();
+            window.setTimeout(() => {
+              try {
+                const btn2 = document.querySelector('[data-testid="control-button-playpause"]');
+                if (btn2 && !btn2.disabled) {
+                  const aria2 = (btn2.getAttribute('aria-label') || '').toLowerCase();
+                  if (!aria2.includes('pause')) btn2.click();
+                }
+              } catch (_) {}
+            }, 240);
+            return 'toggled-ghost';
+          }
+        }
+      } catch (_) {}
+      return 'noop';
+    });
+    define(pageWin, '__seekActiveSpMediaEl', function (targetTime, forceHarmonySeek) {
       try {
         const t = Number(targetTime);
-        if (!(t > 0)) return;
+        if (!(t >= 0)) return;
         if (IS_YT) {
+          if (!(t > 0)) return;
           pendingYtSeekTarget = { time: t, setAt: Date.now(), expiresAt: Date.now() + 4500 };
           const el = getActiveEl();
           if (el) applyPendingYtSeek(el);
           return;
         }
         const el = getActiveEl();
-        if (!el) return;
-        // Spotify: never seek outside el.buffered (mutating el.currentTime outside buffered range stalls Harmony MSE)
-        if (el.buffered && el.buffered.length > 0 && Math.abs((el.currentTime || 0) - t) > 1.2) {
+        if (!forceHarmonySeek && el && el.buffered && el.buffered.length > 0) {
           for (let i = 0; i < el.buffered.length; i++) {
             if (t >= el.buffered.start(i) && t <= el.buffered.end(i) - 0.1) {
-              el.currentTime = t;
-              break;
+              if (Math.abs((el.currentTime || 0) - t) > 1.2) {
+                el.currentTime = t;
+              }
+              return;
             }
+          }
+        }
+        // Outside el.buffered (or explicit handoff alignment): invoke Spotify Harmony's own MediaSession seekto handler
+        // so Harmony fetches the exact encrypted range (e.g. 120s) without stalling MSE or losing the playlist!
+        if (typeof spMediaSessionHandlers.seekto === 'function') {
+          const seekArg =
+            typeof cloneInto === 'function'
+              ? cloneInto({ seekTime: t, fastSeek: false }, pageWin)
+              : { seekTime: t, fastSeek: false };
+          spMediaSessionHandlers.seekto(seekArg);
+          return;
+        }
+        // DOM progressbar fallback if MediaSession seekto hasn't registered yet
+        const dur = spMediaSessionDuration || parseDomSpotifyDuration();
+        const progBar = document.querySelector(
+          '[data-testid="playback-progressbar"] [data-testid="progress-bar"], [data-testid="playback-progressbar"]'
+        );
+        if (dur > 1 && progBar) {
+          const rect = progBar.getBoundingClientRect();
+          if (rect && rect.width > 20) {
+            const ratio = Math.min(0.995, Math.max(0.002, t / dur));
+            const clientX = rect.left + rect.width * ratio;
+            const clientY = rect.top + rect.height / 2;
+            progBar.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX, clientY }));
+            progBar.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX, clientY }));
+            progBar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX, clientY }));
           }
         }
       } catch (_) {}
@@ -1161,7 +1500,126 @@
     host.includes('x.com') ||
     host.includes('twitter.com') ||
     host.includes('messenger.com') ||
+    host.includes('facebook.com') ||
+    host.includes('twitch.tv') ||
+    host.includes('chatgpt.com') ||
+    host.includes('openai.com') ||
     host.includes('google.com');
+
+  let siteNotificationsMuted = false;
+  let cachedShortcutBindings = {
+    globalShortcuts: { popup: 'Alt+Shift+F', sidebar: 'Alt+Shift+M', popout: 'Alt+Shift+W' },
+    appShortcuts: {},
+    appShortcutOpenMode: 'sidebar'
+  };
+
+  function syncFrameSettingsCache(s) {
+    if (!s || typeof s !== 'object') return;
+    siteNotificationsMuted = Boolean(s.muteSiteNotifications || s.socialAppNotifySounds === false);
+    if (s.globalShortcuts && typeof s.globalShortcuts === 'object') {
+      cachedShortcutBindings.globalShortcuts = {
+        popup: 'Alt+Shift+F',
+        sidebar: 'Alt+Shift+M',
+        popout: 'Alt+Shift+W',
+        ...s.globalShortcuts
+      };
+    }
+    if (s.appShortcuts && typeof s.appShortcuts === 'object') {
+      cachedShortcutBindings.appShortcuts = { ...s.appShortcuts };
+    }
+    if (typeof s.appShortcutOpenMode === 'string' && s.appShortcutOpenMode) {
+      cachedShortcutBindings.appShortcutOpenMode = s.appShortcutOpenMode;
+    }
+  }
+
+  // Intercept Web Notification popups & non-gesture notification <audio> pings inside embedded frames when Sites Notifications are muted!
+  if (!isTopFrame && isFoxHubMediaFrame && window.wrappedJSObject && typeof exportFunction === 'function') {
+    try {
+      const pageWin = window.wrappedJSObject;
+      if (pageWin.Notification) {
+        const OrigNotif = pageWin.Notification;
+        const WrappedNotif = exportFunction(function (title, options) {
+          if (
+            !host.includes('spotify.com') &&
+            !host.includes('youtube.com') &&
+            !host.includes('twitch.tv') &&
+            !host.includes('chatgpt.com') &&
+            !host.includes('gemini.google.com')
+          ) {
+            webNotificationUnreadCount = Math.min(99, webNotificationUnreadCount + 1);
+            setTimeout(() => {
+              try {
+                detectUnreadState();
+              } catch (_) {}
+            }, 10);
+          }
+          if (siteNotificationsMuted) {
+            const dummy = new pageWin.Object();
+            exportFunction(() => {}, dummy, { defineAs: 'close' });
+            exportFunction(() => {}, dummy, { defineAs: 'addEventListener' });
+            exportFunction(() => {}, dummy, { defineAs: 'removeEventListener' });
+            return dummy;
+          }
+          return options !== undefined ? new OrigNotif(title, options) : new OrigNotif(title);
+        }, pageWin);
+        WrappedNotif.prototype = OrigNotif.prototype;
+        try {
+          Object.defineProperty(WrappedNotif, 'permission', {
+            get: exportFunction(() => (siteNotificationsMuted ? 'default' : OrigNotif.permission || 'granted'), pageWin),
+            configurable: true
+          });
+          if (typeof OrigNotif.requestPermission === 'function') {
+            exportFunction(
+              function (cb) {
+                return OrigNotif.requestPermission.call(OrigNotif, cb);
+              },
+              WrappedNotif,
+              { defineAs: 'requestPermission' }
+            );
+          }
+        } catch (_) {}
+        pageWin.Notification = WrappedNotif;
+      }
+
+      if (
+        !isMirrorAudioHost &&
+        !host.includes('tiktok.com') &&
+        !host.includes('twitch.tv') &&
+        pageWin.HTMLMediaElement &&
+        pageWin.HTMLMediaElement.prototype
+      ) {
+        let lastUserClickInSocialFrameAt = 0;
+        window.addEventListener(
+          'pointerdown',
+          (ev) => {
+            if (ev && ev.isTrusted) lastUserClickInSocialFrameAt = Date.now();
+          },
+          { capture: true, passive: true }
+        );
+        const origSocialPlay = pageWin.HTMLMediaElement.prototype.play;
+        exportFunction(
+          function () {
+            try {
+              if (
+                siteNotificationsMuted &&
+                this &&
+                this.tagName === 'AUDIO' &&
+                Date.now() - lastUserClickInSocialFrameAt > 1500 &&
+                (!Number.isFinite(this.duration) || this.duration < 8)
+              ) {
+                this.muted = true;
+                this.volume = 0;
+                return pageWin.Promise.resolve();
+              }
+            } catch (_) {}
+            return origSocialPlay.call(this);
+          },
+          pageWin.HTMLMediaElement.prototype,
+          { defineAs: 'play' }
+        );
+      }
+    } catch (_) {}
+  }
 
   // Spoof top/parent/frameElement ONLY on custom websites so their frame-busters don't break,
   // while keeping native cross-compartment window descriptors intact on built-in SPAs (WhatsApp, Messenger, Discord, X, Google, TikTok, etc.).
@@ -1464,6 +1922,9 @@
 
   let pendingSpaTarget = null; // { destPath, icon, tiktokView, igView, spotifyView, messengerView, expiresAt }
   let spotifyViewOverride = ''; // 'library' | 'search' | 'player' | ''
+  let spotifyPanelOpen = false;
+  let activeSpotifyPanelTrigger = ''; // 'queue' | 'device' | ''
+  let spPanelSyncClick = false;
 
   function syncAppSpecificDomState() {
     const root = document.documentElement;
@@ -1518,6 +1979,10 @@
       }
       if (root.getAttribute('data-pm-spotify-view') !== spView) {
         root.setAttribute('data-pm-spotify-view', spView);
+      }
+      const spPanelAttr = spotifyPanelOpen ? 'open' : 'closed';
+      if (root.getAttribute('data-pm-spotify-panel') !== spPanelAttr) {
+        root.setAttribute('data-pm-spotify-panel', spPanelAttr);
       }
       const oneTrust = document.getElementById('onetrust-consent-sdk');
       if (oneTrust) oneTrust.remove();
@@ -2215,10 +2680,47 @@
             z-index: -1 !important;
           }
 
-          #Desktop_PanelContainer_Id,
-          .Root__right-sidebar,
-          #main-view + div:not(:has([data-testid="now-playing-bar"])),
-          aside[aria-label="Now playing view" i]:not([data-testid="now-playing-bar"]) {
+          html:not([data-pm-spotify-panel="open"]) #Desktop_PanelContainer_Id {
+            position: fixed !important;
+            left: -9999px !important;
+            top: 0 !important;
+            width: 320px !important;
+            height: 80vh !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            z-index: -1 !important;
+          }
+
+          html[data-pm-spotify-panel="open"] #Desktop_PanelContainer_Id {
+            position: fixed !important;
+            top: 48px !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 80px !important;
+            width: 100vw !important;
+            max-width: 100vw !important;
+            height: calc(100vh - 128px) !important;
+            box-sizing: border-box !important;
+            z-index: 85 !important;
+            background: #121212 !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            overflow-y: auto !important;
+            display: flex !important;
+            flex-direction: column !important;
+          }
+
+          html[data-pm-spotify-panel="open"] #Desktop_PanelContainer_Id > *,
+          html[data-pm-spotify-panel="open"] #Desktop_PanelContainer_Id aside {
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            flex: 1 1 auto !important;
+          }
+
+          html:not([data-pm-spotify-panel="open"]) .Root__right-sidebar:not(#Desktop_PanelContainer_Id),
+          html:not([data-pm-spotify-panel="open"]) #main-view + div:not(#Desktop_PanelContainer_Id):not(:has([data-testid="now-playing-bar"])),
+          html:not([data-pm-spotify-panel="open"]) aside[aria-label="Now playing view" i]:not([data-testid="now-playing-bar"]) {
             display: none !important;
             width: 0 !important;
             min-width: 0 !important;
@@ -4912,6 +5414,21 @@
       if (host.includes('messenger.com')) {
         return Boolean(document.querySelector('[role="main"], [role="navigation"], form'));
       }
+      if (host.includes('twitch.tv')) {
+        return Boolean(
+          document.querySelector('[data-a-target="top-nav-container"], .top-nav, main, video, [data-a-target="tw-core-button-label-text"]')
+        );
+      }
+      if (host.includes('chatgpt.com') || host.includes('openai.com')) {
+        return Boolean(
+          document.querySelector('#prompt-textarea, main, nav, form, [data-testid="login-button"]')
+        );
+      }
+      if (host.includes('gemini.google.com')) {
+        return Boolean(
+          document.querySelector('chat-app, rich-textarea, main, [role="main"], bard-sidenav, a[href*="ServiceLogin"]')
+        );
+      }
       const paintedEl = document.querySelector('main, [role="main"], nav, article, canvas, video, form, textarea');
       if (paintedEl) return true;
       return document.body.children.length > 0 && document.body.scrollHeight > 80;
@@ -6660,22 +7177,89 @@
             }
           }
         }
-        // If user is in Spotify Library view and clicks a playlist/track inside the left library, switch to player view
-        if (host.includes('spotify.com') && spotifyViewOverride === 'library') {
-          const leftSidebar = e.target && e.target.closest ? e.target.closest('#Desktop_LeftSidebar_Id') : null;
-          const clickedRow =
-            leftSidebar && e.target.closest
+        // Spotify Queue & Connect Device Panel overlay toggle + Library row selection
+        if (host.includes('spotify.com') && e.target && e.target.closest) {
+          if (!spPanelSyncClick) {
+            const queueBtn = e.target.closest(
+              '[data-testid="control-button-queue"], button[aria-label="Queue" i], button[aria-label*="Queue" i]'
+            );
+            const deviceBtn = !queueBtn
+              ? e.target.closest(
+                  '#device-picker-icon-button, [data-testid="device-picker-icon-button"], button[aria-label*="Connect to a device" i]'
+                )
+              : null;
+            if (queueBtn || deviceBtn) {
+              const trigBtn = queueBtn || deviceBtn;
+              const trigType = queueBtn ? 'queue' : 'device';
+              if (spotifyPanelOpen && activeSpotifyPanelTrigger === trigType) {
+                spotifyPanelOpen = false;
+                activeSpotifyPanelTrigger = '';
+              } else {
+                spotifyPanelOpen = true;
+                activeSpotifyPanelTrigger = trigType;
+                if (spotifyViewOverride === 'library') {
+                  spotifyViewOverride = 'player';
+                }
+                setTimeout(() => {
+                  if (!spotifyPanelOpen || activeSpotifyPanelTrigger !== trigType) return;
+                  const panelEl = document.getElementById('Desktop_PanelContainer_Id');
+                  const hasPanelContent = Boolean(
+                    panelEl && panelEl.children.length > 0 && (panelEl.textContent || '').trim().length > 0
+                  );
+                  if (!hasPanelContent && trigBtn && trigBtn.isConnected) {
+                    spPanelSyncClick = true;
+                    try {
+                      trigBtn.click();
+                    } catch (_) {}
+                    setTimeout(() => {
+                      spPanelSyncClick = false;
+                      syncAppSpecificDomState();
+                    }, 60);
+                  } else {
+                    syncAppSpecificDomState();
+                  }
+                }, 90);
+              }
+              syncAppSpecificDomState();
+            } else if (spotifyPanelOpen) {
+              const inPanel = e.target.closest('#Desktop_PanelContainer_Id');
+              if (inPanel) {
+                const closeBtn = e.target.closest(
+                  'button[aria-label="Close" i], [data-testid="PanelHeader_CloseButton"], button[aria-label*="Hide" i]'
+                );
+                if (closeBtn) {
+                  spotifyPanelOpen = false;
+                  activeSpotifyPanelTrigger = '';
+                  syncAppSpecificDomState();
+                } else {
+                  const navAnchor = e.target.closest('a[href^="/album/"], a[href^="/artist/"], a[href^="/playlist/"]');
+                  if (navAnchor) {
+                    setTimeout(() => {
+                      spotifyPanelOpen = false;
+                      activeSpotifyPanelTrigger = '';
+                      syncAppSpecificDomState();
+                    }, 90);
+                  }
+                }
+              }
+            }
+          }
+
+          if (spotifyViewOverride === 'library') {
+            const leftSidebar = e.target.closest('#Desktop_LeftSidebar_Id');
+            const clickedRow = leftSidebar
               ? e.target.closest('a[href], [role="row"], [data-encore-id="listRow"]')
               : null;
-          if (clickedRow) {
-            setTimeout(() => {
-              spotifyViewOverride = 'player';
-              syncAppSpecificDomState();
-              notifyParent('PM_FRAME_URL_CHANGED', {
-                url: window.location.href,
-                title: document.title || ''
-              });
-            }, 80);
+            if (clickedRow) {
+              setTimeout(() => {
+                spotifyViewOverride = 'player';
+                syncAppSpecificDomState();
+                notifyParent('PM_FRAME_URL_CHANGED', {
+                  url: window.location.href,
+                  title: document.title || ''
+                });
+              }, 80);
+            }
           }
         }
         scheduleStaggeredRouteChecks();
@@ -6836,6 +7420,7 @@
   let spTabPauseVerifyTimer = null;
   let lastSpotifyAutoResumeClickAt = 0;
   let spHydratedAt = 0;
+  let spHydratedWithoutLocalMediaSince = 0;
   let lastAutoPlayedWatchKey = '';
 
   function clickSpotifyToggleOnce(wantPlaying) {
@@ -7033,6 +7618,15 @@
         const posEl = document.querySelector('[data-testid="playback-position"]');
         const posText = posEl ? (posEl.textContent || '').trim() : '';
         const isSpPlayerHydrated = Boolean(spPlayBtn && !spPlayBtn.disabled && posText && posText !== '-:--');
+        if (spMediaPlaying) {
+          spHydratedWithoutLocalMediaSince = 0;
+        } else if (isSpPlayerHydrated) {
+          if (!spHydratedWithoutLocalMediaSince) {
+            spHydratedWithoutLocalMediaSince = Date.now();
+          }
+        } else {
+          spHydratedWithoutLocalMediaSince = 0;
+        }
         if (isSpPlayerHydrated) {
           const aria = (spPlayBtn.getAttribute('aria-label') || '').toLowerCase();
           if (aria.includes('pause')) {
@@ -7123,6 +7717,21 @@
               if (!aria.includes('pause') && Date.now() - lastSpotifyAutoResumeClickAt > 2500) {
                 lastSpotifyAutoResumeClickAt = Date.now();
                 clickSpotifyToggleOnce(true);
+              } else if (
+                aria.includes('pause') &&
+                spHydratedWithoutLocalMediaSince > 0 &&
+                Date.now() - spHydratedWithoutLocalMediaSince > 1400 &&
+                Date.now() - lastSpotifyAutoResumeClickAt > 2600
+              ) {
+                lastSpotifyAutoResumeClickAt = Date.now();
+                try {
+                  if (
+                    window.wrappedJSObject &&
+                    typeof window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover === 'function'
+                  ) {
+                    window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover(true);
+                  }
+                } catch (_) {}
               }
             }
           }
@@ -7175,6 +7784,21 @@
               } finally {
                 spAutoClickInFlight = false;
               }
+            } else if (
+              aria.includes('pause') &&
+              spHydratedWithoutLocalMediaSince > 0 &&
+              Date.now() - spHydratedWithoutLocalMediaSince > 1400 &&
+              Date.now() - lastSpotifyAutoResumeClickAt > 2600
+            ) {
+              lastSpotifyAutoResumeClickAt = Date.now();
+              try {
+                if (
+                  window.wrappedJSObject &&
+                  typeof window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover === 'function'
+                ) {
+                  window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover(true);
+                }
+              } catch (_) {}
             }
           }
         } else if (sidebarAutoResumeRequested && isAudioMirrorActive()) {
@@ -7597,6 +8221,21 @@
       if (d.startsWith('/r/popular') && c.startsWith('/r/popular')) return true;
     }
 
+    if (host.includes('twitch.tv')) {
+      if (d.startsWith('/directory/following') && c.startsWith('/directory/following')) return true;
+      if (d === '/directory' && c === '/directory') return true;
+    }
+
+    if (host.includes('gemini.google.com')) {
+      if ((d === '/app' || d === '/') && (c === '/app' || c.startsWith('/app/'))) return true;
+      if (d.startsWith('/gems') && c.startsWith('/gems')) return true;
+    }
+
+    if (host.includes('chatgpt.com')) {
+      if (d === '/' && c === '/') return true;
+      if (d.startsWith('/gpts') && c.startsWith('/gpts')) return true;
+    }
+
     return false;
   }
 
@@ -7803,8 +8442,60 @@
           document.querySelector('button[aria-label="Chats" i], [data-icon="chat"]')
         );
       }
+      // 10. Twitch
+      else if (host.includes('twitch.tv')) {
+        if (cleanTarget === '/') {
+          return resolveClickableRouterNode(
+            document.querySelector('a[data-a-target="home-link"], a[href="/"]')
+          );
+        }
+        if (cleanTarget.startsWith('/directory/following')) {
+          return resolveClickableRouterNode(
+            document.querySelector('a[data-a-target="following-link"], a[href="/directory/following"]')
+          );
+        }
+        if (cleanTarget === '/directory') {
+          return resolveClickableRouterNode(
+            document.querySelector('a[data-a-target="browse-link"], a[href="/directory"]')
+          );
+        }
+      }
+      // 11. ChatGPT
+      else if (host.includes('chatgpt.com') || host.includes('openai.com')) {
+        if (cleanTarget === '/') {
+          return resolveClickableRouterNode(
+            document.querySelector('a[data-testid="create-new-chat-button"], a[href="/"]')
+          );
+        }
+        if (cleanTarget.startsWith('/gpts')) {
+          return resolveClickableRouterNode(
+            document.querySelector('a[href="/gpts"], a[href*="/gpts"]')
+          );
+        }
+      }
+      // 12. Gemini
+      else if (host.includes('gemini.google.com')) {
+        if (cleanTarget === '/app' || cleanTarget === '/') {
+          return resolveClickableRouterNode(
+            document.querySelector('a[href="/app"], button[aria-label*="New chat" i]')
+          );
+        }
+        if (cleanTarget.startsWith('/gems')) {
+          return resolveClickableRouterNode(
+            document.querySelector('a[href*="/gems"]')
+          );
+        }
+      }
+      // 13. Telegram
+      else if (host.includes('telegram.org')) {
+        if (cleanTarget === '/k' || cleanTarget === '/a' || cleanTarget === '/') {
+          return resolveClickableRouterNode(
+            document.querySelector('.sidebar-close-button, button.btn-icon.sidebar-back-button')
+          );
+        }
+      }
 
-      // 10. Generic exact pathname href match in the live DOM (never match random /@creator links!)
+      // 14. Generic exact pathname href match in the live DOM (never match random /@creator links!)
       const anchors = Array.from(document.querySelectorAll('a[href]'));
       for (const a of anchors) {
         try {
@@ -7880,6 +8571,8 @@
           ? 'search'
           : 'player';
       spotifyViewOverride = spView;
+      spotifyPanelOpen = false;
+      activeSpotifyPanelTrigger = '';
       syncAppSpecificDomState();
 
       if (spView === 'library') {
@@ -8054,9 +8747,29 @@
       case 'SEEK_SP_MEDIA':
         try {
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__seekActiveSpMediaEl === 'function') {
-            window.wrappedJSObject.__seekActiveSpMediaEl(Number(msg.currentTime) || 0);
+            window.wrappedJSObject.__seekActiveSpMediaEl(
+              Number(msg.currentTime) || 0,
+              Boolean(msg.forceHarmonySeek)
+            );
           }
         } catch (_) {}
+        break;
+      case 'SKIP_NEXT_SP_TRACK':
+        try {
+          if (window.wrappedJSObject && typeof window.wrappedJSObject.__skipNextSpTrack === 'function') {
+            window.wrappedJSObject.__skipNextSpTrack();
+          }
+        } catch (_) {}
+        break;
+      case 'PREPARE_HANDOFF_UNLOAD':
+        try {
+          if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmPrepareHandoffUnload === 'function') {
+            window.wrappedJSObject.__pmPrepareHandoffUnload();
+          }
+        } catch (_) {}
+        break;
+      case 'APPLY_MUTE_CONFIG':
+        syncFrameSettingsCache(msg);
         break;
       case 'AUTO_RESUME_PLAYBACK':
         if (isBgAudioFrame) break;
@@ -8273,6 +8986,7 @@
             }
             if (res && res.settings) {
               updateVideoLoadbarConfig(res.settings);
+              syncFrameSettingsCache(res.settings);
             }
           })
           .catch(() => {});
@@ -8285,11 +8999,76 @@
             }
             if (changes.settings && changes.settings.newValue) {
               updateVideoLoadbarConfig(changes.settings.newValue);
+              syncFrameSettingsCache(changes.settings.newValue);
             }
           }
         });
       }
     } catch (_) {}
+  }
+
+  // Relay custom per-app keyboard shortcuts when focus is inside an embedded FoxHub app iframe
+  if (isFoxHubMediaFrame && !isBgAudioFrame && typeof browser !== 'undefined' && browser.runtime) {
+    const formatFrameKeyCombo = (ev) => {
+      if (!ev || ev.repeat) return '';
+      if (ev.getModifierState && ev.getModifierState('AltGraph')) return '';
+      const k = ev.key || '';
+      if (k === 'Control' || k === 'Shift' || k === 'Alt' || k === 'Meta' || k === 'OS') return '';
+      const isFnKey = /^F([1-9]|1[0-2])$/i.test(k);
+      const hasPrimaryMod = ev.altKey || ev.ctrlKey || ev.metaKey;
+      if (!hasPrimaryMod && !isFnKey) return '';
+      if (!isFnKey && !(ev.altKey || (ev.ctrlKey && ev.shiftKey) || (ev.metaKey && ev.shiftKey))) return '';
+
+      let keyToken = '';
+      const code = ev.code || '';
+      if (/^Key([A-Z])$/.test(code)) {
+        keyToken = code.slice(3).toUpperCase();
+      } else if (/^Digit([0-9])$/.test(code)) {
+        keyToken = code.slice(5);
+      } else if (isFnKey) {
+        keyToken = k.toUpperCase();
+      } else if (code === 'Comma') {
+        keyToken = 'Comma';
+      } else if (code === 'Period') {
+        keyToken = 'Period';
+      } else if (code === 'Space') {
+        keyToken = 'Space';
+      } else if (k.length === 1 && /[a-z0-9]/i.test(k)) {
+        keyToken = k.toUpperCase();
+      }
+      if (!keyToken) return '';
+
+      const parts = [];
+      if (ev.ctrlKey || ev.metaKey) parts.push('Ctrl');
+      if (ev.altKey) parts.push('Alt');
+      if (ev.shiftKey) parts.push('Shift');
+      parts.push(keyToken);
+      return parts.join('+');
+    };
+
+    window.addEventListener(
+      'keydown',
+      (ev) => {
+        try {
+          const combo = formatFrameKeyCombo(ev);
+          if (!combo) return;
+          const map = cachedShortcutBindings.appShortcuts;
+          if (!map || typeof map !== 'object') return;
+          const comboNorm = combo.toLowerCase();
+          for (const [appId, bound] of Object.entries(map)) {
+            if (bound && String(bound).trim().toLowerCase() === comboNorm) {
+              ev.preventDefault();
+              ev.stopPropagation();
+              browser.runtime
+                .sendMessage({ type: 'TRIGGER_APP_SHORTCUT', appId })
+                .catch(() => {});
+              return;
+            }
+          }
+        } catch (_) {}
+      },
+      true
+    );
   }
 
   // Persistent Scroll Position Save & Instant Restore across FoxHub Close & Reopen

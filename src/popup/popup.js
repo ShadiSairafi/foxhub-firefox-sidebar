@@ -152,20 +152,91 @@
     });
   }
 
+  function isEmailMutedNow() {
+    return Boolean(
+      appSettings.muteEmailNotifications || (appSettings.dndUntil && appSettings.dndUntil > Date.now())
+    );
+  }
+
+  function isSitesMutedNow() {
+    return Boolean(appSettings.muteSiteNotifications || appSettings.socialAppNotifySounds === false);
+  }
+
+  function syncMuteUiControls() {
+    const emailMuted = isEmailMutedNow();
+    const sitesMuted = isSitesMutedNow();
+    const allMuted = emailMuted && sitesMuted;
+    const anyMuted = emailMuted || sitesMuted;
+
+    const statusLabel = allMuted
+      ? 'All Notifications Muted (Click to manage)'
+      : emailMuted
+        ? 'Email Notifications Muted (Click to manage)'
+        : sitesMuted
+          ? 'Sites Notifications Muted (Click to manage)'
+          : 'Mute Notifications (All, Email, or Sites)';
+
+    const railMuteBtn = document.getElementById('rail-btn-mute-notifs');
+    if (railMuteBtn) {
+      railMuteBtn.classList.toggle('is-muted-active', anyMuted);
+      railMuteBtn.title = statusLabel;
+    }
+
+    const dndBtn = document.getElementById('btn-dnd');
+    if (dndBtn) {
+      dndBtn.classList.toggle('is-muted-active', anyMuted);
+      dndBtn.classList.toggle('active', anyMuted);
+      dndBtn.title = statusLabel;
+    }
+
+    const chkAll = document.getElementById('chk-mute-all');
+    const chkEmail = document.getElementById('chk-mute-email');
+    const chkSites = document.getElementById('chk-mute-sites');
+    if (chkAll) {
+      chkAll.checked = allMuted;
+      chkAll.closest('.pm-mute-option-row')?.classList.toggle('is-checked', allMuted);
+    }
+    if (chkEmail) {
+      chkEmail.checked = emailMuted;
+      chkEmail.closest('.pm-mute-option-row')?.classList.toggle('is-checked', emailMuted);
+    }
+    if (chkSites) {
+      chkSites.checked = sitesMuted;
+      chkSites.closest('.pm-mute-option-row')?.classList.toggle('is-checked', sitesMuted);
+    }
+
+    const popBadge = document.getElementById('pm-mute-popover-badge');
+    if (popBadge) {
+      popBadge.textContent = allMuted
+        ? 'All Muted'
+        : emailMuted
+          ? 'Email Muted'
+          : sitesMuted
+            ? 'Sites Muted'
+            : 'All Active';
+      popBadge.classList.toggle('is-muted', anyMuted);
+    }
+  }
+
   /**
-   * Render Header Status & DND State
+   * Render Header Status & Mute / DND State
    */
   function renderHeaderStatus() {
     const activeAccounts = (appState.accounts || []).filter((a) => !a.disabled);
     const isDnd = appSettings.dndUntil && appSettings.dndUntil > Date.now();
-    const dndBtn = document.getElementById('btn-dnd');
+    const emailMuted = isEmailMutedNow();
+    const sitesMuted = isSitesMutedNow();
 
-    if (isDnd) {
-      dndBtn.classList.add('active');
+    syncMuteUiControls();
+
+    if (isDnd && !appSettings.muteEmailNotifications) {
       const minsLeft = Math.max(1, Math.ceil((appSettings.dndUntil - Date.now()) / 60000));
       statusSubtitle.textContent = `Do Not Disturb (${minsLeft}m left) • ${appState.totalUnread} unread`;
+    } else if (emailMuted && sitesMuted) {
+      statusSubtitle.textContent = `All Notifications Muted • ${appState.totalUnread} unread`;
+    } else if (emailMuted) {
+      statusSubtitle.textContent = `Email Notifications Muted • ${appState.totalUnread} unread`;
     } else {
-      dndBtn.classList.remove('active');
       if (activeAccounts.length === 0) {
         statusSubtitle.textContent = 'No accounts connected yet';
       } else {
@@ -1724,6 +1795,324 @@
         } catch (_) {}
       }
     });
+  }
+
+  function broadcastMuteAndShortcutsConfig() {
+    const sitesMuted = isSitesMutedNow();
+    mediaFramePool.forEach((entry) => {
+      if (entry.frame && entry.frame.contentWindow) {
+        try {
+          entry.frame.contentWindow.postMessage(
+            {
+              target: 'pocketmail-media-frame',
+              cmd: 'APPLY_MUTE_CONFIG',
+              muteSiteNotifications: sitesMuted,
+              socialAppNotifySounds: !sitesMuted,
+              globalShortcuts: appSettings.globalShortcuts || {},
+              appShortcuts: appSettings.appShortcuts || {},
+              appShortcutOpenMode: appSettings.appShortcutOpenMode || 'sidebar'
+            },
+            '*'
+          );
+        } catch (_) {}
+      }
+    });
+  }
+
+  let activeMutePopoverAnchor = null;
+  function closeMutePopover() {
+    const pop = document.getElementById('pm-mute-popover');
+    if (pop) pop.classList.add('hidden');
+    document.getElementById('rail-btn-mute-notifs')?.setAttribute('aria-expanded', 'false');
+    document.getElementById('btn-dnd')?.setAttribute('aria-expanded', 'false');
+    activeMutePopoverAnchor = null;
+  }
+
+  function toggleMutePopover(anchorBtn) {
+    const pop = document.getElementById('pm-mute-popover');
+    if (!pop || !anchorBtn) return;
+    if (!pop.classList.contains('hidden') && activeMutePopoverAnchor === anchorBtn) {
+      closeMutePopover();
+      return;
+    }
+    closeRailContextMenu();
+    syncMuteUiControls();
+    activeMutePopoverAnchor = anchorBtn;
+    document.getElementById('rail-btn-mute-notifs')?.setAttribute(
+      'aria-expanded',
+      anchorBtn.id === 'rail-btn-mute-notifs' ? 'true' : 'false'
+    );
+    document.getElementById('btn-dnd')?.setAttribute(
+      'aria-expanded',
+      anchorBtn.id === 'btn-dnd' ? 'true' : 'false'
+    );
+
+    pop.classList.remove('hidden');
+    const rect = anchorBtn.getBoundingClientRect();
+    const popW = 248;
+    const popH = pop.offsetHeight || 198;
+    const vw = window.innerWidth || 460;
+    const vh = window.innerHeight || 600;
+
+    let left = rect.left;
+    let top = rect.bottom + 8;
+    if (anchorBtn.id === 'rail-btn-mute-notifs') {
+      left = rect.right + 8;
+      top = Math.min(vh - popH - 10, Math.max(10, rect.bottom - popH + 6));
+    } else {
+      left = Math.min(vw - popW - 10, Math.max(10, rect.right - popW));
+      top = Math.min(vh - popH - 10, Math.max(10, rect.bottom + 8));
+    }
+    pop.style.left = `${Math.round(left)}px`;
+    pop.style.top = `${Math.round(top)}px`;
+  }
+
+  const DEFAULT_GLOBAL_SHORTCUTS_UI = {
+    popup: 'Alt+Shift+F',
+    sidebar: 'Alt+Shift+M',
+    popout: 'Alt+Shift+W'
+  };
+  let activeShortcutRecorderCleanup = null;
+
+  function cancelActiveShortcutRecording() {
+    if (typeof activeShortcutRecorderCleanup === 'function') {
+      activeShortcutRecorderCleanup();
+      activeShortcutRecorderCleanup = null;
+    }
+  }
+
+  function formatShortcutFromKeyEvent(ev) {
+    if (!ev) return null;
+    const k = ev.key || '';
+    if (k === 'Escape') return { action: 'cancel' };
+    if ((k === 'Backspace' || k === 'Delete') && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.shiftKey) {
+      return { action: 'clear' };
+    }
+    if (k === 'Control' || k === 'Shift' || k === 'Alt' || k === 'Meta' || k === 'OS') {
+      return null;
+    }
+    if (ev.getModifierState && ev.getModifierState('AltGraph')) {
+      return null;
+    }
+
+    const isFnKey = /^F([1-9]|1[0-2])$/i.test(k);
+    const useCtrl = Boolean(ev.ctrlKey || ev.metaKey);
+    const useAlt = Boolean(ev.altKey);
+    const useShift = Boolean(ev.shiftKey);
+    const modCount = (useCtrl ? 1 : 0) + (useAlt ? 1 : 0) + (useShift ? 1 : 0);
+
+    if (!isFnKey && !useCtrl && !useAlt) {
+      return {
+        action: 'invalid',
+        message: 'Hold Alt+Shift or Ctrl+Shift + a key (or Backspace to clear)'
+      };
+    }
+    if (modCount > 2) {
+      return {
+        action: 'invalid',
+        message: 'Firefox supports up to 2 modifiers (e.g. Alt+Shift+Key or Ctrl+Shift+Key)'
+      };
+    }
+
+    let keyToken = '';
+    const code = ev.code || '';
+    if (/^Key([A-Z])$/.test(code)) {
+      keyToken = code.slice(3).toUpperCase();
+    } else if (/^Digit([0-9])$/.test(code)) {
+      keyToken = code.slice(5);
+    } else if (isFnKey) {
+      keyToken = k.toUpperCase();
+    } else if (code === 'Comma') {
+      keyToken = 'Comma';
+    } else if (code === 'Period') {
+      keyToken = 'Period';
+    } else if (code === 'Space') {
+      keyToken = 'Space';
+    } else if (code === 'Home' || code === 'End' || code === 'PageUp' || code === 'PageDown' || code === 'Insert') {
+      keyToken = code;
+    } else if (code === 'ArrowUp' || code === 'ArrowDown' || code === 'ArrowLeft' || code === 'ArrowRight') {
+      keyToken = code.replace('Arrow', '');
+    } else if (k.length === 1 && /[a-z0-9]/i.test(k)) {
+      keyToken = k.toUpperCase();
+    }
+
+    if (!keyToken) {
+      return {
+        action: 'invalid',
+        message: 'Unsupported key — use A–Z, 0–9, or F1–F12 with Alt+Shift / Ctrl+Shift'
+      };
+    }
+
+    const parts = [];
+    if (useCtrl) parts.push('Ctrl');
+    if (useAlt) parts.push('Alt');
+    if (useShift) parts.push('Shift');
+    parts.push(keyToken);
+    return { action: 'set', shortcut: parts.join('+') };
+  }
+
+  async function persistKeyboardShortcutsChange(nextGlobal, nextApps, nextOpenMode, toastMsg = '') {
+    try {
+      const res = await browser.runtime.sendMessage({
+        type: 'UPDATE_KEYBOARD_SHORTCUTS',
+        globalShortcuts: nextGlobal,
+        appShortcuts: nextApps,
+        appShortcutOpenMode: nextOpenMode || appSettings.appShortcutOpenMode || 'sidebar'
+      });
+      if (res && res.settings) {
+        appSettings = res.settings;
+      } else {
+        appSettings = {
+          ...appSettings,
+          globalShortcuts: nextGlobal,
+          appShortcuts: nextApps,
+          appShortcutOpenMode: nextOpenMode || appSettings.appShortcutOpenMode || 'sidebar'
+        };
+      }
+      renderMediaAppsManager();
+      broadcastMuteAndShortcutsConfig();
+      if (res && res.ok === false && res.error) {
+        showToast(`Browser reserved shortcut — try Alt+Shift+Key`);
+      } else if (toastMsg) {
+        showToast(toastMsg);
+      }
+    } catch (_) {
+      renderMediaAppsManager();
+    }
+  }
+
+  function bindShortcutRecorderButton(btn, kind, keyOrAppId, displayName) {
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (btn.classList.contains('is-recording')) {
+        cancelActiveShortcutRecording();
+        renderMediaAppsManager();
+        return;
+      }
+      cancelActiveShortcutRecording();
+      const origText = btn.textContent;
+      btn.classList.add('is-recording');
+      btn.textContent = 'Press keys…';
+
+      const onKeyDown = async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.stopImmediatePropagation();
+        const parsed = formatShortcutFromKeyEvent(ev);
+        if (!parsed) return;
+        if (parsed.action === 'cancel') {
+          cleanup();
+          btn.textContent = origText;
+          return;
+        }
+        if (parsed.action === 'invalid') {
+          showToast(parsed.message);
+          return;
+        }
+
+        cleanup();
+        const nextGlobal = {
+          ...DEFAULT_GLOBAL_SHORTCUTS_UI,
+          ...(appSettings.globalShortcuts || {})
+        };
+        const nextApps = { ...(appSettings.appShortcuts || {}) };
+
+        if (parsed.action === 'clear') {
+          if (kind === 'global') {
+            nextGlobal[keyOrAppId] = '';
+          } else {
+            delete nextApps[keyOrAppId];
+          }
+          await persistKeyboardShortcutsChange(
+            nextGlobal,
+            nextApps,
+            appSettings.appShortcutOpenMode,
+            `Cleared shortcut for ${displayName}`
+          );
+          return;
+        }
+
+        const combo = parsed.shortcut;
+        const comboNorm = combo.toLowerCase();
+        // Ensure no duplicate conflict across globalShortcuts & appShortcuts
+        Object.keys(nextGlobal).forEach((gk) => {
+          if (!(kind === 'global' && gk === keyOrAppId) && String(nextGlobal[gk] || '').toLowerCase() === comboNorm) {
+            nextGlobal[gk] = '';
+          }
+        });
+        Object.keys(nextApps).forEach((aid) => {
+          if (!(kind === 'app' && aid === keyOrAppId) && String(nextApps[aid] || '').toLowerCase() === comboNorm) {
+            delete nextApps[aid];
+          }
+        });
+
+        if (kind === 'global') {
+          nextGlobal[keyOrAppId] = combo;
+        } else {
+          nextApps[keyOrAppId] = combo;
+        }
+
+        await persistKeyboardShortcutsChange(
+          nextGlobal,
+          nextApps,
+          appSettings.appShortcutOpenMode,
+          `${displayName} shortcut set to ${combo}`
+        );
+      };
+
+      const onOutsideDown = (ev) => {
+        if (ev.target !== btn && !btn.contains(ev.target)) {
+          cleanup();
+          renderMediaAppsManager();
+        }
+      };
+
+      const cleanup = () => {
+        btn.classList.remove('is-recording');
+        window.removeEventListener('keydown', onKeyDown, true);
+        document.removeEventListener('mousedown', onOutsideDown, true);
+        if (activeShortcutRecorderCleanup === cleanup) {
+          activeShortcutRecorderCleanup = null;
+        }
+      };
+
+      activeShortcutRecorderCleanup = cleanup;
+      window.addEventListener('keydown', onKeyDown, true);
+      document.addEventListener('mousedown', onOutsideDown, true);
+    });
+  }
+
+  function activateAppDirectlyById(appId) {
+    if (!appId) return;
+    closeMutePopover();
+    closeRailContextMenu();
+    readerDrawer?.classList.add('hidden');
+    themeDrawer?.classList.add('hidden');
+    accountDrawer?.classList.add('hidden');
+    composeDrawer?.classList.add('hidden');
+    mediaAppsDrawer?.classList.add('hidden');
+    activeSidebarHubSection = '';
+    document.getElementById('rail-btn-manage-apps')?.classList.remove('active');
+    document.getElementById('rail-btn-sidebar-settings')?.classList.remove('active');
+
+    if (appId === 'pocketmail') {
+      activeRailAppId = 'pocketmail';
+      hideMediaWorkspaceKeepAlive();
+      renderAll();
+      syncPersistentSessionToBackground('pocketmail', '', null, true);
+      triggerSilentMailSync(2000);
+      return;
+    }
+
+    if (!window.PocketMailMediaApps) return;
+    const app = window.PocketMailMediaApps.getAppById(appId, appSettings);
+    if (!app) return;
+    if (!IS_SIDEBAR_VIEW) {
+      document.documentElement.classList.add('show-popup-rail');
+    }
+    openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
   }
 
   function closeRailContextMenu() {
@@ -3356,8 +3745,43 @@
 
     const chkSocialSounds = document.getElementById('chk-social-notify-sounds');
     if (chkSocialSounds) {
-      chkSocialSounds.checked = appSettings.socialAppNotifySounds !== false;
+      chkSocialSounds.checked = !isSitesMutedNow();
     }
+
+    // Sync Global & Mail Keyboard Shortcut Recorder Buttons
+    const curGlobalSc = {
+      ...DEFAULT_GLOBAL_SHORTCUTS_UI,
+      ...(appSettings.globalShortcuts || {})
+    };
+    const curAppSc = appSettings.appShortcuts || {};
+    [
+      ['btn-sc-global-popup', curGlobalSc.popup],
+      ['btn-sc-global-sidebar', curGlobalSc.sidebar],
+      ['btn-sc-global-popout', curGlobalSc.popout]
+    ].forEach(([btnId, scVal]) => {
+      const btn = document.getElementById(btnId);
+      if (btn && !btn.classList.contains('is-recording')) {
+        const cleanVal = String(scVal || '').trim();
+        btn.textContent = cleanVal || 'Unassigned';
+        btn.classList.toggle('has-shortcut', Boolean(cleanVal));
+      }
+    });
+
+    const mailScBtn = document.getElementById('btn-sc-app-pocketmail');
+    const mailClearBtn = document.getElementById('btn-sc-clear-pocketmail');
+    const mailScVal = String(curAppSc.pocketmail || '').trim();
+    if (mailScBtn && !mailScBtn.classList.contains('is-recording')) {
+      mailScBtn.textContent = mailScVal || 'Set Shortcut';
+      mailScBtn.classList.toggle('has-shortcut', Boolean(mailScVal));
+    }
+    if (mailClearBtn) {
+      mailClearBtn.classList.toggle('hidden', !mailScVal);
+    }
+
+    const appScOpenMode = appSettings.appShortcutOpenMode || 'sidebar';
+    document.querySelectorAll('[data-app-shortcut-mode]').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-app-shortcut-mode') === appScOpenMode);
+    });
 
     // Custom Video Progress Loadbar Controls
     const loadbarEnabled = appSettings.customVideoLoadbar !== false;
@@ -3818,8 +4242,98 @@
         soundRow.appendChild(previewBtn);
         soundRow.appendChild(muteBtn);
 
+        // Per-App Keyboard Shortcut Row (Works for all Built-in Apps AND Custom Apps!)
+        const scRow = document.createElement('div');
+        scRow.className = 'pm-app-shortcut-row';
+        scRow.addEventListener('click', (e) => e.stopPropagation());
+
+        const scLbl = document.createElement('span');
+        scLbl.className = 'pm-app-shortcut-lbl';
+        const kbSvgNs = 'http://www.w3.org/2000/svg';
+        const kbSvg = document.createElementNS(kbSvgNs, 'svg');
+        kbSvg.setAttribute('width', '12');
+        kbSvg.setAttribute('height', '12');
+        kbSvg.setAttribute('viewBox', '0 0 24 24');
+        kbSvg.setAttribute('fill', 'none');
+        kbSvg.setAttribute('stroke', 'currentColor');
+        kbSvg.setAttribute('stroke-width', '2.1');
+        kbSvg.setAttribute('stroke-linecap', 'round');
+        kbSvg.setAttribute('stroke-linejoin', 'round');
+        const kbRect = document.createElementNS(kbSvgNs, 'rect');
+        kbRect.setAttribute('x', '2');
+        kbRect.setAttribute('y', '4');
+        kbRect.setAttribute('width', '20');
+        kbRect.setAttribute('height', '16');
+        kbRect.setAttribute('rx', '2');
+        const kbLine = document.createElementNS(kbSvgNs, 'path');
+        kbLine.setAttribute('d', 'M7 15h10M6 9h.01M10 9h.01M14 9h.01M18 9h.01');
+        kbSvg.appendChild(kbRect);
+        kbSvg.appendChild(kbLine);
+        const scLblTxt = document.createElement('span');
+        scLblTxt.textContent = 'Open Hotkey:';
+        scLbl.appendChild(kbSvg);
+        scLbl.appendChild(scLblTxt);
+
+        const scBtnGroup = document.createElement('div');
+        scBtnGroup.className = 'pm-shortcut-btn-group';
+
+        const assignedSc = String((appSettings.appShortcuts || {})[app.id] || '').trim();
+        const scBtn = document.createElement('button');
+        scBtn.type = 'button';
+        scBtn.className = `pm-shortcut-recorder-btn ${assignedSc ? 'has-shortcut' : ''}`;
+        scBtn.dataset.scAppId = app.id;
+        scBtn.textContent = assignedSc || 'Set Shortcut';
+        scBtn.title = `Click and press a key combination to open ${app.name} directly`;
+        bindShortcutRecorderButton(scBtn, 'app', app.id, app.name);
+        scBtnGroup.appendChild(scBtn);
+
+        if (assignedSc) {
+          const clrBtn = document.createElement('button');
+          clrBtn.type = 'button';
+          clrBtn.className = 'pm-shortcut-clear-btn';
+          clrBtn.title = `Clear ${app.name} shortcut`;
+          const xSvg = document.createElementNS(kbSvgNs, 'svg');
+          xSvg.setAttribute('width', '10');
+          xSvg.setAttribute('height', '10');
+          xSvg.setAttribute('viewBox', '0 0 24 24');
+          xSvg.setAttribute('fill', 'none');
+          xSvg.setAttribute('stroke', 'currentColor');
+          xSvg.setAttribute('stroke-width', '2.6');
+          xSvg.setAttribute('stroke-linecap', 'round');
+          const l1 = document.createElementNS(kbSvgNs, 'line');
+          l1.setAttribute('x1', '18');
+          l1.setAttribute('y1', '6');
+          l1.setAttribute('x2', '6');
+          l1.setAttribute('y2', '18');
+          const l2 = document.createElementNS(kbSvgNs, 'line');
+          l2.setAttribute('x1', '6');
+          l2.setAttribute('y1', '6');
+          l2.setAttribute('x2', '18');
+          l2.setAttribute('y2', '18');
+          xSvg.appendChild(l1);
+          xSvg.appendChild(l2);
+          clrBtn.appendChild(xSvg);
+          clrBtn.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            const nextGlobal = { ...DEFAULT_GLOBAL_SHORTCUTS_UI, ...(appSettings.globalShortcuts || {}) };
+            const nextApps = { ...(appSettings.appShortcuts || {}) };
+            delete nextApps[app.id];
+            await persistKeyboardShortcutsChange(
+              nextGlobal,
+              nextApps,
+              appSettings.appShortcutOpenMode,
+              `Cleared shortcut for ${app.name}`
+            );
+          });
+          scBtnGroup.appendChild(clrBtn);
+        }
+
+        scRow.appendChild(scLbl);
+        scRow.appendChild(scBtnGroup);
+
         card.appendChild(topRow);
         card.appendChild(soundRow);
+        card.appendChild(scRow);
         gridEl.appendChild(card);
       });
     }
@@ -3886,18 +4400,38 @@
         leftWrap.appendChild(iconBadge);
         leftWrap.appendChild(label);
 
+        const rightActions = document.createElement('div');
+        rightActions.style.cssText = 'display:inline-flex;align-items:center;gap:5px;flex-shrink:0;';
+
+        const customAssignedSc = String((appSettings.appShortcuts || {})[appId] || '').trim();
+        const customScBtn = document.createElement('button');
+        customScBtn.type = 'button';
+        customScBtn.className = `pm-shortcut-recorder-btn ${customAssignedSc ? 'has-shortcut' : ''}`;
+        customScBtn.dataset.customScAppId = appId;
+        customScBtn.textContent = customAssignedSc || 'Set Shortcut';
+        customScBtn.title = `Assign keyboard shortcut to open ${c.name}`;
+        bindShortcutRecorderButton(customScBtn, 'app', appId, c.name || 'Custom App');
+        rightActions.appendChild(customScBtn);
+
         const delBtn = document.createElement('button');
         delBtn.className = 'pm-btn-xs pm-btn-secondary';
         delBtn.textContent = 'Remove';
-        delBtn.addEventListener('click', () => {
+        delBtn.addEventListener('click', async () => {
           const nextCustoms = customs.filter((_, i) => i !== idx);
-          saveSettingsPatch({ customMediaApps: nextCustoms });
+          await saveSettingsPatch({ customMediaApps: nextCustoms });
+          if (appSettings.appShortcuts && appSettings.appShortcuts[appId]) {
+            const nextGlobal = { ...DEFAULT_GLOBAL_SHORTCUTS_UI, ...(appSettings.globalShortcuts || {}) };
+            const nextApps = { ...(appSettings.appShortcuts || {}) };
+            delete nextApps[appId];
+            await persistKeyboardShortcutsChange(nextGlobal, nextApps, appSettings.appShortcutOpenMode);
+          }
           renderMediaAppsManager();
           renderOperaRail();
         });
+        rightActions.appendChild(delBtn);
 
         row.appendChild(leftWrap);
-        row.appendChild(delBtn);
+        row.appendChild(rightActions);
         customListEl.appendChild(row);
       });
     }
@@ -4200,6 +4734,147 @@
     document.getElementById('rail-btn-night-mode')?.addEventListener('click', toggleTrueNightMode);
     document.getElementById('btn-night-mode')?.addEventListener('click', toggleTrueNightMode);
 
+    // Quick Mute Notifications Popover (Rail Icon & Header Icon -> 3 Toggleable Options: All, Email, Sites)
+    document.getElementById('rail-btn-mute-notifs')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMutePopover(e.currentTarget);
+    });
+
+    document.getElementById('chk-mute-all')?.addEventListener('change', async (e) => {
+      const wantAll = Boolean(e.target.checked);
+      await saveSettingsPatch({
+        muteEmailNotifications: wantAll,
+        muteSiteNotifications: wantAll,
+        socialAppNotifySounds: !wantAll,
+        dndUntil: 0
+      });
+      syncMuteUiControls();
+      renderHeaderStatus();
+      renderMediaAppsManager();
+      broadcastMuteAndShortcutsConfig();
+      showToast(wantAll ? 'Muted All Notifications (Email & Sites)' : 'Unmuted All Notifications');
+    });
+
+    document.getElementById('chk-mute-email')?.addEventListener('change', async (e) => {
+      const wantEmail = Boolean(e.target.checked);
+      await saveSettingsPatch({
+        muteEmailNotifications: wantEmail,
+        dndUntil: 0
+      });
+      syncMuteUiControls();
+      renderHeaderStatus();
+      showToast(wantEmail ? 'Muted Email Notifications, Chimes & Voice' : 'Unmuted Email Notifications');
+    });
+
+    document.getElementById('chk-mute-sites')?.addEventListener('change', async (e) => {
+      const wantSites = Boolean(e.target.checked);
+      await saveSettingsPatch({
+        muteSiteNotifications: wantSites,
+        socialAppNotifySounds: !wantSites
+      });
+      syncMuteUiControls();
+      renderHeaderStatus();
+      renderMediaAppsManager();
+      broadcastMuteAndShortcutsConfig();
+      showToast(wantSites ? 'Muted Sites Notifications & App Chimes' : 'Unmuted Sites Notifications');
+    });
+
+    document.addEventListener('mousedown', (e) => {
+      const pop = document.getElementById('pm-mute-popover');
+      if (!pop || pop.classList.contains('hidden')) return;
+      const t = e.target;
+      if (
+        t &&
+        !pop.contains(t) &&
+        !t.closest('#rail-btn-mute-notifs') &&
+        !t.closest('#btn-dnd')
+      ) {
+        closeMutePopover();
+      }
+    });
+
+    window.addEventListener('blur', () => {
+      // Close popover if user clicks inside an embedded cross-origin app iframe
+      setTimeout(() => {
+        if (document.activeElement && document.activeElement.tagName === 'IFRAME') {
+          closeMutePopover();
+        }
+      }, 0);
+    });
+
+    // Global & Mail Keyboard Shortcut Recorders inside Sidebar Settings Drawer
+    bindShortcutRecorderButton(
+      document.getElementById('btn-sc-global-popup'),
+      'global',
+      'popup',
+      'Floating Dropdown Popup'
+    );
+    bindShortcutRecorderButton(
+      document.getElementById('btn-sc-global-sidebar'),
+      'global',
+      'sidebar',
+      'Firefox Left Sidebar'
+    );
+    bindShortcutRecorderButton(
+      document.getElementById('btn-sc-global-popout'),
+      'global',
+      'popout',
+      'Desktop Popout Window'
+    );
+    bindShortcutRecorderButton(
+      document.getElementById('btn-sc-app-pocketmail'),
+      'app',
+      'pocketmail',
+      'Mail Inbox'
+    );
+
+    document.getElementById('btn-sc-clear-pocketmail')?.addEventListener('click', async () => {
+      const nextGlobal = { ...DEFAULT_GLOBAL_SHORTCUTS_UI, ...(appSettings.globalShortcuts || {}) };
+      const nextApps = { ...(appSettings.appShortcuts || {}) };
+      delete nextApps.pocketmail;
+      await persistKeyboardShortcutsChange(
+        nextGlobal,
+        nextApps,
+        appSettings.appShortcutOpenMode,
+        'Cleared Mail Inbox shortcut'
+      );
+    });
+
+    document.getElementById('btn-reset-shortcuts-drawer')?.addEventListener('click', async () => {
+      cancelActiveShortcutRecording();
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'RESET_KEYBOARD_SHORTCUTS' });
+        if (res && res.settings) {
+          appSettings = res.settings;
+        } else {
+          appSettings = {
+            ...appSettings,
+            globalShortcuts: { ...DEFAULT_GLOBAL_SHORTCUTS_UI },
+            appShortcuts: {},
+            appShortcutOpenMode: 'sidebar'
+          };
+        }
+        renderMediaAppsManager();
+        broadcastMuteAndShortcutsConfig();
+        showToast('Reset keyboard shortcuts to defaults');
+      } catch (_) {}
+    });
+
+    document.querySelectorAll('[data-app-shortcut-mode]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const scMode = btn.getAttribute('data-app-shortcut-mode') || 'sidebar';
+        const nextGlobal = { ...DEFAULT_GLOBAL_SHORTCUTS_UI, ...(appSettings.globalShortcuts || {}) };
+        const nextApps = { ...(appSettings.appShortcuts || {}) };
+        const lbl =
+          scMode === 'popup'
+            ? 'Floating Popup'
+            : scMode === 'popout'
+              ? 'Popout Window'
+              : 'Left Sidebar';
+        await persistKeyboardShortcutsChange(nextGlobal, nextApps, scMode, `App Shortcuts open in: ${lbl}`);
+      });
+    });
+
     document.getElementById('rail-btn-manage-apps')?.addEventListener('click', () => {
       openSidebarHubDrawer('apps');
     });
@@ -4245,8 +4920,14 @@
 
     document.getElementById('chk-social-notify-sounds')?.addEventListener('change', async (e) => {
       const enabled = Boolean(e.target.checked);
-      await saveSettingsPatch({ socialAppNotifySounds: enabled });
-      showToast(enabled ? 'Social app message sounds enabled' : 'Social app message sounds muted');
+      await saveSettingsPatch({
+        socialAppNotifySounds: enabled,
+        muteSiteNotifications: !enabled
+      });
+      syncMuteUiControls();
+      renderHeaderStatus();
+      broadcastMuteAndShortcutsConfig();
+      showToast(enabled ? 'Sites notifications & chimes enabled' : 'Sites notifications & chimes muted');
     });
 
     document.getElementById('chk-custom-video-loadbar')?.addEventListener('change', async (e) => {
@@ -5018,8 +5699,7 @@
             nextScore > prevScore &&
             nextScore > prevMaxSeen &&
             prev !== undefined &&
-            appSettings.socialAppNotifySounds !== false &&
-            !(appSettings.dndUntil && appSettings.dndUntil > Date.now()) &&
+            !isSitesMutedNow() &&
             window.PocketMailSound
           ) {
             const soundMap = appSettings.socialAppSoundMap || {};
@@ -5283,11 +5963,9 @@
 
     bindStudioControls();
 
-    document.getElementById('btn-dnd').addEventListener('click', async () => {
-      const isDnd = appSettings.dndUntil && appSettings.dndUntil > Date.now();
-      const nextDnd = isDnd ? 0 : Date.now() + 60 * 60 * 1000;
-      await saveSettingsPatch({ dndUntil: nextDnd });
-      showToast(nextDnd ? 'Do Not Disturb enabled for 1 hour' : 'Notifications resumed');
+    document.getElementById('btn-dnd').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMutePopover(e.currentTarget);
     });
 
     const refreshBtn = document.getElementById('btn-refresh');
@@ -5582,8 +6260,27 @@
       });
     });
 
-    // Keyboard Shortcuts (J/K, R, E, S, W, Escape, Ctrl+Enter)
+    // Keyboard Shortcuts (App Hotkeys + J/K, R, E, S, W, Escape, Ctrl+Enter)
     window.addEventListener('keydown', (e) => {
+      if (activeShortcutRecorderCleanup) return;
+
+      // Check custom per-app hotkeys when focus is inside FoxHub UI
+      if ((e.altKey || e.ctrlKey || e.metaKey || /^F([1-9]|1[0-2])$/i.test(e.key || '')) && !e.repeat) {
+        const parsedSc = formatShortcutFromKeyEvent(e);
+        if (parsedSc && parsedSc.action === 'set' && parsedSc.shortcut) {
+          const comboNorm = parsedSc.shortcut.toLowerCase();
+          const appScMap = appSettings.appShortcuts || {};
+          for (const [boundAppId, boundCombo] of Object.entries(appScMap)) {
+            if (boundCombo && String(boundCombo).trim().toLowerCase() === comboNorm) {
+              e.preventDefault();
+              e.stopPropagation();
+              activateAppDirectlyById(boundAppId);
+              return;
+            }
+          }
+        }
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         if (!composeDrawer.classList.contains('hidden')) {
           e.preventDefault();
@@ -5604,7 +6301,10 @@
       }
 
       if (e.key === 'Escape') {
-        if (!readerDrawer.classList.contains('hidden')) {
+        const mutePop = document.getElementById('pm-mute-popover');
+        if (mutePop && !mutePop.classList.contains('hidden')) {
+          closeMutePopover();
+        } else if (!readerDrawer.classList.contains('hidden')) {
           readerDrawer.classList.add('hidden');
           activeReaderMessage = null;
         } else if (!themeDrawer.classList.contains('hidden')) {
@@ -5613,6 +6313,9 @@
           accountDrawer.classList.add('hidden');
         } else if (!composeDrawer.classList.contains('hidden')) {
           composeDrawer.classList.add('hidden');
+        } else if (mediaAppsDrawer && !mediaAppsDrawer.classList.contains('hidden')) {
+          mediaAppsDrawer.classList.add('hidden');
+          activeSidebarHubSection = '';
         }
         return;
       }
@@ -5974,6 +6677,17 @@
         appState = msg.state;
         appSettings = msg.settings;
         renderAll();
+        if (mediaAppsDrawer && !mediaAppsDrawer.classList.contains('hidden')) {
+          renderMediaAppsManager();
+        }
+        broadcastMuteAndShortcutsConfig();
+      } else if (msg.type === 'OPEN_APP_FROM_SHORTCUT') {
+        if (msg.settings) {
+          appSettings = msg.settings;
+        }
+        if (msg.appId) {
+          activateAppDirectlyById(msg.appId);
+        }
       } else if (msg.type === 'OPEN_MAIL_WORKSPACE') {
         activeRailAppId = 'pocketmail';
         activeSidebarHubSection = '';
@@ -5989,7 +6703,23 @@
         const spEntry = mediaFramePool.get(msg.appId || 'spotify');
         try {
           spEntry?.frame?.contentWindow?.postMessage(
-            { target: 'pocketmail-media-frame', cmd: 'SEEK_SP_MEDIA', currentTime: msg.currentTime },
+            {
+              target: 'pocketmail-media-frame',
+              cmd: 'SEEK_SP_MEDIA',
+              currentTime: msg.currentTime,
+              forceHarmonySeek: Boolean(msg.forceHarmonySeek)
+            },
+            '*'
+          );
+        } catch (_) {}
+      } else if (msg.type === 'PM_SKIP_SIDEBAR_SP') {
+        const spEntry = mediaFramePool.get(msg.appId || 'spotify');
+        try {
+          spEntry?.frame?.contentWindow?.postMessage(
+            {
+              target: 'pocketmail-media-frame',
+              cmd: 'SKIP_NEXT_SP_TRACK'
+            },
             '*'
           );
         } catch (_) {}
@@ -6190,7 +6920,7 @@
     bindEvents();
 
     const params = new URLSearchParams(window.location.search || '');
-    const initialAppId = params.get('app');
+    let initialAppId = params.get('app');
     let fastBootMountedAppId = '';
 
     // 0ms Synchronous Fast-Boot from Background Page RAM + LocalStorage Cache
@@ -6202,6 +6932,12 @@
           : null;
       if (bgWin && typeof bgWin.__pmGetSyncBootState === 'function') {
         syncBgState = bgWin.__pmGetSyncBootState();
+      }
+      if (!initialAppId && bgWin && typeof bgWin.__pmConsumePendingShortcutApp === 'function') {
+        const pendingSc = bgWin.__pmConsumePendingShortcutApp();
+        if (pendingSc && pendingSc.appId) {
+          initialAppId = pendingSc.appId;
+        }
       }
     } catch (_) {}
 
@@ -6405,10 +7141,13 @@
         }
       }, 10000);
 
-      if (initialAppId && window.PocketMailMediaApps) {
+      if (initialAppId && initialAppId !== 'pocketmail' && window.PocketMailMediaApps) {
         const app = window.PocketMailMediaApps.getAppById(initialAppId, appSettings);
         if (app) {
           if (fastBootMountedAppId !== app.id) {
+            if (!IS_SIDEBAR_VIEW) {
+              document.documentElement.classList.add('show-popup-rail');
+            }
             openMediaWorkspace(app, hibernatedAppUrls.get(app.id) || undefined);
           }
           schedulePrewarmPersistentApps();

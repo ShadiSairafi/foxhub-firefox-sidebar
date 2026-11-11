@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "FoxHub: Gmail, Social & Media Sidebar",
   "short_name": "FoxHub",
-  "version": "2.7.4",
+  "version": "2.7.5",
   "description": "Fast local multi-account Gmail, social, and media sidebar for Firefox.",
   "author": "FoxHub",
   "icons": {
@@ -56,6 +56,42 @@
         "mac": "MacCtrl+Shift+W"
       },
       "description": "Open FoxHub Desktop Popout Window"
+    },
+    "foxhub-app-slot-1": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 1)"
+    },
+    "foxhub-app-slot-2": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 2)"
+    },
+    "foxhub-app-slot-3": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 3)"
+    },
+    "foxhub-app-slot-4": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 4)"
+    },
+    "foxhub-app-slot-5": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 5)"
+    },
+    "foxhub-app-slot-6": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 6)"
+    },
+    "foxhub-app-slot-7": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 7)"
+    },
+    "foxhub-app-slot-8": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 8)"
+    },
+    "foxhub-app-slot-9": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 9)"
+    },
+    "foxhub-app-slot-10": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 10)"
+    },
+    "foxhub-app-slot-11": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 11)"
+    },
+    "foxhub-app-slot-12": {
+      "description": "Quick Launch Assigned FoxHub App (Slot 12)"
     }
   },
   "background": {

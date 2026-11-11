@@ -38,6 +38,10 @@
         <!-- Dynamically populated with Instagram, WhatsApp, Discord, Telegram, Spotify, YouTube, TikTok, X, Messenger, Reddit, etc. -->
       </div>
       <div class="pm-rail-sep"></div>
+      <button id="rail-btn-mute-notifs" class="pm-rail-item" title="Mute Notifications (All, Email, or Sites)" aria-haspopup="dialog" aria-expanded="false">
+        <svg class="pm-mute-icon-on" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <svg class="pm-mute-icon-off" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+      </button>
       <button id="rail-btn-night-mode" class="pm-rail-item" title="Toggle True Night Mode (OLED Pitch-Black)">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
@@ -85,8 +89,9 @@
           <button id="btn-night-mode" class="pm-icon-btn" title="Toggle True Night Mode (OLED Pitch-Black)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           </button>
-          <button id="btn-dnd" class="pm-icon-btn" title="Do Not Disturb (Mute notifications for 1 hour)">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          <button id="btn-dnd" class="pm-icon-btn" title="Mute Notifications (All, Email, or Sites)" aria-haspopup="dialog" aria-expanded="false">
+            <svg class="pm-mute-icon-on" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <svg class="pm-mute-icon-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
           </button>
           <button id="btn-refresh" class="pm-icon-btn" title="Sync All Accounts Now">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -890,14 +895,52 @@
                 </div>
               </div>
             </div>
-            <div style="font-size:10.7px;line-height:1.42;color:var(--text-secondary);background:rgba(128,128,128,0.08);border-radius:8px;padding:7px 9px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
-              <span><strong>Keyboard Shortcuts:</strong> <code>Alt+Shift+F</code> Floating Overlay Popup &bull; <code>Alt+Shift+M</code> Left Sidebar &bull; <code>Alt+Shift+W</code> Popout Window</span>
+            <div class="pm-shortcuts-studio-box">
+              <div class="pm-shortcuts-studio-head">
+                <span class="pm-shortcuts-studio-title">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg>
+                  <span>Keyboard Shortcuts &amp; App Hotkeys:</span>
+                </span>
+                <button type="button" id="btn-reset-shortcuts-drawer" class="pm-text-btn" title="Restore default global shortcuts and clear custom app hotkeys">Reset Defaults</button>
+              </div>
+              <div class="pm-shortcuts-studio-sub">Click any shortcut pill below and press a key combo (e.g. <code>Alt+Shift+S</code>). Press <code>Backspace</code> while recording to clear.</div>
+              <div class="pm-shortcuts-rows">
+                <div class="pm-shortcut-row">
+                  <span class="pm-shortcut-label">Floating Dropdown Popup</span>
+                  <button type="button" id="btn-sc-global-popup" class="pm-shortcut-recorder-btn" data-sc-kind="global" data-sc-key="popup">Alt+Shift+F</button>
+                </div>
+                <div class="pm-shortcut-row">
+                  <span class="pm-shortcut-label">Firefox Left Sidebar</span>
+                  <button type="button" id="btn-sc-global-sidebar" class="pm-shortcut-recorder-btn" data-sc-kind="global" data-sc-key="sidebar">Alt+Shift+M</button>
+                </div>
+                <div class="pm-shortcut-row">
+                  <span class="pm-shortcut-label">Desktop Popout Window</span>
+                  <button type="button" id="btn-sc-global-popout" class="pm-shortcut-recorder-btn" data-sc-kind="global" data-sc-key="popout">Alt+Shift+W</button>
+                </div>
+                <div class="pm-shortcut-row pm-shortcut-row-mail">
+                  <span class="pm-shortcut-label">Open Mail Inbox Directly</span>
+                  <div class="pm-shortcut-btn-group">
+                    <button type="button" id="btn-sc-app-pocketmail" class="pm-shortcut-recorder-btn" data-sc-kind="app" data-sc-app="pocketmail">Set Shortcut</button>
+                    <button type="button" id="btn-sc-clear-pocketmail" class="pm-shortcut-clear-btn hidden" title="Clear Mail shortcut" aria-label="Clear Mail shortcut">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="pm-shortcut-openmode-wrap">
+                <span class="pm-shortcut-openmode-lbl">App Shortcut Opens In:</span>
+                <div class="pm-option-grid" id="opt-app-shortcut-mode-grid" style="grid-template-columns:repeat(3,1fr);flex:1;max-width:270px;">
+                  <button type="button" class="pm-opt-pill" data-app-shortcut-mode="sidebar">Left Sidebar</button>
+                  <button type="button" class="pm-opt-pill" data-app-shortcut-mode="popup">Floating Popup</button>
+                  <button type="button" class="pm-opt-pill" data-app-shortcut-mode="popout">Popout Window</button>
+                </div>
+              </div>
             </div>
           </div>
 
           <div id="pm-pinned-apps-heading" style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;">
-            <h3 class="pm-section-heading">Pinned Apps &amp; Per-App Message Sounds</h3>
-            <span style="font-size:10.5px;color:var(--text-muted);">Drag &amp; drop to reorder</span>
+            <h3 class="pm-section-heading">Pinned Apps, Shortcuts &amp; Sounds</h3>
+            <span style="font-size:10.5px;color:var(--text-muted);">Drag to reorder &bull; Assign per-app hotkeys</span>
           </div>
           <div id="pm-media-apps-toggle-grid" class="pm-media-apps-toggle-grid">
             <!-- Dynamically populated -->
@@ -939,6 +982,60 @@
           <span>Configure Persistent App Memory, Background Audio, Tab Auto-Pause, Custom Video Loadbar &amp; Dark Themes.</span>
         </div>
         <button type="button" id="btn-dismiss-settings-coachmark" class="pm-topbar-hint-btn">Got it</button>
+      </div>
+
+      <!-- Quick Mute Notifications Popover Panel (3 Toggleable Options: All, Email Notifications, Sites Notifications) -->
+      <div id="pm-mute-popover" class="pm-mute-popover hidden" role="dialog" aria-label="Mute Notifications">
+        <div class="pm-mute-popover-head">
+          <span class="pm-mute-popover-title">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            <span>Mute Notifications</span>
+          </span>
+          <span id="pm-mute-popover-badge" class="pm-mute-popover-badge">Active</span>
+        </div>
+        <div class="pm-mute-popover-list">
+          <label class="pm-mute-option-row pm-mute-option-all" for="chk-mute-all">
+            <div class="pm-mute-option-info">
+              <span class="pm-mute-option-icon">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+              </span>
+              <div class="pm-mute-option-text">
+                <span class="pm-mute-option-name">All Notifications</span>
+                <span class="pm-mute-option-sub">Mute both Email &amp; Sites</span>
+              </div>
+            </div>
+            <input type="checkbox" id="chk-mute-all" class="pm-mute-switch-input">
+            <span class="pm-mute-switch-ui" aria-hidden="true"></span>
+          </label>
+
+          <label class="pm-mute-option-row" for="chk-mute-email">
+            <div class="pm-mute-option-info">
+              <span class="pm-mute-option-icon">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+              </span>
+              <div class="pm-mute-option-text">
+                <span class="pm-mute-option-name">Email Notifications</span>
+                <span class="pm-mute-option-sub">Desktop alerts, chimes &amp; voice</span>
+              </div>
+            </div>
+            <input type="checkbox" id="chk-mute-email" class="pm-mute-switch-input">
+            <span class="pm-mute-switch-ui" aria-hidden="true"></span>
+          </label>
+
+          <label class="pm-mute-option-row" for="chk-mute-sites">
+            <div class="pm-mute-option-info">
+              <span class="pm-mute-option-icon">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              </span>
+              <div class="pm-mute-option-text">
+                <span class="pm-mute-option-name">Sites Notifications</span>
+                <span class="pm-mute-option-sub">Social app chimes &amp; web popups</span>
+              </div>
+            </div>
+            <input type="checkbox" id="chk-mute-sites" class="pm-mute-switch-input">
+            <span class="pm-mute-switch-ui" aria-hidden="true"></span>
+          </label>
+        </div>
       </div>
 
       <!-- Toast Notification Pill -->

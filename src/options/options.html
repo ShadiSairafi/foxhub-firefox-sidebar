@@ -292,6 +292,38 @@
           </button>
         </header>
 
+        <div class="opt-card" style="margin-bottom:16px;">
+          <h3 style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            <span>Quick Mute Controls</span>
+          </h3>
+          <p class="opt-muted" style="margin-bottom:14px;">Synced directly with the Mute Notifications icon on the FoxHub rail and Mail header.</p>
+
+          <div class="opt-row-between" style="margin-bottom:14px;">
+            <div>
+              <h4>Mute All Notifications</h4>
+              <p class="opt-muted">Check to silence both Email Notifications and Sites Notifications simultaneously.</p>
+            </div>
+            <input type="checkbox" id="opt-mute-all" class="opt-toggle">
+          </div>
+
+          <div class="opt-row-between" style="margin-bottom:14px;">
+            <div>
+              <h4>Mute Email Notifications</h4>
+              <p class="opt-muted">Silence all desktop email alerts, new-mail chimes, snooze reminders, and voice announcements.</p>
+            </div>
+            <input type="checkbox" id="opt-mute-email" class="opt-toggle">
+          </div>
+
+          <div class="opt-row-between">
+            <div>
+              <h4>Mute Sites Notifications</h4>
+              <p class="opt-muted">Silence all social/messenger app chimes and suppress embedded site notification popups &amp; pings.</p>
+            </div>
+            <input type="checkbox" id="opt-mute-sites" class="opt-toggle">
+          </div>
+        </div>
+
         <div class="opt-card">
           <div class="opt-row-between" style="margin-bottom:16px;">
             <div>
@@ -383,6 +415,59 @@
             <p>Configure background sync, persistent app memory, background audio, and local-first privacy controls.</p>
           </div>
         </header>
+
+        <!-- CUSTOMIZABLE KEYBOARD SHORTCUTS & PER-APP HOTKEYS -->
+        <div class="opt-card" style="margin-bottom:16px;">
+          <div class="opt-row-between" style="margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+            <div>
+              <h3 style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg>
+                <span>Keyboard Shortcuts &amp; Per-App Hotkeys</span>
+              </h3>
+              <p class="opt-muted">Click any shortcut button below and press your desired key combination (e.g. <code>Alt+Shift+S</code>). Press <code>Backspace</code> while recording to clear.</p>
+            </div>
+            <button type="button" id="opt-btn-reset-shortcuts" class="opt-btn opt-btn-secondary">Reset Defaults</button>
+          </div>
+
+          <div class="opt-shortcuts-global-grid">
+            <div class="opt-shortcut-item">
+              <div>
+                <div class="opt-shortcut-title">Floating Dropdown Popup</div>
+                <div class="opt-muted" style="font-size:11.5px;">Opens/closes FoxHub popup above the webpage</div>
+              </div>
+              <button type="button" id="opt-sc-global-popup" class="opt-shortcut-recorder-btn">Alt+Shift+F</button>
+            </div>
+            <div class="opt-shortcut-item">
+              <div>
+                <div class="opt-shortcut-title">Firefox Left Sidebar</div>
+                <div class="opt-muted" style="font-size:11.5px;">Toggles the docked Opera-style left sidebar</div>
+              </div>
+              <button type="button" id="opt-sc-global-sidebar" class="opt-shortcut-recorder-btn">Alt+Shift+M</button>
+            </div>
+            <div class="opt-shortcut-item">
+              <div>
+                <div class="opt-shortcut-title">Desktop Popout Window</div>
+                <div class="opt-muted" style="font-size:11.5px;">Opens a freely resizable companion window</div>
+              </div>
+              <button type="button" id="opt-sc-global-popout" class="opt-shortcut-recorder-btn">Alt+Shift+W</button>
+            </div>
+            <div class="opt-shortcut-item">
+              <div>
+                <div class="opt-shortcut-title">App Hotkeys Open In</div>
+                <div class="opt-muted" style="font-size:11.5px;">Where per-app shortcuts open FoxHub</div>
+              </div>
+              <select id="opt-app-shortcut-open-mode" class="opt-select" style="width:170px;padding:7px 10px;font-size:12.5px;">
+                <option value="sidebar">Firefox Left Sidebar</option>
+                <option value="popup">Floating Popup</option>
+                <option value="popout">Popout Window</option>
+              </select>
+            </div>
+          </div>
+
+          <h4 style="margin:18px 0 8px;">Specific App Shortcuts (Mail, Built-In Apps &amp; Custom Apps)</h4>
+          <p class="opt-muted" style="margin-bottom:12px;">Assign a direct hotkey to any app — including your custom added websites — to open FoxHub straight onto that app.</p>
+          <div id="opt-app-shortcuts-grid" class="opt-social-sounds-grid"></div>
+        </div>
 
         <div class="opt-card">
           <div class="opt-row-between" style="margin-bottom:16px;">
