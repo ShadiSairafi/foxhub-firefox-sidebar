@@ -272,15 +272,28 @@
     }
   }
 
+  function formatOptMuteTimerRemaining(untilTs) {
+    const diffMs = Math.max(0, Number(untilTs || 0) - Date.now());
+    if (diffMs <= 0) return '';
+    const totalMins = Math.max(1, Math.ceil(diffMs / 60000));
+    if (totalMins >= 60) {
+      const h = Math.floor(totalMins / 60);
+      const m = totalMins % 60;
+      return m > 0 ? `${h}h ${m}m left` : `${h}h left`;
+    }
+    return `${totalMins}m left`;
+  }
+
   /**
    * Render Tab 3: Notifications, Sounds & Voice
    */
   function renderNotificationsTab() {
-    const emailMuted = Boolean(
-      appSettings.muteEmailNotifications || (appSettings.dndUntil && appSettings.dndUntil > Date.now())
-    );
+    const now = Date.now();
+    const dndActive = Boolean(appSettings.dndUntil && appSettings.dndUntil > now);
+    const sitesTimerActive = Boolean(appSettings.muteSitesUntil && appSettings.muteSitesUntil > now);
+    const emailMuted = Boolean(appSettings.muteEmailNotifications || dndActive);
     const sitesMuted = Boolean(
-      appSettings.muteSiteNotifications || appSettings.socialAppNotifySounds === false
+      appSettings.muteSiteNotifications || appSettings.socialAppNotifySounds === false || sitesTimerActive
     );
     const muteAllEl = document.getElementById('opt-mute-all');
     const muteEmailEl = document.getElementById('opt-mute-email');
@@ -288,6 +301,24 @@
     if (muteAllEl) muteAllEl.checked = emailMuted && sitesMuted;
     if (muteEmailEl) muteEmailEl.checked = emailMuted;
     if (muteSitesEl) muteSitesEl.checked = sitesMuted;
+
+    const maxUntil = Math.max(dndActive ? appSettings.dndUntil : 0, sitesTimerActive ? appSettings.muteSitesUntil : 0);
+    const timerStatusEl = document.getElementById('opt-mute-timer-status');
+    const clearTimerBtn = document.getElementById('opt-btn-mute-timer-clear');
+    const activeTimerMins = maxUntil > now ? Number(appSettings.lastMuteTimerMins || 0) : 0;
+    if (timerStatusEl) {
+      timerStatusEl.textContent = maxUntil > now ? `(${formatOptMuteTimerRemaining(maxUntil)})` : '';
+    }
+    if (clearTimerBtn) {
+      clearTimerBtn.style.display = maxUntil > now ? 'inline-flex' : 'none';
+    }
+    document.querySelectorAll('[data-opt-mute-mins]').forEach((btn) => {
+      const mins = parseInt(btn.getAttribute('data-opt-mute-mins') || '0', 10);
+      const isSelected = maxUntil > now && activeTimerMins === mins;
+      btn.classList.toggle('opt-btn-primary', isSelected);
+      btn.classList.toggle('opt-btn-secondary', !isSelected);
+      btn.classList.toggle('active', isSelected);
+    });
 
     document.getElementById('opt-desktop-notif').checked = Boolean(appSettings.desktopNotifications);
     document.getElementById('opt-voice-notif').checked = Boolean(appSettings.voiceNotifications);
@@ -1074,7 +1105,9 @@
           muteEmailNotifications: muted,
           muteSiteNotifications: muted,
           socialAppNotifySounds: !muted,
-          dndUntil: 0
+          dndUntil: 0,
+          muteSitesUntil: 0,
+          lastMuteTimerMins: 0
         },
         muted ? 'All notifications muted' : 'All notifications unmuted'
       );
@@ -1091,8 +1124,63 @@
     document.getElementById('opt-mute-sites')?.addEventListener('change', (e) => {
       const muted = Boolean(e.target.checked);
       saveSettings(
-        { muteSiteNotifications: muted, socialAppNotifySounds: !muted },
+        { muteSiteNotifications: muted, socialAppNotifySounds: !muted, muteSitesUntil: 0 },
         muted ? 'Sites & apps notifications muted' : 'Sites & apps notifications unmuted'
+      );
+    });
+
+    document.querySelectorAll('[data-opt-mute-mins]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mins = parseInt(btn.getAttribute('data-opt-mute-mins') || '60', 10);
+        const now = Date.now();
+        const curMaxUntil = Math.max(
+          appSettings.dndUntil && appSettings.dndUntil > now ? appSettings.dndUntil : 0,
+          appSettings.muteSitesUntil && appSettings.muteSitesUntil > now ? appSettings.muteSitesUntil : 0
+        );
+        if (curMaxUntil > now && Number(appSettings.lastMuteTimerMins || 0) === mins) {
+          saveSettings(
+            { dndUntil: 0, muteSitesUntil: 0, lastMuteTimerMins: 0 },
+            'Cleared timed mute'
+          );
+          return;
+        }
+        const untilTs = now + mins * 60 * 1000;
+        const emailCurrentlyMuted = Boolean(
+          appSettings.muteEmailNotifications || (appSettings.dndUntil && appSettings.dndUntil > now)
+        );
+        const sitesCurrentlyMuted = Boolean(
+          appSettings.muteSiteNotifications ||
+            appSettings.socialAppNotifySounds === false ||
+            (appSettings.muteSitesUntil && appSettings.muteSitesUntil > now)
+        );
+        const onlyEmail = emailCurrentlyMuted && !sitesCurrentlyMuted;
+        const onlySites = sitesCurrentlyMuted && !emailCurrentlyMuted;
+        const patch = { lastMuteTimerMins: mins };
+        if (onlyEmail) {
+          patch.dndUntil = untilTs;
+          patch.muteEmailNotifications = false;
+          patch.muteSitesUntil = 0;
+        } else if (onlySites) {
+          patch.muteSitesUntil = untilTs;
+          patch.muteSiteNotifications = false;
+          patch.socialAppNotifySounds = true;
+          patch.dndUntil = 0;
+        } else {
+          patch.dndUntil = untilTs;
+          patch.muteSitesUntil = untilTs;
+          patch.muteEmailNotifications = false;
+          patch.muteSiteNotifications = false;
+          patch.socialAppNotifySounds = true;
+        }
+        const label = mins >= 60 ? `${mins / 60}h` : `${mins}m`;
+        saveSettings(patch, `Muted notifications for ${label}`);
+      });
+    });
+
+    document.getElementById('opt-btn-mute-timer-clear')?.addEventListener('click', () => {
+      saveSettings(
+        { dndUntil: 0, muteSitesUntil: 0, lastMuteTimerMins: 0 },
+        'Cleared timed mute — notifications active'
       );
     });
 

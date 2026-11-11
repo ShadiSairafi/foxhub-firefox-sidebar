@@ -159,21 +159,51 @@
   }
 
   function isSitesMutedNow() {
-    return Boolean(appSettings.muteSiteNotifications || appSettings.socialAppNotifySounds === false);
+    return Boolean(
+      appSettings.muteSiteNotifications ||
+        appSettings.socialAppNotifySounds === false ||
+        (appSettings.muteSitesUntil && appSettings.muteSitesUntil > Date.now())
+    );
+  }
+
+  function formatMuteTimerRemaining(untilTs) {
+    const diffMs = Math.max(0, (Number(untilTs) || 0) - Date.now());
+    if (diffMs <= 0) return '';
+    const totalMins = Math.max(1, Math.ceil(diffMs / 60000));
+    if (totalMins < 60) return `${totalMins}m left`;
+    const hrs = Math.floor(totalMins / 60);
+    const remMins = totalMins % 60;
+    return remMins > 0 ? `${hrs}h ${remMins}m left` : `${hrs}h left`;
   }
 
   function syncMuteUiControls() {
+    const now = Date.now();
     const emailMuted = isEmailMutedNow();
     const sitesMuted = isSitesMutedNow();
     const allMuted = emailMuted && sitesMuted;
     const anyMuted = emailMuted || sitesMuted;
 
+    const emailTimerActive = Boolean(
+      appSettings.dndUntil && appSettings.dndUntil > now && !appSettings.muteEmailNotifications
+    );
+    const sitesTimerActive = Boolean(
+      appSettings.muteSitesUntil &&
+        appSettings.muteSitesUntil > now &&
+        !appSettings.muteSiteNotifications &&
+        appSettings.socialAppNotifySounds !== false
+    );
+    const activeTimerUntil = Math.max(
+      emailTimerActive ? Number(appSettings.dndUntil) || 0 : 0,
+      sitesTimerActive ? Number(appSettings.muteSitesUntil) || 0 : 0
+    );
+    const timerText = activeTimerUntil > now ? formatMuteTimerRemaining(activeTimerUntil) : '';
+
     const statusLabel = allMuted
-      ? 'All Notifications Muted (Click to manage)'
+      ? `All Notifications Muted${timerText ? ` (${timerText})` : ''} (Click to manage)`
       : emailMuted
-        ? 'Email Notifications Muted (Click to manage)'
+        ? `Email Notifications Muted${timerText ? ` (${timerText})` : ''} (Click to manage)`
         : sitesMuted
-          ? 'Sites Notifications Muted (Click to manage)'
+          ? `Sites Notifications Muted${timerText ? ` (${timerText})` : ''} (Click to manage)`
           : 'Mute Notifications (All, Email, or Sites)';
 
     const railMuteBtn = document.getElementById('rail-btn-mute-notifs');
@@ -207,14 +237,37 @@
 
     const popBadge = document.getElementById('pm-mute-popover-badge');
     if (popBadge) {
+      const shortTimer = timerText ? timerText.replace(' left', '') : '';
       popBadge.textContent = allMuted
-        ? 'All Muted'
+        ? shortTimer
+          ? `Muted (${shortTimer})`
+          : 'All Muted'
         : emailMuted
-          ? 'Email Muted'
+          ? shortTimer
+            ? `Email (${shortTimer})`
+            : 'Email Muted'
           : sitesMuted
-            ? 'Sites Muted'
+            ? shortTimer
+              ? `Sites (${shortTimer})`
+              : 'Sites Muted'
             : 'All Active';
       popBadge.classList.toggle('is-muted', anyMuted);
+    }
+
+    const timerRemEl = document.getElementById('pm-mute-timer-remaining');
+    if (timerRemEl) {
+      timerRemEl.textContent = timerText;
+    }
+
+    const activePresetMins = activeTimerUntil > now ? Number(appSettings.lastMuteTimerMins) || 0 : 0;
+    document.querySelectorAll('.pm-mute-timer-pill[data-mute-mins]').forEach((pill) => {
+      const pMins = parseInt(pill.getAttribute('data-mute-mins') || '0', 10);
+      pill.classList.toggle('active', Boolean(activeTimerUntil > now && activePresetMins === pMins));
+    });
+
+    const clearTimerBtn = document.getElementById('btn-mute-timer-clear');
+    if (clearTimerBtn) {
+      clearTimerBtn.classList.toggle('hidden', !(activeTimerUntil > now));
     }
   }
 
@@ -223,19 +276,38 @@
    */
   function renderHeaderStatus() {
     const activeAccounts = (appState.accounts || []).filter((a) => !a.disabled);
-    const isDnd = appSettings.dndUntil && appSettings.dndUntil > Date.now();
+    const now = Date.now();
     const emailMuted = isEmailMutedNow();
     const sitesMuted = isSitesMutedNow();
+    const emailTimerActive = Boolean(
+      appSettings.dndUntil && appSettings.dndUntil > now && !appSettings.muteEmailNotifications
+    );
+    const sitesTimerActive = Boolean(
+      appSettings.muteSitesUntil &&
+        appSettings.muteSitesUntil > now &&
+        !appSettings.muteSiteNotifications &&
+        appSettings.socialAppNotifySounds !== false
+    );
+    const maxUntil = Math.max(
+      emailTimerActive ? Number(appSettings.dndUntil) || 0 : 0,
+      sitesTimerActive ? Number(appSettings.muteSitesUntil) || 0 : 0
+    );
+    const remStr = maxUntil > now ? formatMuteTimerRemaining(maxUntil) : '';
 
     syncMuteUiControls();
 
-    if (isDnd && !appSettings.muteEmailNotifications) {
-      const minsLeft = Math.max(1, Math.ceil((appSettings.dndUntil - Date.now()) / 60000));
-      statusSubtitle.textContent = `Do Not Disturb (${minsLeft}m left) • ${appState.totalUnread} unread`;
-    } else if (emailMuted && sitesMuted) {
-      statusSubtitle.textContent = `All Notifications Muted • ${appState.totalUnread} unread`;
+    if (emailMuted && sitesMuted) {
+      statusSubtitle.textContent = remStr
+        ? `All Notifications Muted (${remStr}) • ${appState.totalUnread} unread`
+        : `All Notifications Muted • ${appState.totalUnread} unread`;
     } else if (emailMuted) {
-      statusSubtitle.textContent = `Email Notifications Muted • ${appState.totalUnread} unread`;
+      statusSubtitle.textContent = remStr
+        ? `Do Not Disturb (${remStr}) • ${appState.totalUnread} unread`
+        : `Email Notifications Muted • ${appState.totalUnread} unread`;
+    } else if (sitesMuted) {
+      statusSubtitle.textContent = remStr
+        ? `Sites Muted (${remStr}) • ${appState.totalUnread} unread`
+        : `Sites Notifications Muted • ${appState.totalUnread} unread`;
     } else {
       if (activeAccounts.length === 0) {
         statusSubtitle.textContent = 'No accounts connected yet';
@@ -1808,6 +1880,7 @@
               cmd: 'APPLY_MUTE_CONFIG',
               muteSiteNotifications: sitesMuted,
               socialAppNotifySounds: !sitesMuted,
+              muteSitesUntil: appSettings.muteSitesUntil || 0,
               globalShortcuts: appSettings.globalShortcuts || {},
               appShortcuts: appSettings.appShortcuts || {},
               appShortcutOpenMode: appSettings.appShortcutOpenMode || 'sidebar'
@@ -1850,7 +1923,7 @@
     pop.classList.remove('hidden');
     const rect = anchorBtn.getBoundingClientRect();
     const popW = 248;
-    const popH = pop.offsetHeight || 198;
+    const popH = pop.offsetHeight || 256;
     const vw = window.innerWidth || 460;
     const vh = window.innerHeight || 600;
 
@@ -2296,6 +2369,7 @@
     const isAlive =
       mediaFramePool.has(app.id) ||
       pendingSidebarAudioTakeoverSet.has(app.id) ||
+      bgMasterAudioSet.has(app.id) ||
       app.id === currentAudibleBgAppId;
 
     if (isAlive) {
@@ -2435,7 +2509,13 @@
     const isAppPlayingAudioNow = (appId) => {
       if (!appId || isAutoPausedByExternalTab) return false;
       if (appId === currentAudibleBgAppId) return true;
-      if (pendingSidebarAudioTakeoverSet.has(appId) || sidebarMsePlayers.has(appId)) return true;
+      if (
+        pendingSidebarAudioTakeoverSet.has(appId) ||
+        bgMasterAudioSet.has(appId) ||
+        sidebarMsePlayers.has(appId)
+      ) {
+        return true;
+      }
       const pb = framePlaybackStates.get(appId);
       return Boolean(pb && pb.isPlaying && Date.now() - (pb.updatedAt || 0) < 15000);
     };
@@ -2444,6 +2524,7 @@
       !isAutoPausedByExternalTab &&
       (Boolean(currentAudibleBgAppId) ||
         pendingSidebarAudioTakeoverSet.size > 0 ||
+        bgMasterAudioSet.size > 0 ||
         sidebarMsePlayers.size > 0 ||
         Array.from(framePlaybackStates.keys()).some((id) => isAppPlayingAudioNow(id)));
 
@@ -2505,7 +2586,10 @@
       const isActive = activeRailAppId === app.id;
       const isPlayingAudio = isAppPlayingAudioNow(app.id);
       const isAliveInPool =
-        mediaFramePool.has(app.id) || pendingSidebarAudioTakeoverSet.has(app.id) || isPlayingAudio;
+        mediaFramePool.has(app.id) ||
+        pendingSidebarAudioTakeoverSet.has(app.id) ||
+        bgMasterAudioSet.has(app.id) ||
+        isPlayingAudio;
       const unreadInfo = socialAppUnreadMap.get(app.id);
       const unreadCount = unreadInfo?.unreadCount || 0;
       const hasUnread = Boolean(unreadInfo?.hasUnread || unreadCount > 0);
@@ -2908,6 +2992,7 @@
 
   const framePlaybackStates = new Map(); // appId -> { isPlaying, currentTime, resumeUrl, title, updatedAt }
   const pendingSidebarAudioTakeoverSet = new Set();
+  const bgMasterAudioSet = new Set(); // appId -> pm-bg-audio-* stays alive as Background Master (0ms reload on close/reopen)
   const knownOpenPersistentIds = new Set();
   const sidebarMsePlayers = new Map(); // appId -> { ms, audioEl, sb, queue, objUrl }
   let currentAudibleBgAppId = null;
@@ -2964,16 +3049,22 @@
         if (isAppPersistent(id)) knownOpenPersistentIds.add(id);
       });
       const openPersistentAppIds = Array.from(knownOpenPersistentIds).filter((id) => isAppPersistent(id));
-      const effectiveActiveId = overrideActiveId || activeRailAppId || appSettings.persistentLastActiveAppId || 'pocketmail';
+      const candidateId = overrideActiveId || activeRailAppId || '';
+      const persistentTargetId =
+        candidateId && candidateId !== 'pocketmail' && isAppPersistent(candidateId)
+          ? candidateId
+          : candidateId === 'pocketmail' && appSettings.persistentLastActiveAppId === 'pocketmail'
+            ? 'pocketmail'
+            : appSettings.persistentLastActiveAppId || 'pocketmail';
       window.localStorage.setItem(
         'pm_fast_boot_v1',
         JSON.stringify({
-          activeAppId: effectiveActiveId,
+          activeAppId: persistentTargetId,
           openPersistentAppIds,
           savedUrls,
           settings: {
             ...appSettings,
-            persistentLastActiveAppId: effectiveActiveId,
+            persistentLastActiveAppId: persistentTargetId,
             persistentOpenAppIds: openPersistentAppIds,
             persistentSavedAppUrls: savedUrls
           },
@@ -3090,7 +3181,10 @@
         const st = framePlaybackStates.get(id);
         const isActivelyPlayingAudio =
           isAppAllowedForBgAudio(id) &&
-          ((st && st.isPlaying) || pendingSidebarAudioTakeoverSet.has(id) || currentAudibleBgAppId === id);
+          ((st && st.isPlaying) ||
+            pendingSidebarAudioTakeoverSet.has(id) ||
+            bgMasterAudioSet.has(id) ||
+            currentAudibleBgAppId === id);
         const persistBonus = isAppPersistent(id) ? 60000 : 0;
         const audioBonus = isActivelyPlayingAudio ? 600000 : 0;
         const score = (entry.lastUsedAt || 0) + persistBonus + audioBonus;
@@ -3122,7 +3216,8 @@
       if (!IS_POPOUT_VIEW && !sidebarLifecyclePort) {
         try {
           if (browser.runtime && typeof browser.runtime.connect === 'function') {
-            sidebarLifecyclePort = browser.runtime.connect({ name: 'foxhub-sidebar-lifecycle' });
+            const lifecyclePortName = IS_SIDEBAR_VIEW ? 'foxhub-sidebar-lifecycle' : 'foxhub-popup-lifecycle';
+            sidebarLifecyclePort = browser.runtime.connect({ name: lifecyclePortName });
           }
         } catch (_) {}
       }
@@ -3174,11 +3269,18 @@
       mediaFramePool.set(app.id, entry);
 
       if ((app.id === 'spotify' || app.id === 'youtube') && !IS_POPOUT_VIEW) {
-        // Only one player per app may exist: retire the hidden bg player and auto-resume here if music was playing
+        // For Spotify with Background Master active, pm-bg-audio-spotify stays alive with 0ms reload while sidebar acts as live Spotify Connect controller!
         const takeoverAppId = app.id;
         browser.runtime
           .sendMessage({ type: 'SIDEBAR_SP_TAKEOVER_BEGIN', appId: takeoverAppId })
           .then((res) => {
+            if (res && res.bgMasterActive) {
+              bgMasterAudioSet.add(takeoverAppId);
+              pendingSidebarAudioTakeoverSet.delete(takeoverAppId);
+              renderOperaRail();
+              return;
+            }
+            bgMasterAudioSet.delete(takeoverAppId);
             if (res && res.resume) {
               pendingSidebarAudioTakeoverSet.add(takeoverAppId);
               if (entry.loaded && (!entry.autoResumeSentAt || Date.now() - entry.autoResumeSentAt > 4000)) {
@@ -3212,6 +3314,7 @@
       cleanupSidebarMsePlayer(id);
       cleanupSidebarSpEmePlayer(id);
       pendingSidebarAudioTakeoverSet.delete(id);
+      bgMasterAudioSet.delete(id);
       if (currentAudibleBgAppId === id) {
         currentAudibleBgAppId = null;
       }
@@ -3244,7 +3347,10 @@
         }
         const st = framePlaybackStates.get(id);
         const wasAlreadyPlaying = Boolean(
-          (st && st.isPlaying) || pendingSidebarAudioTakeoverSet.has(id) || currentAudibleBgAppId === id
+          (st && st.isPlaying) ||
+            pendingSidebarAudioTakeoverSet.has(id) ||
+            bgMasterAudioSet.has(id) ||
+            currentAudibleBgAppId === id
         );
         if (!isAppAllowedForBgAudio(id) || !wasAlreadyPlaying) {
           entry.suppressedWhileInactive = true;
@@ -3272,6 +3378,7 @@
     knownOpenPersistentIds.delete(appId);
     framePlaybackStates.delete(appId);
     pendingSidebarAudioTakeoverSet.delete(appId);
+    bgMasterAudioSet.delete(appId);
     if (currentAudibleBgAppId === appId) {
       currentAudibleBgAppId = null;
     }
@@ -3300,7 +3407,10 @@
     mediaFramePool.forEach((entry, id) => {
       const st = framePlaybackStates.get(id);
       const wasAlreadyPlaying = Boolean(
-        (st && st.isPlaying) || pendingSidebarAudioTakeoverSet.has(id) || currentAudibleBgAppId === id
+        (st && st.isPlaying) ||
+          pendingSidebarAudioTakeoverSet.has(id) ||
+          bgMasterAudioSet.has(id) ||
+          currentAudibleBgAppId === id
       );
       if (!isAppAllowedForBgAudio(id) || !wasAlreadyPlaying) {
         entry.suppressedWhileInactive = true;
@@ -4708,12 +4818,12 @@
     const openFirefoxLeftSidebar = () => {
       try {
         if (browser.sidebarAction && browser.sidebarAction.open) {
+          if (activeRailAppId && activeRailAppId !== 'pocketmail') {
+            browser.runtime
+              .sendMessage({ type: 'PREPARE_SIDEBAR_DOCK_APP', appId: activeRailAppId })
+              .catch(() => {});
+          }
           browser.sidebarAction.open();
-          const panelUrl =
-            activeRailAppId !== 'pocketmail'
-              ? browser.runtime.getURL(`src/popup/popup.html?sidebar=1&app=${encodeURIComponent(activeRailAppId)}`)
-              : browser.runtime.getURL('src/popup/popup.html?sidebar=1');
-          browser.sidebarAction.setPanel({ panel: panelUrl });
           showToast('Opened in Firefox Left Sidebar!');
         } else {
           document.documentElement.classList.toggle('show-popup-rail');
@@ -4734,7 +4844,7 @@
     document.getElementById('rail-btn-night-mode')?.addEventListener('click', toggleTrueNightMode);
     document.getElementById('btn-night-mode')?.addEventListener('click', toggleTrueNightMode);
 
-    // Quick Mute Notifications Popover (Rail Icon & Header Icon -> 3 Toggleable Options: All, Email, Sites)
+    // Quick Mute Notifications Popover (Rail Icon & Header Icon -> 3 Toggleable Options: All, Email, Sites + Timed Mute Pills)
     document.getElementById('rail-btn-mute-notifs')?.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleMutePopover(e.currentTarget);
@@ -4746,7 +4856,9 @@
         muteEmailNotifications: wantAll,
         muteSiteNotifications: wantAll,
         socialAppNotifySounds: !wantAll,
-        dndUntil: 0
+        dndUntil: 0,
+        muteSitesUntil: 0,
+        lastMuteTimerMins: 0
       });
       syncMuteUiControls();
       renderHeaderStatus();
@@ -4757,9 +4869,11 @@
 
     document.getElementById('chk-mute-email')?.addEventListener('change', async (e) => {
       const wantEmail = Boolean(e.target.checked);
+      const keepSitesTimer = appSettings.muteSitesUntil && appSettings.muteSitesUntil > Date.now();
       await saveSettingsPatch({
         muteEmailNotifications: wantEmail,
-        dndUntil: 0
+        dndUntil: 0,
+        lastMuteTimerMins: keepSitesTimer ? appSettings.lastMuteTimerMins || 0 : 0
       });
       syncMuteUiControls();
       renderHeaderStatus();
@@ -4768,15 +4882,77 @@
 
     document.getElementById('chk-mute-sites')?.addEventListener('change', async (e) => {
       const wantSites = Boolean(e.target.checked);
+      const keepEmailTimer = appSettings.dndUntil && appSettings.dndUntil > Date.now();
       await saveSettingsPatch({
         muteSiteNotifications: wantSites,
-        socialAppNotifySounds: !wantSites
+        socialAppNotifySounds: !wantSites,
+        muteSitesUntil: 0,
+        lastMuteTimerMins: keepEmailTimer ? appSettings.lastMuteTimerMins || 0 : 0
       });
       syncMuteUiControls();
       renderHeaderStatus();
       renderMediaAppsManager();
       broadcastMuteAndShortcutsConfig();
       showToast(wantSites ? 'Muted Sites Notifications & App Chimes' : 'Unmuted Sites Notifications');
+    });
+
+    document.querySelectorAll('.pm-mute-timer-pill[data-mute-mins]').forEach((pill) => {
+      pill.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const mins = parseInt(pill.getAttribute('data-mute-mins') || '60', 10) || 60;
+        const until = Date.now() + mins * 60 * 1000;
+        const emailMuted = isEmailMutedNow();
+        const sitesMuted = isSitesMutedNow();
+        let patch;
+        let scopeLbl = 'All notifications';
+        if (emailMuted && !sitesMuted) {
+          patch = {
+            muteEmailNotifications: false,
+            dndUntil: until,
+            lastMuteTimerMins: mins
+          };
+          scopeLbl = 'Email notifications';
+        } else if (sitesMuted && !emailMuted) {
+          patch = {
+            muteSiteNotifications: false,
+            socialAppNotifySounds: true,
+            muteSitesUntil: until,
+            lastMuteTimerMins: mins
+          };
+          scopeLbl = 'Sites notifications';
+        } else {
+          patch = {
+            muteEmailNotifications: false,
+            muteSiteNotifications: false,
+            socialAppNotifySounds: true,
+            dndUntil: until,
+            muteSitesUntil: until,
+            lastMuteTimerMins: mins
+          };
+          scopeLbl = 'All notifications';
+        }
+        await saveSettingsPatch(patch);
+        syncMuteUiControls();
+        renderHeaderStatus();
+        renderMediaAppsManager();
+        broadcastMuteAndShortcutsConfig();
+        const durText = mins < 60 ? `${mins} min` : `${mins / 60} hr${mins > 60 ? 's' : ''}`;
+        showToast(`${scopeLbl} muted for ${durText}`);
+      });
+    });
+
+    document.getElementById('btn-mute-timer-clear')?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await saveSettingsPatch({
+        dndUntil: 0,
+        muteSitesUntil: 0,
+        lastMuteTimerMins: 0
+      });
+      syncMuteUiControls();
+      renderHeaderStatus();
+      renderMediaAppsManager();
+      broadcastMuteAndShortcutsConfig();
+      showToast('Cleared mute timer — notifications active');
     });
 
     document.addEventListener('mousedown', (e) => {
@@ -4922,7 +5098,8 @@
       const enabled = Boolean(e.target.checked);
       await saveSettingsPatch({
         socialAppNotifySounds: enabled,
-        muteSiteNotifications: !enabled
+        muteSiteNotifications: !enabled,
+        muteSitesUntil: 0
       });
       syncMuteUiControls();
       renderHeaderStatus();
@@ -5434,6 +5611,7 @@
             : '');
         if (appId) {
           pendingSidebarAudioTakeoverSet.delete(appId);
+          bgMasterAudioSet.delete(appId);
           cleanupSidebarMsePlayer(appId);
           cleanupSidebarSpEmePlayer(appId);
           browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
@@ -5445,6 +5623,20 @@
           (typeof data.flatFrameName === 'string' && data.flatFrameName.startsWith('pm-media-frame-')
             ? data.flatFrameName.replace('pm-media-frame-', '')
             : 'spotify');
+        const aria = String(data.aria || '').toLowerCase();
+        if (aria.includes('pause')) {
+          bgMasterAudioSet.delete(appId);
+          pendingSidebarAudioTakeoverSet.delete(appId);
+          if (currentAudibleBgAppId === appId) {
+            currentAudibleBgAppId = null;
+          }
+          const prevPb = framePlaybackStates.get(appId);
+          if (prevPb) {
+            prevPb.isPlaying = false;
+            prevPb.updatedAt = Date.now();
+          }
+          renderOperaRail();
+        }
         browser.runtime
           .sendMessage({ type: 'PM_SP_SIDEBAR_PLAYPAUSE_CLICK', appId, aria: data.aria || '' })
           .catch(() => {});
@@ -5477,7 +5669,11 @@
           }
 
           if (data.bridgeType === 'STOP_PLAYBACK') {
+            if (bgMasterAudioSet.has(appId) && !data.explicitStop) {
+              return;
+            }
             pendingSidebarAudioTakeoverSet.delete(appId);
+            bgMasterAudioSet.delete(appId);
             const prevPb = framePlaybackStates.get(appId);
             const nextUrl =
               (data.href && !data.href.includes('pm_boot=1') ? data.href : '') ||
@@ -5523,6 +5719,7 @@
               !isPlayableYouTubeUrl(data.href || sourceEntry?.currentUrl);
             if (!data.paused && !isNonPlayableYt) {
               pendingSidebarAudioTakeoverSet.delete(appId);
+              bgMasterAudioSet.delete(appId);
               const prevPb = framePlaybackStates.get(appId);
               const prevWasPlaying = Boolean(prevPb?.isPlaying);
               const prevAudible = currentAudibleBgAppId;
@@ -5567,11 +5764,16 @@
                 syncPersistentSessionToBackground(appId, pb.resumeUrl, pb);
               }
             } else {
-              // Ignore passive paused ticks while background takeover is still in progress unless explicitly paused or on a non-playable YT route
-              if (pendingSidebarAudioTakeoverSet.has(appId) && !data.explicitPause && !isNonPlayableYt) {
+              // Ignore passive paused ticks while background takeover or Background Master is active unless explicitly paused or on a non-playable YT route
+              if (
+                (pendingSidebarAudioTakeoverSet.has(appId) || bgMasterAudioSet.has(appId)) &&
+                !data.explicitPause &&
+                !isNonPlayableYt
+              ) {
                 return;
               }
               pendingSidebarAudioTakeoverSet.delete(appId);
+              bgMasterAudioSet.delete(appId);
               const prevPb = framePlaybackStates.get(appId);
               const prevWasPlaying = Boolean(prevPb?.isPlaying);
               const prevAudible = currentAudibleBgAppId;
@@ -5826,10 +6028,11 @@
           }
           if (effectivePlaying) {
             pauseOtherSidebarMediaFrames(appId);
-            if (pendingSidebarAudioTakeoverSet.size > 0) {
-              Array.from(pendingSidebarAudioTakeoverSet).forEach((otherId) => {
+            if (pendingSidebarAudioTakeoverSet.size > 0 || bgMasterAudioSet.size > 0) {
+              Array.from(new Set([...pendingSidebarAudioTakeoverSet, ...bgMasterAudioSet])).forEach((otherId) => {
                 if (otherId !== appId) {
                   pendingSidebarAudioTakeoverSet.delete(otherId);
+                  bgMasterAudioSet.delete(otherId);
                   browser.runtime
                     .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: otherId, clearPlaybackState: true })
                     .catch(() => {});
@@ -5839,7 +6042,10 @@
           }
           const prevIsPlaying = Boolean(framePlaybackStates.get(appId)?.isPlaying);
           const isTakeoverOrMse =
-            !isNonPlayableYt && (sidebarMsePlayers.has(appId) || pendingSidebarAudioTakeoverSet.has(appId));
+            !isNonPlayableYt &&
+            (sidebarMsePlayers.has(appId) ||
+              pendingSidebarAudioTakeoverSet.has(appId) ||
+              bgMasterAudioSet.has(appId));
           if (!effectivePlaying && !isTakeoverOrMse && currentAudibleBgAppId === appId) {
             currentAudibleBgAppId = null;
           }
@@ -6682,6 +6888,17 @@
         }
         broadcastMuteAndShortcutsConfig();
       } else if (msg.type === 'OPEN_APP_FROM_SHORTCUT') {
+        const targetMode = msg.openMode || 'sidebar';
+        const isExactTargetSurface =
+          (targetMode === 'sidebar' && IS_SIDEBAR_VIEW && !IS_POPOUT_VIEW) ||
+          (targetMode === 'popup' && !IS_SIDEBAR_VIEW && !IS_POPOUT_VIEW) ||
+          (targetMode === 'popout' && IS_POPOUT_VIEW);
+        if (isExactTargetSurface) {
+          try {
+            browser.extension?.getBackgroundPage?.()?.__pmConsumePendingShortcutApp?.();
+          } catch (_) {}
+          browser.runtime.sendMessage({ type: 'CONSUME_PENDING_SHORTCUT' }).catch(() => {});
+        }
         if (msg.settings) {
           appSettings = msg.settings;
         }
@@ -6698,6 +6915,14 @@
         triggerSilentMailSync(2500);
       } else if (msg.type === 'BG_AUDIO_STATUS_CHANGED') {
         currentAudibleBgAppId = msg.audibleAppId || null;
+        if (!currentAudibleBgAppId) {
+          bgMasterAudioSet.clear();
+        } else if (currentAudibleBgAppId === 'spotify') {
+          const spPb = framePlaybackStates.get('spotify');
+          if (!spPb || !spPb.isPlaying || bgMasterAudioSet.has('spotify')) {
+            bgMasterAudioSet.add('spotify');
+          }
+        }
         renderOperaRail();
       } else if (msg.type === 'PM_SEEK_SIDEBAR_SP') {
         const spEntry = mediaFramePool.get(msg.appId || 'spotify');
@@ -6730,6 +6955,7 @@
         if (autoPaused) {
           if (stayStopped) {
             pendingSidebarAudioTakeoverSet.clear();
+            bgMasterAudioSet.clear();
           }
           sidebarMsePlayers.forEach((player) => {
             if (player && player.audioEl && !player.audioEl.paused) {
@@ -6781,6 +7007,31 @@
       }
     });
 
+    // Support per-app keyboard shortcuts directly while focus is inside popup.html / sidebar chrome
+    window.addEventListener(
+      'keydown',
+      (ev) => {
+        if (!ev || ev.repeat || activeShortcutRecorderCleanup) return;
+        const map = appSettings.appShortcuts;
+        if (!map || typeof map !== 'object') return;
+        const parsed = formatShortcutFromKeyEvent(ev);
+        if (!parsed || parsed.action !== 'set' || !parsed.shortcut) return;
+        const comboNorm = parsed.shortcut.toLowerCase();
+        for (const [appId, bound] of Object.entries(map)) {
+          if (bound && String(bound).trim().toLowerCase() === comboNorm) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            activateAppDirectlyById(appId);
+            browser.runtime
+              .sendMessage({ type: 'TRIGGER_APP_SHORTCUT', appId })
+              .catch(() => {});
+            return;
+          }
+        }
+      },
+      false
+    );
+
     // When the user closes the sidebar (×) or popup, save persistent app URLs and hand off active music/audio to Background Audio Keep-Alive!
     if (!IS_POPOUT_VIEW) {
       window.addEventListener('pagehide', () => {
@@ -6788,7 +7039,12 @@
         sidebarMsePlayers.forEach((_, id) => cleanupSidebarMsePlayer(id));
         if (!sidebarInitCompleted) return;
         // If this was just the top-right Mail popup with no media frames opened, do not disturb background audio
-        if (!IS_SIDEBAR_VIEW && mediaFramePool.size === 0 && pendingSidebarAudioTakeoverSet.size === 0) {
+        if (
+          !IS_SIDEBAR_VIEW &&
+          mediaFramePool.size === 0 &&
+          pendingSidebarAudioTakeoverSet.size === 0 &&
+          bgMasterAudioSet.size === 0
+        ) {
           return;
         }
         const mode = appSettings.persistenceMode || 'selected';
@@ -6834,7 +7090,8 @@
           const wasPlayingOrTakeover =
             (pb && pb.isPlaying && Date.now() - pb.updatedAt < 60000) ||
             activeMseIds.has(id) ||
-            pendingSidebarAudioTakeoverSet.has(id);
+            pendingSidebarAudioTakeoverSet.has(id) ||
+            bgMasterAudioSet.has(id);
           if (wasPlayingOrTakeover && bestUrl) {
             addedPlayingIds.add(id);
             playingApps.push({
@@ -6846,7 +7103,7 @@
         });
 
         // Also include any app still playing in background.html (when the user opened onto Mail/Instagram and closed without switching to the media app)
-        pendingSidebarAudioTakeoverSet.forEach((bgId) => {
+        new Set([...pendingSidebarAudioTakeoverSet, ...bgMasterAudioSet]).forEach((bgId) => {
           if (!addedPlayingIds.has(bgId) && isAppAllowedForBgAudio(bgId)) {
             const bgUrl = hibernatedAppUrls.get(bgId) || appSettings.persistentSavedAppUrls?.[bgId] || '';
             if (bgUrl) {
@@ -6883,6 +7140,7 @@
         isAppPersistent(id) &&
         !mediaFramePool.has(id) &&
         !pendingSidebarAudioTakeoverSet.has(id) &&
+        !bgMasterAudioSet.has(id) &&
         currentAudibleBgAppId !== id
     );
     if (candidates.length === 0) return;
@@ -6920,26 +7178,40 @@
     bindEvents();
 
     const params = new URLSearchParams(window.location.search || '');
-    let initialAppId = params.get('app');
+    const urlParamAppId = params.get('app') || '';
+    let initialAppId = '';
+    let isShortcutLaunch = false;
     let fastBootMountedAppId = '';
 
     // 0ms Synchronous Fast-Boot from Background Page RAM + LocalStorage Cache
+    // Pending keyboard shortcut ALWAYS takes #1 priority over ?app= query param and Persistent Memory!
     let syncBgState = null;
     try {
       const bgWin =
         browser.extension && typeof browser.extension.getBackgroundPage === 'function'
           ? browser.extension.getBackgroundPage()
           : null;
+      if (bgWin && typeof bgWin.__pmConsumePendingShortcutApp === 'function') {
+        const pendingSc = bgWin.__pmConsumePendingShortcutApp();
+        const scAppId = typeof pendingSc === 'string' ? pendingSc : pendingSc?.appId;
+        if (scAppId) {
+          initialAppId = scAppId;
+          isShortcutLaunch = true;
+        }
+      }
       if (bgWin && typeof bgWin.__pmGetSyncBootState === 'function') {
         syncBgState = bgWin.__pmGetSyncBootState();
       }
-      if (!initialAppId && bgWin && typeof bgWin.__pmConsumePendingShortcutApp === 'function') {
-        const pendingSc = bgWin.__pmConsumePendingShortcutApp();
-        if (pendingSc && pendingSc.appId) {
-          initialAppId = pendingSc.appId;
-        }
+      if (!initialAppId && syncBgState && syncBgState.pendingShortcutAppId) {
+        initialAppId = syncBgState.pendingShortcutAppId;
+        isShortcutLaunch = true;
+        browser.runtime.sendMessage({ type: 'CONSUME_PENDING_SHORTCUT' }).catch(() => {});
       }
     } catch (_) {}
+
+    if (!initialAppId && urlParamAppId) {
+      initialAppId = urlParamAppId;
+    }
 
     try {
       if (syncBgState && syncBgState.settings) {
@@ -6953,7 +7225,12 @@
         ) {
           syncBgState.activeBgApps.forEach((bgApp) => {
             if (bgApp && bgApp.appId && isAppAllowedForBgAudio(bgApp.appId)) {
-              pendingSidebarAudioTakeoverSet.add(bgApp.appId);
+              if (bgApp.bgMasterActive) {
+                bgMasterAudioSet.add(bgApp.appId);
+                pendingSidebarAudioTakeoverSet.delete(bgApp.appId);
+              } else {
+                pendingSidebarAudioTakeoverSet.add(bgApp.appId);
+              }
               if (bgApp.url) hibernatedAppUrls.set(bgApp.appId, bgApp.url);
             }
           });
@@ -6986,8 +7263,9 @@
         if (window.PocketMailThemes) {
           window.PocketMailThemes.applyThemeAndWallpaper(document, appSettings);
         }
-        const fastLastActiveId =
-          initialAppId || appSettings.persistentLastActiveAppId || fast?.activeAppId;
+        const fastLastActiveId = initialAppId
+          ? initialAppId
+          : appSettings.persistentLastActiveAppId || fast?.activeAppId;
         const canFastRestoreLastApp =
           !IS_POPOUT_VIEW &&
           fastLastActiveId &&
@@ -7007,12 +7285,15 @@
             renderOperaRail();
           }
         } else {
+          if (initialAppId === 'pocketmail') {
+            activeRailAppId = 'pocketmail';
+          }
           renderOperaRail();
         }
       }
     } catch (_) {}
 
-    if (IS_SIDEBAR_VIEW && !IS_POPOUT_VIEW) {
+    if (IS_SIDEBAR_VIEW && !IS_POPOUT_VIEW && !sidebarLifecyclePort) {
       try {
         if (browser.runtime && typeof browser.runtime.connect === 'function') {
           sidebarLifecyclePort = browser.runtime.connect({ name: 'foxhub-sidebar-lifecycle' });
@@ -7036,6 +7317,12 @@
       currentAudibleBgAppId = res.audibleAppId || null;
       isAutoPausedByExternalTab = Boolean(res.isAutoPausedByTabAudio);
 
+      if (!isShortcutLaunch && res.pendingShortcutAppId) {
+        initialAppId = res.pendingShortcutAppId;
+        isShortcutLaunch = true;
+        browser.runtime.sendMessage({ type: 'CONSUME_PENDING_SHORTCUT' }).catch(() => {});
+      }
+
       // If opened as the Top-Right Floating Dropdown Popup while the Left Sidebar is closed,
       // connect the lifecycle port and hand off background audio identically to the Left Sidebar!
       const actAsPrimaryHub =
@@ -7043,7 +7330,8 @@
       if (actAsPrimaryHub && !sidebarLifecyclePort) {
         try {
           if (browser.runtime && typeof browser.runtime.connect === 'function') {
-            sidebarLifecyclePort = browser.runtime.connect({ name: 'foxhub-sidebar-lifecycle' });
+            const lifecyclePortName = IS_SIDEBAR_VIEW ? 'foxhub-sidebar-lifecycle' : 'foxhub-popup-lifecycle';
+            sidebarLifecyclePort = browser.runtime.connect({ name: lifecyclePortName });
           }
         } catch (_) {}
       }
@@ -7064,6 +7352,14 @@
         if (Array.isArray(handoffRes.activeBgApps)) {
           handoffRes.activeBgApps.forEach((bgApp) => {
             if (bgApp && bgApp.appId && isAppAllowedForBgAudio(bgApp.appId)) {
+              if (bgApp.bgMasterActive) {
+                bgMasterAudioSet.add(bgApp.appId);
+                pendingSidebarAudioTakeoverSet.delete(bgApp.appId);
+                if (bgApp.url) {
+                  hibernatedAppUrls.set(bgApp.appId, bgApp.url);
+                }
+                return;
+              }
               pendingSidebarAudioTakeoverSet.add(bgApp.appId);
               if (bgApp.url) {
                 hibernatedAppUrls.set(bgApp.appId, bgApp.url);
@@ -7101,8 +7397,8 @@
         });
       }
 
-      const firstBgPlayingId =
-        pendingSidebarAudioTakeoverSet.size > 0 ? Array.from(pendingSidebarAudioTakeoverSet)[0] : '';
+      const activeBgSet = new Set([...pendingSidebarAudioTakeoverSet, ...bgMasterAudioSet]);
+      const firstBgPlayingId = activeBgSet.size > 0 ? Array.from(activeBgSet)[0] : '';
       const rawLastActiveId = appSettings.persistentLastActiveAppId || fastBootMountedAppId;
       const lastActiveId =
         rawLastActiveId && rawLastActiveId !== 'pocketmail' && isAppPersistent(rawLastActiveId)
@@ -7115,8 +7411,14 @@
         !initialAppId &&
         lastActiveId &&
         lastActiveId !== 'pocketmail' &&
-        (isAppPersistent(lastActiveId) || pendingSidebarAudioTakeoverSet.has(lastActiveId));
-      if (shouldAutoRestoreApp) {
+        (isAppPersistent(lastActiveId) || activeBgSet.has(lastActiveId));
+
+      if (initialAppId === 'pocketmail') {
+        activeRailAppId = 'pocketmail';
+        hideMediaWorkspaceKeepAlive();
+      } else if (initialAppId) {
+        activeRailAppId = initialAppId;
+      } else if (shouldAutoRestoreApp) {
         activeRailAppId = lastActiveId;
       }
 
@@ -7140,6 +7442,37 @@
           triggerSilentMailSync(9000);
         }
       }, 10000);
+
+      // Keep Timed Mute countdown live & automatically clear expired timers while FoxHub is open
+      setInterval(() => {
+        const now = Date.now();
+        const hadDnd = Boolean(appSettings.dndUntil && appSettings.dndUntil > 0);
+        const hadSites = Boolean(appSettings.muteSitesUntil && appSettings.muteSitesUntil > 0);
+        if (!hadDnd && !hadSites) return;
+        let expired = false;
+        if (hadDnd && appSettings.dndUntil <= now) {
+          appSettings.dndUntil = 0;
+          expired = true;
+        }
+        if (hadSites && appSettings.muteSitesUntil <= now) {
+          appSettings.muteSitesUntil = 0;
+          expired = true;
+        }
+        if (expired && !appSettings.dndUntil && !appSettings.muteSitesUntil) {
+          appSettings.lastMuteTimerMins = 0;
+        }
+        syncMuteUiControls();
+        renderHeaderStatus();
+        if (expired) {
+          renderMediaAppsManager();
+          broadcastMuteAndShortcutsConfig();
+        }
+      }, 5000);
+
+      if (initialAppId === 'pocketmail') {
+        schedulePrewarmPersistentApps();
+        return;
+      }
 
       if (initialAppId && initialAppId !== 'pocketmail' && window.PocketMailMediaApps) {
         const app = window.PocketMailMediaApps.getAppById(initialAppId, appSettings);

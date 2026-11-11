@@ -1036,6 +1036,23 @@
             <span class="pm-mute-switch-ui" aria-hidden="true"></span>
           </label>
         </div>
+
+        <div class="pm-mute-timer-box">
+          <div class="pm-mute-timer-head">
+            <span class="pm-mute-timer-label">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span>Mute for:</span>
+            </span>
+            <span id="pm-mute-timer-remaining" class="pm-mute-timer-remaining">Off</span>
+          </div>
+          <div class="pm-mute-timer-pills">
+            <button type="button" class="pm-mute-timer-pill" data-mute-mins="15" title="Mute notifications for 15 minutes">15m</button>
+            <button type="button" class="pm-mute-timer-pill" data-mute-mins="60" title="Mute notifications for 1 hour">1h</button>
+            <button type="button" class="pm-mute-timer-pill" data-mute-mins="180" title="Mute notifications for 3 hours">3h</button>
+            <button type="button" class="pm-mute-timer-pill" data-mute-mins="480" title="Mute notifications for 8 hours">8h</button>
+            <button type="button" id="btn-mute-timer-clear" class="pm-mute-timer-pill pm-mute-timer-clear hidden" title="Clear timed mute and resume notifications">Clear</button>
+          </div>
+        </div>
       </div>
 
       <!-- Toast Notification Pill -->

@@ -315,12 +315,30 @@
             <input type="checkbox" id="opt-mute-email" class="opt-toggle">
           </div>
 
-          <div class="opt-row-between">
+          <div class="opt-row-between" style="margin-bottom:14px;">
             <div>
               <h4>Mute Sites Notifications</h4>
               <p class="opt-muted">Silence all social/messenger app chimes and suppress embedded site notification popups &amp; pings.</p>
             </div>
             <input type="checkbox" id="opt-mute-sites" class="opt-toggle">
+          </div>
+
+          <div class="opt-row-between" style="padding-top:12px;border-top:1px solid var(--border-color);flex-wrap:wrap;gap:10px;">
+            <div>
+              <h4 style="display:flex;align-items:center;gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span>Mute for a Set Time</span>
+                <span id="opt-mute-timer-status" style="font-size:11px;font-weight:700;color:var(--accent);margin-left:4px;"></span>
+              </h4>
+              <p class="opt-muted">Temporarily mute notifications and automatically unmute when the timer finishes.</p>
+            </div>
+            <div style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <button type="button" class="opt-btn opt-btn-secondary opt-mute-timer-btn" data-opt-mute-mins="15" style="padding:5px 10px;font-size:12px;">15m</button>
+              <button type="button" class="opt-btn opt-btn-secondary opt-mute-timer-btn" data-opt-mute-mins="60" style="padding:5px 10px;font-size:12px;">1h</button>
+              <button type="button" class="opt-btn opt-btn-secondary opt-mute-timer-btn" data-opt-mute-mins="180" style="padding:5px 10px;font-size:12px;">3h</button>
+              <button type="button" class="opt-btn opt-btn-secondary opt-mute-timer-btn" data-opt-mute-mins="480" style="padding:5px 10px;font-size:12px;">8h</button>
+              <button type="button" id="opt-btn-mute-timer-clear" class="opt-btn opt-btn-secondary" style="padding:5px 10px;font-size:12px;display:none;">Clear Timer</button>
+            </div>
           </div>
         </div>
 

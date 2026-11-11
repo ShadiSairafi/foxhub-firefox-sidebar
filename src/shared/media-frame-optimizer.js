@@ -117,7 +117,7 @@
 
   const rawWindowName = typeof window.name === 'string' ? window.name : '';
   const pmtIdx = rawWindowName.indexOf('__pmt=');
-  const cleanWindowName = pmtIdx >= 0 ? rawWindowName.slice(0, pmtIdx) : rawWindowName;
+  let cleanWindowName = pmtIdx >= 0 ? rawWindowName.slice(0, pmtIdx) : rawWindowName;
   let initialSyncThemeMode = '';
   let initialSyncAccent = '';
   if (pmtIdx >= 0) {
@@ -133,8 +133,9 @@
     } catch (_) {}
   }
 
-  const isBgAudioFrame = cleanWindowName.startsWith('pm-bg-audio-');
-  const isFoxHubMediaFrame = /^pm-(media-frame|bg-audio)-/.test(cleanWindowName);
+  let isStandbyBgFrame = cleanWindowName.startsWith('pm-bg-standby-');
+  let isBgAudioFrame = cleanWindowName.startsWith('pm-bg-audio-');
+  const isFoxHubMediaFrame = /^pm-(media-frame|bg-audio|bg-standby)-/.test(cleanWindowName);
   let isFoxHubContext = isFoxHubMediaFrame || isPocketMailSidebarTop;
   if (isFoxHubContext) {
     try {
@@ -258,7 +259,7 @@
     pageWin.__pmSpBridgeEnabled = true;
 
     const IS_YT = host.includes('youtube.com');
-    const frameName = cleanWindowName;
+    let frameName = cleanWindowName;
     const mediaEls = []; // Xray-wrapped hooked music elements (most recent last)
     const mirroredEls = new WeakSet(); // YouTube main-player elements whose MediaSource is mirrored
     const lockedEls = new WeakSet();
@@ -283,12 +284,18 @@
     let lastUserGestureAt = 0;
     let lastPlayStartedAt = 0;
     let lastParentSyncSentAt = 0;
+    let lastSidebarGestureBridgeAt = 0;
+    let lastBgHeartbeatReportAt = 0;
     let mirrorWasPlaying = false;
     let mirrorAutoPausedByTab = false;
     let pendingYtSeekTarget = null; // { time: number, expiresAt: number }
+    let bgTimerSeq = 900000000;
+    const bridgedTimerCallbacks = new Map(); // timerId -> { cb, extraArgs, isInterval }
+    let runMirrorSyncTick = () => {};
 
     const closeDealerSocketsForHandoff = () => {
       isFrameUnloading = true;
+      bridgedTimerCallbacks.clear();
       dealerSockets.forEach((ws) => {
         try {
           if (ws && ws.readyState <= 1) {
@@ -307,7 +314,7 @@
     window.addEventListener('unload', markUnloading, true);
 
     // Prevent Firefox compositor from freezing requestAnimationFrame to 0fps inside hidden background audio keep-alive frames!
-    if (isBgAudioFrame && pageWin.requestAnimationFrame) {
+    if ((isBgAudioFrame || isStandbyBgFrame) && pageWin.requestAnimationFrame) {
       try {
         let rafSeq = 1;
         const rafTimers = new Map();
@@ -340,8 +347,26 @@
       } catch (_) {}
     }
 
-    const recordUserGesture = () => {
+    const notifySidebarUserInteraction = (ev) => {
+      if (isBgAudioFrame || isStandbyBgFrame || IS_YT) return;
+      if (!ev || !ev.isTrusted) return;
+      const now = Date.now();
+      let isSeekBar = false;
+      try {
+        if (ev.target && ev.target.closest) {
+          isSeekBar = Boolean(
+            ev.target.closest('[data-testid="playback-progressbar"], [data-testid="progress-bar"]')
+          );
+        }
+      } catch (_) {}
+      if (!isSeekBar && now - lastSidebarGestureBridgeAt < 220) return;
+      lastSidebarGestureBridgeAt = now;
+      postBridge('USER_INTERACTION', { isSeekBar });
+    };
+
+    const recordUserGesture = (ev) => {
       lastUserGestureAt = Date.now();
+      notifySidebarUserInteraction(ev);
     };
     window.addEventListener('pointerdown', recordUserGesture, { capture: true, passive: true });
     window.addEventListener('mousedown', recordUserGesture, { capture: true, passive: true });
@@ -361,6 +386,7 @@
       (ev) => {
         if (ev && ev.isTrusted) {
           lastUserGestureAt = Date.now();
+          notifySidebarUserInteraction(ev);
         }
       },
       { capture: true, passive: true }
@@ -396,16 +422,57 @@
           emeBridgePort = browser.runtime.connect({ name: 'foxhub-eme-bridge' });
           emeBridgePort.onMessage.addListener((msg) => {
             if (!msg || !msg.cmd) return;
+            if (msg.cmd === 'BG_TIMER_FIRE') {
+              const tid = Number(msg.timerId);
+              const entry = bridgedTimerCallbacks.get(tid);
+              if (!entry) return;
+              if (!entry.isInterval) {
+                bridgedTimerCallbacks.delete(tid);
+              }
+              try {
+                if (entry.extraArgs) {
+                  entry.cb.apply(pageWin, entry.extraArgs);
+                } else {
+                  entry.cb.call(pageWin);
+                }
+              } catch (_) {}
+              return;
+            }
+            if (msg.cmd === 'BG_HEARTBEAT_TICK') {
+              if (isBgAudioFrame && !isFrameUnloading) {
+                try {
+                  runMirrorSyncTick();
+                } catch (_) {}
+                const nowHb = Date.now();
+                if (nowHb - lastBgHeartbeatReportAt > 850) {
+                  lastBgHeartbeatReportAt = nowHb;
+                  try {
+                    if (typeof window.__pmReportLivePlaybackState === 'function') {
+                      window.__pmReportLivePlaybackState();
+                    }
+                  } catch (_) {}
+                }
+              }
+              return;
+            }
+            if (msg.cmd === 'MARK_USER_GESTURE') {
+              lastUserGestureAt = Date.now();
+              return;
+            }
             if (msg.cmd === 'PREPARE_HANDOFF_UNLOAD') {
               closeDealerSocketsForHandoff();
               return;
             }
             if (msg.cmd === 'SEEK_SP_MEDIA') {
+              let executed = false;
               try {
                 if (pageWin && typeof pageWin.__seekActiveSpMediaEl === 'function') {
-                  pageWin.__seekActiveSpMediaEl(Number(msg.currentTime) || 0, Boolean(msg.forceHarmonySeek));
+                  executed = Boolean(
+                    pageWin.__seekActiveSpMediaEl(Number(msg.currentTime) || 0, Boolean(msg.forceHarmonySeek))
+                  );
                 }
               } catch (_) {}
+              postBridge('SEEK_ACK', { executed });
               return;
             }
             if (msg.cmd === 'SKIP_NEXT_SP_TRACK') {
@@ -417,13 +484,21 @@
               return;
             }
             if (
+              msg.cmd === 'ACTIVATE_BG_SPOTIFY_HANDOFF' ||
+              msg.cmd === 'PAUSE_BG_SP_MEDIA' ||
+              msg.cmd === 'RESUME_BG_SP_MEDIA' ||
               msg.cmd === 'TAB_AUDIO_AUTO_PAUSE' ||
               msg.cmd === 'TAB_AUDIO_AUTO_RESUME' ||
               msg.cmd === 'PAUSE_LOCAL_MEDIA'
             ) {
               if (msg.cmd === 'TAB_AUDIO_AUTO_PAUSE') {
                 mirrorAutoPausedByTab = true;
-              } else if (msg.cmd === 'TAB_AUDIO_AUTO_RESUME' || msg.cmd === 'PAUSE_LOCAL_MEDIA') {
+              } else if (
+                msg.cmd === 'TAB_AUDIO_AUTO_RESUME' ||
+                msg.cmd === 'PAUSE_LOCAL_MEDIA' ||
+                msg.cmd === 'RESUME_BG_SP_MEDIA' ||
+                msg.cmd === 'ACTIVATE_BG_SPOTIFY_HANDOFF'
+              ) {
                 mirrorAutoPausedByTab = false;
               }
               try {
@@ -431,6 +506,8 @@
                   window.__pmHandleMediaFrameCommand({
                     target: 'pocketmail-media-frame',
                     cmd: msg.cmd,
+                    resumeUrl: msg.resumeUrl,
+                    targetSec: msg.targetSec,
                     markShouldResume: Boolean(msg.markShouldResume)
                   });
                 } else {
@@ -438,6 +515,8 @@
                     {
                       target: 'pocketmail-media-frame',
                       cmd: msg.cmd,
+                      resumeUrl: msg.resumeUrl,
+                      targetSec: msg.targetSec,
                       markShouldResume: Boolean(msg.markShouldResume)
                     },
                     '*'
@@ -465,6 +544,111 @@
       return emeBridgePort;
     };
     ensureBridgePort();
+
+    // Unthrottled timer bridge for hidden Spotify background frames: prevents Gecko's background tab budget
+    // from throttling Harmony segment fetches or dealer.spotify.com WebSocket heartbeats over long sessions!
+    if (!IS_YT && (isBgAudioFrame || isStandbyBgFrame) && pageWin.setTimeout && pageWin.setInterval) {
+      try {
+        const origSetTimeout = pageWin.setTimeout;
+        const origClearTimeout = pageWin.clearTimeout;
+        const origSetInterval = pageWin.setInterval;
+        const origClearInterval = pageWin.clearInterval;
+
+        exportFunction(
+          function (cb, delay) {
+            const ms = Number(delay) || 0;
+            if (typeof cb === 'function' && !isFrameUnloading && ms >= 45 && ms <= 45000) {
+              const port = ensureBridgePort();
+              if (port) {
+                const tid = ++bgTimerSeq;
+                const extraArgs = arguments.length > 2 ? Array.prototype.slice.call(arguments, 2) : null;
+                bridgedTimerCallbacks.set(tid, { cb, extraArgs, isInterval: false });
+                try {
+                  port.postMessage({
+                    type: 'PM_BG_TIMER_BRIDGE',
+                    op: 'SET',
+                    timerId: tid,
+                    delay: ms,
+                    isInterval: false
+                  });
+                  return tid;
+                } catch (_) {
+                  bridgedTimerCallbacks.delete(tid);
+                }
+              }
+            }
+            return origSetTimeout.apply(pageWin, arguments);
+          },
+          pageWin,
+          { defineAs: 'setTimeout' }
+        );
+
+        exportFunction(
+          function (id) {
+            const numId = Number(id);
+            if (numId > 900000000) {
+              bridgedTimerCallbacks.delete(numId);
+              if (emeBridgePort) {
+                try {
+                  emeBridgePort.postMessage({ type: 'PM_BG_TIMER_BRIDGE', op: 'CLEAR', timerId: numId });
+                } catch (_) {}
+              }
+              return;
+            }
+            return origClearTimeout.call(pageWin, id);
+          },
+          pageWin,
+          { defineAs: 'clearTimeout' }
+        );
+
+        exportFunction(
+          function (cb, delay) {
+            const ms = Number(delay) || 0;
+            if (typeof cb === 'function' && !isFrameUnloading && ms >= 45 && ms <= 45000) {
+              const port = ensureBridgePort();
+              if (port) {
+                const tid = ++bgTimerSeq;
+                const extraArgs = arguments.length > 2 ? Array.prototype.slice.call(arguments, 2) : null;
+                bridgedTimerCallbacks.set(tid, { cb, extraArgs, isInterval: true });
+                try {
+                  port.postMessage({
+                    type: 'PM_BG_TIMER_BRIDGE',
+                    op: 'SET',
+                    timerId: tid,
+                    delay: ms,
+                    isInterval: true
+                  });
+                  return tid;
+                } catch (_) {
+                  bridgedTimerCallbacks.delete(tid);
+                }
+              }
+            }
+            return origSetInterval.apply(pageWin, arguments);
+          },
+          pageWin,
+          { defineAs: 'setInterval' }
+        );
+
+        exportFunction(
+          function (id) {
+            const numId = Number(id);
+            if (numId > 900000000) {
+              bridgedTimerCallbacks.delete(numId);
+              if (emeBridgePort) {
+                try {
+                  emeBridgePort.postMessage({ type: 'PM_BG_TIMER_BRIDGE', op: 'CLEAR', timerId: numId });
+                } catch (_) {}
+              }
+              return;
+            }
+            return origClearInterval.call(pageWin, id);
+          },
+          pageWin,
+          { defineAs: 'clearInterval' }
+        );
+      } catch (_) {}
+    }
 
     const isMediaSource = (o) => {
       try {
@@ -536,10 +720,26 @@
     };
 
     const postBridge = (bridgeType, extra) => {
+      if (
+        isStandbyBgFrame &&
+        bridgeType !== 'BRIDGE_HELLO' &&
+        bridgeType !== 'SERVER_CERT' &&
+        bridgeType !== 'LIC_AUTH'
+      ) {
+        return;
+      }
       let enriched = extra || {};
       if (bridgeType === 'SYNC_TIME' && !IS_YT) {
         const meta = getSpCurrentTrackMeta(getActiveEl());
-        enriched = Object.assign({}, meta, enriched);
+        let spUiStillPlaying = false;
+        if (enriched.paused) {
+          try {
+            const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+            const aria = spToggle ? (spToggle.getAttribute('aria-label') || '').toLowerCase() : '';
+            spUiStillPlaying = aria.includes('pause');
+          } catch (_) {}
+        }
+        enriched = Object.assign({ spUiStillPlaying }, meta, enriched);
       }
       const payload = Object.assign(
         {
@@ -556,7 +756,7 @@
         try {
           port.postMessage(payload);
           // Notify parent popup.js of play/pause/stop state transitions (marked alreadyRoutedToBg so popup.js never double-forwards to background!)
-          if (!isBgAudioFrame) {
+          if (!isBgAudioFrame && !isStandbyBgFrame) {
             if (bridgeType === 'STOP_PLAYBACK' || (bridgeType === 'SYNC_TIME' && payload.paused)) {
               lastParentSyncSentAt = 0;
               realTopWin.postMessage(Object.assign({}, payload, { alreadyRoutedToBg: true }), '*');
@@ -573,9 +773,11 @@
           emeBridgePort = null;
         }
       }
-      try {
-        realTopWin.postMessage(payload, '*');
-      } catch (_) {}
+      if (!isStandbyBgFrame) {
+        try {
+          realTopWin.postMessage(payload, '*');
+        } catch (_) {}
+      }
     };
 
     const isYtInlinePreviewEl = (el) => {
@@ -1192,8 +1394,8 @@
       });
     }
 
-    setInterval(() => {
-      if (isFrameUnloading) return;
+    runMirrorSyncTick = () => {
+      if (isFrameUnloading || isStandbyBgFrame) return;
       if (IS_YT) {
         for (let i = 0; i < mediaEls.length; i++) {
           const v = mediaEls[i];
@@ -1234,9 +1436,18 @@
           explicitPause: Date.now() - lastUserGestureAt < 2500
         });
       }
-    }, 400);
+    };
+    setInterval(runMirrorSyncTick, 400);
 
     // Helpers used by the rest of this content script (and the diagnostics) via window.wrappedJSObject.__pm*
+    define(pageWin, '__pmPromoteStandbyToBgFrame', function (newName) {
+      frameName = String(newName || 'pm-bg-audio-spotify');
+      mirrorAutoPausedByTab = false;
+      postBridge('BRIDGE_HELLO', {});
+    });
+    define(pageWin, '__pmMarkUserGesture', function () {
+      lastUserGestureAt = Date.now();
+    });
     define(pageWin, '__pmDisableSpBridge', function () {});
     define(pageWin, '__pmStopYtMirror', function () {
       mirrorWasPlaying = false;
@@ -1384,13 +1595,13 @@
     define(pageWin, '__seekActiveSpMediaEl', function (targetTime, forceHarmonySeek) {
       try {
         const t = Number(targetTime);
-        if (!(t >= 0)) return;
+        if (!(t >= 0)) return false;
         if (IS_YT) {
-          if (!(t > 0)) return;
+          if (!(t > 0)) return false;
           pendingYtSeekTarget = { time: t, setAt: Date.now(), expiresAt: Date.now() + 4500 };
           const el = getActiveEl();
           if (el) applyPendingYtSeek(el);
-          return;
+          return true;
         }
         const el = getActiveEl();
         if (!forceHarmonySeek && el && el.buffered && el.buffered.length > 0) {
@@ -1399,7 +1610,7 @@
               if (Math.abs((el.currentTime || 0) - t) > 1.2) {
                 el.currentTime = t;
               }
-              return;
+              return true;
             }
           }
         }
@@ -1411,7 +1622,7 @@
               ? cloneInto({ seekTime: t, fastSeek: false }, pageWin)
               : { seekTime: t, fastSeek: false };
           spMediaSessionHandlers.seekto(seekArg);
-          return;
+          return true;
         }
         // DOM progressbar fallback if MediaSession seekto hasn't registered yet
         const dur = spMediaSessionDuration || parseDomSpotifyDuration();
@@ -1427,9 +1638,11 @@
             progBar.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX, clientY }));
             progBar.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX, clientY }));
             progBar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX, clientY }));
+            return true;
           }
         }
       } catch (_) {}
+      return false;
     });
     define(pageWin, '__getSpDiag', function () {
       try {
@@ -1507,15 +1720,23 @@
     host.includes('google.com');
 
   let siteNotificationsMuted = false;
+  let siteNotificationsMutedUntil = 0;
   let cachedShortcutBindings = {
     globalShortcuts: { popup: 'Alt+Shift+F', sidebar: 'Alt+Shift+M', popout: 'Alt+Shift+W' },
     appShortcuts: {},
     appShortcutOpenMode: 'sidebar'
   };
 
+  function isSiteNotificationsMutedNow() {
+    return Boolean(siteNotificationsMuted || (siteNotificationsMutedUntil > 0 && Date.now() < siteNotificationsMutedUntil));
+  }
+
   function syncFrameSettingsCache(s) {
     if (!s || typeof s !== 'object') return;
     siteNotificationsMuted = Boolean(s.muteSiteNotifications || s.socialAppNotifySounds === false);
+    if (s.muteSitesUntil !== undefined) {
+      siteNotificationsMutedUntil = Number(s.muteSitesUntil || 0);
+    }
     if (s.globalShortcuts && typeof s.globalShortcuts === 'object') {
       cachedShortcutBindings.globalShortcuts = {
         popup: 'Alt+Shift+F',
@@ -1553,7 +1774,7 @@
               } catch (_) {}
             }, 10);
           }
-          if (siteNotificationsMuted) {
+          if (isSiteNotificationsMutedNow()) {
             const dummy = new pageWin.Object();
             exportFunction(() => {}, dummy, { defineAs: 'close' });
             exportFunction(() => {}, dummy, { defineAs: 'addEventListener' });
@@ -1565,7 +1786,7 @@
         WrappedNotif.prototype = OrigNotif.prototype;
         try {
           Object.defineProperty(WrappedNotif, 'permission', {
-            get: exportFunction(() => (siteNotificationsMuted ? 'default' : OrigNotif.permission || 'granted'), pageWin),
+            get: exportFunction(() => (isSiteNotificationsMutedNow() ? 'default' : OrigNotif.permission || 'granted'), pageWin),
             configurable: true
           });
           if (typeof OrigNotif.requestPermission === 'function') {
@@ -1601,7 +1822,7 @@
           function () {
             try {
               if (
-                siteNotificationsMuted &&
+                isSiteNotificationsMutedNow() &&
                 this &&
                 this.tagName === 'AUDIO' &&
                 Date.now() - lastUserClickInSocialFrameAt > 1500 &&
@@ -7693,6 +7914,10 @@
       const curAutoplayPolicy =
         typeof navigator.getAutoplayPolicy === 'function' ? navigator.getAutoplayPolicy('mediaelement') : 'allowed';
 
+      if (isStandbyBgFrame) {
+        return;
+      }
+
       notifyParent('PM_FRAME_PLAYBACK_STATE', {
         isPlaying,
         currentTime,
@@ -7766,7 +7991,7 @@
       }
 
       // 2. If the user reopened the Sidebar while Background Audio was playing (or opened a YouTube /watch video before clicking inside iframe), seamlessly play audio!
-      if (!isBgAudioFrame && !isTabAudioAutoPaused) {
+      if (!isBgAudioFrame && !isStandbyBgFrame && !isTabAudioAutoPaused) {
         if (sidebarAutoResumeRequested && host.includes('spotify.com')) {
           // Reopened sidebar took over from the hidden bg player: resume here once hydrated (buffered audio in background.html bridges the gap)
           const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
@@ -7856,8 +8081,10 @@
     } catch (_) {}
   }
 
+  window.__pmReportLivePlaybackState = reportLivePlaybackState;
+
   // If user clicks anywhere inside the reopened sidebar while MSE bridge or auto-resume is active, switch to native unmuted audio with trusted gesture!
-  if (!isBgAudioFrame) {
+  if (!isBgAudioFrame && !isStandbyBgFrame) {
     let lastSpPlayBtnEl = null;
     let lastSpPlayBtnClickAt = 0;
 
@@ -8744,6 +8971,77 @@
     if (!msg || msg.target !== 'pocketmail-media-frame') return;
 
     switch (msg.cmd) {
+      case 'ACTIVATE_BG_SPOTIFY_HANDOFF': {
+        isStandbyBgFrame = false;
+        isBgAudioFrame = true;
+        cleanWindowName = 'pm-bg-audio-spotify';
+        try {
+          window.name = 'pm-bg-audio-spotify';
+        } catch (_) {}
+        bgAudioAutoResumed = false;
+        isTabAudioAutoPaused = false;
+        try {
+          if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmPromoteStandbyToBgFrame === 'function') {
+            window.wrappedJSObject.__pmPromoteStandbyToBgFrame('pm-bg-audio-spotify');
+          }
+          if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover === 'function') {
+            window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover(true);
+          }
+        } catch (_) {}
+        reportLivePlaybackState();
+        {
+          const bootStart = Date.now();
+          const fastBgBootTimer = setInterval(() => {
+            if (bgAudioAutoResumed || Date.now() - bootStart > 18000) {
+              clearInterval(fastBgBootTimer);
+              return;
+            }
+            reportLivePlaybackState();
+          }, 80);
+        }
+        break;
+      }
+      case 'PAUSE_BG_SP_MEDIA':
+        if (!isBgAudioFrame || !host.includes('spotify.com')) break;
+        bgAudioAutoResumed = true;
+        setTimeout(() => {
+          try {
+            clickSpotifyToggleOnce(false);
+            document.querySelectorAll('video, audio').forEach((el) => {
+              try {
+                if (!el.paused) el.pause();
+              } catch (_) {}
+            });
+          } catch (_) {}
+        }, 260);
+        break;
+      case 'RESUME_BG_SP_MEDIA':
+        if (!isBgAudioFrame || !host.includes('spotify.com')) break;
+        isTabAudioAutoPaused = false;
+        window.__pmWasAutoPausedByTabAudio = false;
+        try {
+          if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmClearTabAutoPaused === 'function') {
+            window.wrappedJSObject.__pmClearTabAutoPaused();
+          }
+        } catch (_) {}
+        setTimeout(() => {
+          try {
+            if (!clickSpotifyToggleOnce(true)) {
+              if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+                window.wrappedJSObject.__pmEnsureMirrorPlay();
+              }
+            }
+          } catch (_) {}
+        }, 260);
+        break;
+      case 'MARK_USER_GESTURE':
+        lastUserGestureAt = Date.now();
+        try {
+          if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmMarkUserGesture === 'function') {
+            window.wrappedJSObject.__pmMarkUserGesture();
+          }
+        } catch (_) {}
+        break;
       case 'SEEK_SP_MEDIA':
         try {
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__seekActiveSpMediaEl === 'function') {
@@ -9008,7 +9306,7 @@
   }
 
   // Relay custom per-app keyboard shortcuts when focus is inside an embedded FoxHub app iframe
-  if (isFoxHubMediaFrame && !isBgAudioFrame && typeof browser !== 'undefined' && browser.runtime) {
+  if (isFoxHubMediaFrame && !isBgAudioFrame && !isStandbyBgFrame && typeof browser !== 'undefined' && browser.runtime) {
     const formatFrameKeyCombo = (ev) => {
       if (!ev || ev.repeat) return '';
       if (ev.getModifierState && ev.getModifierState('AltGraph')) return '';
@@ -9072,7 +9370,7 @@
   }
 
   // Persistent Scroll Position Save & Instant Restore across FoxHub Close & Reopen
-  if (!isBgAudioFrame && !window.location.search.includes('pm_boot=1')) {
+  if (!isBgAudioFrame && !isStandbyBgFrame && !window.location.search.includes('pm_boot=1')) {
     const SCROLL_STORE_KEY = '__pm_persist_scroll_v1';
     let scrollSaveTimer = null;
     let userScrolledManually = false;

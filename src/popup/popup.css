@@ -3789,6 +3789,90 @@ html[data-sidebar="true"] .pm-card-actions {
   transform: translateX(14px);
 }
 
+.pm-mute-timer-box {
+  margin-top: 6px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pm-mute-timer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.pm-mute-timer-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.6px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.pm-mute-timer-remaining {
+  font-size: 9.8px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.pm-mute-timer-remaining.is-active {
+  color: #FF4757;
+}
+
+.pm-mute-timer-pills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pm-mute-timer-pill {
+  flex: 1;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 7px;
+  border: 1px solid var(--border-color);
+  background: rgba(128, 128, 128, 0.08);
+  color: var(--text-primary);
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.14s ease;
+}
+
+.pm-mute-timer-pill:hover {
+  background: rgba(255, 71, 87, 0.14);
+  border-color: rgba(255, 71, 87, 0.36);
+  color: #FF4757;
+}
+
+.pm-mute-timer-pill.active {
+  background: #FF4757;
+  border-color: #FF4757;
+  color: #ffffff;
+}
+
+.pm-mute-timer-pill.pm-mute-timer-clear {
+  flex: 0 0 auto;
+  padding: 0 8px;
+  background: rgba(128, 128, 128, 0.14);
+  color: var(--text-secondary);
+}
+
+.pm-mute-timer-pill.pm-mute-timer-clear:hover {
+  background: rgba(128, 128, 128, 0.24);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
 /* Customizable Keyboard Shortcuts & Per-App Hotkey Recorders */
 .pm-shortcuts-studio-box {
   margin-top: 10px;
