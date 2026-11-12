@@ -278,6 +278,8 @@
   // and keeps the page's own element silent, so closing/reopening the sidebar never cuts the audio.
   // Only runs inside FoxHub's own frames (pm-media-frame-* / pm-bg-audio-*).
   // ---------------------------------------------------------------------------------------------
+  let spAutoClickInFlight = false;
+
   function installMediaMirrorHooks() {
     const pageWin = window.wrappedJSObject;
     if (!pageWin || typeof exportFunction !== 'function') return;
@@ -310,6 +312,7 @@
     let msCounter = Date.now();
     let isFrameUnloading = false;
     let lastUserGestureAt = 0;
+    let lastPauseControlGestureAt = 0;
     let internalHandoffSeekUntil = 0;
     let lastUserSeekBarScrubAt = 0;
     let lastPlayStartedAt = 0;
@@ -398,12 +401,62 @@
       postBridge('USER_INTERACTION', { isSeekBar });
     };
 
+    const isPauseControlInteraction = (ev) => {
+      if (!ev || spAutoClickInFlight) return 'none';
+      try {
+        if (ev.type === 'keydown') {
+          if (ev.target && ev.target.closest && ev.target.closest('input, textarea, select, [contenteditable="true"]')) {
+            return 'none';
+          }
+          const k = ev.key || '';
+          const c = ev.code || '';
+          if (k === 'MediaPause' || k === 'MediaStop') return 'pause';
+          const isToggleKey =
+            c === 'Space' ||
+            k === ' ' ||
+            k === 'MediaPlayPause' ||
+            (IS_YT && k.toLowerCase() === 'k');
+          if (!isToggleKey) return 'none';
+          if (!IS_YT) {
+            return isSpotifyUiShowingPlaying() ? 'pause' : 'play';
+          }
+          return 'pause';
+        }
+        if (ev.target && ev.target.closest) {
+          if (IS_YT) {
+            const ytMatch = ev.target.closest(
+              '.ytp-play-button, #movie_player video, ytd-shorts video, button[aria-label*="Pause" i], button[aria-label*="Play" i]'
+            );
+            return ytMatch ? 'pause' : 'none';
+          }
+          const spBtn = ev.target.closest('[data-testid="control-button-playpause"], [data-testid="play-button"]');
+          if (!spBtn) return 'none';
+          const aria = (spBtn.getAttribute('aria-label') || '').toLowerCase();
+          if (aria.includes('pause') || aria.includes('stop')) {
+            return 'pause';
+          }
+          if (aria.includes('play')) {
+            return 'play';
+          }
+          return ev.type === 'click' && Date.now() - lastPauseControlGestureAt < 800 ? 'pause' : 'none';
+        }
+      } catch (_) {}
+      return 'none';
+    };
+
     const recordUserGesture = (ev) => {
-      lastUserGestureAt = Date.now();
+      const now = Date.now();
+      lastUserGestureAt = now;
+      const pauseIntent = isPauseControlInteraction(ev);
+      if (pauseIntent === 'pause') {
+        lastPauseControlGestureAt = now;
+      } else if (pauseIntent === 'play' && (ev.type !== 'click' || now - lastPauseControlGestureAt > 800)) {
+        lastPauseControlGestureAt = 0;
+      }
       if (ev && ev.isTrusted && ev.target && ev.target.closest) {
         try {
           if (ev.target.closest('[data-testid="playback-progressbar"], [data-testid="progress-bar"], .playback-bar, .ytp-progress-bar')) {
-            lastUserSeekBarScrubAt = Date.now();
+            lastUserSeekBarScrubAt = now;
           }
         } catch (_) {}
       }
@@ -434,24 +487,19 @@
       'pointerup',
       (ev) => {
         if (ev && ev.isTrusted) {
-          lastUserGestureAt = Date.now();
+          const now = Date.now();
+          lastUserGestureAt = now;
+          if (isPauseControlInteraction(ev)) {
+            lastPauseControlGestureAt = now;
+          }
           if (ev.target && ev.target.closest) {
             try {
               if (ev.target.closest('[data-testid="playback-progressbar"], [data-testid="progress-bar"], .playback-bar, .ytp-progress-bar')) {
-                lastUserSeekBarScrubAt = Date.now();
+                lastUserSeekBarScrubAt = now;
               }
             } catch (_) {}
           }
           notifySidebarUserInteraction(ev);
-        }
-      },
-      { capture: true, passive: true }
-    );
-    window.addEventListener(
-      'wheel',
-      (ev) => {
-        if (ev && ev.isTrusted) {
-          lastUserGestureAt = Date.now();
         }
       },
       { capture: true, passive: true }
@@ -664,6 +712,19 @@
       return { msId, duration, trackTitle };
     };
 
+    const isSpotifyUiShowingPlaying = () => {
+      if (IS_YT) return false;
+      try {
+        const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+        const aria = spToggle ? (spToggle.getAttribute('aria-label') || '').toLowerCase() : '';
+        if (aria.includes('pause') || aria.includes('stop')) return true;
+        if (!spToggle && pageWin.navigator && pageWin.navigator.mediaSession) {
+          return pageWin.navigator.mediaSession.playbackState === 'playing';
+        }
+      } catch (_) {}
+      return false;
+    };
+
     const postBridge = (bridgeType, extra) => {
       if (
         isStandbyBgFrame &&
@@ -676,14 +737,11 @@
       let enriched = extra || {};
       if (bridgeType === 'SYNC_TIME' && !IS_YT) {
         const meta = getSpCurrentTrackMeta(getActiveEl());
-        let spUiStillPlaying = false;
-        if (enriched.paused) {
-          try {
-            const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-            const aria = spToggle ? (spToggle.getAttribute('aria-label') || '').toLowerCase() : '';
-            spUiStillPlaying = aria.includes('pause');
-          } catch (_) {}
-        }
+        const spUiStillPlaying = enriched.explicitPause
+          ? false
+          : enriched.paused
+            ? isSpotifyUiShowingPlaying()
+            : true;
         enriched = Object.assign({ spUiStillPlaying }, meta, enriched);
       }
       const payload = Object.assign(
@@ -992,8 +1050,10 @@
         // Ignore browser-triggered pause during frame unload/hide, seeking, natural track end, or initial readyState=0 setup on a playable route
         if (isFrameUnloading || el.seeking || el.ended) return;
         if (el.readyState === 0 && (!IS_YT || isYtPlayableRoute())) return;
+        const recentExplicitPauseGesture =
+          Date.now() - lastPauseControlGestureAt < 2200 && lastPauseControlGestureAt >= lastPlayStartedAt;
         const userInitiated =
-          (Date.now() - lastUserGestureAt < 2000 && lastUserGestureAt >= lastPlayStartedAt) ||
+          recentExplicitPauseGesture ||
           (IS_YT && !isYtPlayableRoute());
         wantPlay.set(el, false);
         const activeNow = getActiveEl();
@@ -1424,10 +1484,12 @@
         postBridge('SYNC_TIME', { currentTime: el.currentTime, paused: false });
       } else if (mirrorWasPlaying) {
         mirrorWasPlaying = false;
+        const recentExplicitPause =
+          Date.now() - lastPauseControlGestureAt < 2500 && lastPauseControlGestureAt >= lastPlayStartedAt;
         postBridge('SYNC_TIME', {
           currentTime: el ? el.currentTime : 0,
           paused: true,
-          explicitPause: Date.now() - lastUserGestureAt < 2500
+          explicitPause: recentExplicitPause
         });
       }
     };
@@ -1455,15 +1517,21 @@
       });
       postBridge('STOP_PLAYBACK', { currentTime: 0, paused: true, explicitPause: true });
     });
-    define(pageWin, '__pmEnsureMirrorPlay', function () {
+    define(pageWin, '__pmEnsureMirrorPlay', function (allowMediaSession) {
       ensureWebAudioKeepalive();
       mirrorAutoPausedByTab = false;
       if (IS_YT && !isYtPlayableRoute()) return false;
       const el = getActiveEl();
+      if (allowMediaSession && !IS_YT && (!el || el.paused) && typeof spMediaSessionHandlers.play === 'function') {
+        try {
+          spMediaSessionHandlers.play();
+        } catch (_) {}
+      }
       if (el && el.paused && !el.ended) {
         try {
           applyPendingYtSeek(el);
-          el.wrappedJSObject.play();
+          const p = el.wrappedJSObject.play();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
         } catch (_) {}
       }
       return Boolean(el);
@@ -1531,10 +1599,15 @@
           return 'playing';
         }
         const localDevId = resolveLocalSpotifyDeviceId();
+        const hasLocalStreamAttached = Boolean(el && (el.src || el.mediaKeys));
+        const isActiveOnDifferentDevice = Boolean(
+          spConnectState.activeDeviceId && localDevId && spConnectState.activeDeviceId !== localDevId
+        );
         if (
           forceTransfer &&
           localDevId &&
           spConnectState.headers.authorization &&
+          (!hasLocalStreamAttached || isActiveOnDifferentDevice) &&
           Date.now() - spConnectState.lastTransferAt > 2400
         ) {
           spConnectState.lastTransferAt = Date.now();
@@ -5216,10 +5289,31 @@
 
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
-        closeBtn.textContent = '✕';
         closeBtn.title = 'Dismiss';
         closeBtn.style.cssText =
-          'background:transparent;border:none;color:#aaa;cursor:pointer;font-size:14px;padding:0 4px;line-height:1;';
+          'background:transparent;border:none;color:#aaa;cursor:pointer;padding:2px 4px;line-height:1;display:inline-flex;align-items:center;justify-content:center;';
+        const closeSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        closeSvg.setAttribute('width', '13');
+        closeSvg.setAttribute('height', '13');
+        closeSvg.setAttribute('viewBox', '0 0 24 24');
+        closeSvg.setAttribute('fill', 'none');
+        closeSvg.setAttribute('stroke', 'currentColor');
+        closeSvg.setAttribute('stroke-width', '2.4');
+        closeSvg.setAttribute('stroke-linecap', 'round');
+        closeSvg.setAttribute('stroke-linejoin', 'round');
+        const closeLine1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        closeLine1.setAttribute('x1', '18');
+        closeLine1.setAttribute('y1', '6');
+        closeLine1.setAttribute('x2', '6');
+        closeLine1.setAttribute('y2', '18');
+        const closeLine2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        closeLine2.setAttribute('x1', '6');
+        closeLine2.setAttribute('y1', '6');
+        closeLine2.setAttribute('x2', '18');
+        closeLine2.setAttribute('y2', '18');
+        closeSvg.appendChild(closeLine1);
+        closeSvg.appendChild(closeLine2);
+        closeBtn.appendChild(closeSvg);
         closeBtn.addEventListener('click', () => {
           if (drmPollTimer) {
             clearInterval(drmPollTimer);
@@ -7665,7 +7759,6 @@
   let activeMseMediaEl = null;
   let sidebarAutoResumeRequested = false;
   let sidebarAutoResumeRequestedAt = 0;
-  let spAutoClickInFlight = false;
   let isTabAudioAutoPaused = false;
   let spTabPauseVerifyTimer = null;
   let lastSpotifyAutoResumeClickAt = 0;
@@ -7746,6 +7839,17 @@
       }
     }
     const all = Array.from(document.querySelectorAll('video, audio'));
+    const audiblePlaying = all.find(
+      (el) =>
+        !el.paused &&
+        !el.ended &&
+        !el.muted &&
+        Number(el.volume) > 0 &&
+        el.mozHasAudio !== false &&
+        el.readyState >= 1 &&
+        !el.closest('ytd-video-preview, #video-preview, ytd-inline-preview-player, [hidden]')
+    );
+    if (audiblePlaying) return audiblePlaying;
     const playing = all.find(
       (el) =>
         !el.paused &&
@@ -7877,7 +7981,11 @@
       const mediaEl = host.includes('spotify.com') ? null : getActiveMediaElement();
       if (mediaEl) {
         currentTime = Math.floor(mediaEl.currentTime || 0);
-        if (!mediaEl.paused && !mediaEl.ended) {
+        const isAudibleMediaEl =
+          isAudioMirrorActive() ||
+          bgAudioMseBridgeStarted ||
+          (!mediaEl.muted && Number(mediaEl.volume) > 0 && mediaEl.mozHasAudio !== false);
+        if (!mediaEl.paused && !mediaEl.ended && isAudibleMediaEl) {
           isPlaying = true;
         } else if (!isTabAudioAutoPaused && bgAudioMseBridgeStarted && mediaEl.paused && !mediaEl.ended && mediaEl.readyState >= 2) {
           // Keep background bridge video playing if the page's UI framework transiently paused it during hydration
@@ -9126,23 +9234,43 @@
         }, 260);
         break;
       case 'RESUME_BG_SP_MEDIA':
-        if (!isBgAudioFrame || !host.includes('spotify.com')) break;
-        isTabAudioAutoPaused = false;
+        if (!host.includes('spotify.com') || isTabAudioAutoPaused) break;
         window.__pmWasAutoPausedByTabAudio = false;
+        try {
+          if (typeof browser !== 'undefined' && browser.runtime && typeof browser.runtime.sendMessage === 'function') {
+            browser.runtime
+              .sendMessage({
+                type: 'LOG_CONTENT_AUDIO_DIAG',
+                event: 'frame-resume-nudge',
+                details: { isBgAudioFrame }
+              })
+              .catch(() => {});
+          }
+        } catch (_) {}
         try {
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmClearTabAutoPaused === 'function') {
             window.wrappedJSObject.__pmClearTabAutoPaused();
           }
         } catch (_) {}
         setTimeout(() => {
+          if (isTabAudioAutoPaused) return;
           try {
-            if (!clickSpotifyToggleOnce(true)) {
-              if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
-                window.wrappedJSObject.__pmEnsureMirrorPlay();
-              }
+            clickSpotifyToggleOnce(true);
+            let needMirrorPlay = true;
+            if (window.wrappedJSObject && typeof window.wrappedJSObject.__getSpDiag === 'function') {
+              try {
+                const rawD = window.wrappedJSObject.__getSpDiag();
+                const d = rawD ? JSON.parse(rawD) : null;
+                if (d && !d.paused && !d.ended) {
+                  needMirrorPlay = false;
+                }
+              } catch (_) {}
+            }
+            if (needMirrorPlay && window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+              window.wrappedJSObject.__pmEnsureMirrorPlay(true);
             }
           } catch (_) {}
-        }, 260);
+        }, 120);
         break;
       case 'MARK_USER_GESTURE':
         lastUserGestureAt = Date.now();
@@ -9279,28 +9407,60 @@
               (isBgAudioFrame && !bgAudioAutoResumed)
           );
           window.__pmWasAutoPausedByTabAudio = false;
+          try {
+            if (typeof browser !== 'undefined' && browser.runtime && typeof browser.runtime.sendMessage === 'function') {
+              browser.runtime
+                .sendMessage({
+                  type: 'LOG_CONTENT_AUDIO_DIAG',
+                  event: 'frame-tab-auto-resume',
+                  details: { host, isBgAudioFrame, shouldResume }
+                })
+                .catch(() => {});
+            }
+          } catch (_) {}
           if (shouldResume) {
             let clickedSpotifyPlay = false;
             if (host.includes('spotify.com')) {
               clickedSpotifyPlay = clickSpotifyToggleOnce(true);
-              spTabPauseVerifyTimer = setTimeout(() => {
+              if (!clickedSpotifyPlay) {
+                try {
+                  if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+                    window.wrappedJSObject.__pmEnsureMirrorPlay(true);
+                  }
+                } catch (_) {}
+              }
+              const verifySpotifyResumed = (allowLateRetryClick) => {
                 if (isTabAudioAutoPaused) return;
                 try {
                   const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
                   const aria = spToggle ? (spToggle.getAttribute('aria-label') || '').toLowerCase() : '';
-                  const isAlreadyPlaying = aria.includes('pause') || aria.includes('stop');
-                  if (!isAlreadyPlaying) {
-                    if (!clickedSpotifyPlay) {
-                      clickSpotifyToggleOnce(true);
-                    }
-                    if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
-                      window.wrappedJSObject.__pmEnsureMirrorPlay();
+                  const isUiPlaying = aria.includes('pause') || aria.includes('stop');
+                  if (!isUiPlaying && (!clickedSpotifyPlay || allowLateRetryClick)) {
+                    if (clickSpotifyToggleOnce(true)) {
+                      clickedSpotifyPlay = true;
                     }
                   }
+                  let diagPaused = true;
+                  if (window.wrappedJSObject && typeof window.wrappedJSObject.__getSpDiag === 'function') {
+                    try {
+                      const rawD = window.wrappedJSObject.__getSpDiag();
+                      const d = rawD ? JSON.parse(rawD) : null;
+                      if (d && !d.paused && !d.ended) {
+                        diagPaused = false;
+                      }
+                    } catch (_) {}
+                  }
+                  if (diagPaused && window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+                    window.wrappedJSObject.__pmEnsureMirrorPlay(true);
+                  }
                 } catch (_) {}
-              }, clickedSpotifyPlay ? 450 : 360);
+              };
+              spTabPauseVerifyTimer = setTimeout(() => {
+                verifySpotifyResumed(false);
+                spTabPauseVerifyTimer = setTimeout(() => verifySpotifyResumed(true), 450);
+              }, 220);
             } else if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
-              window.wrappedJSObject.__pmEnsureMirrorPlay();
+              window.wrappedJSObject.__pmEnsureMirrorPlay(true);
             }
             document.querySelectorAll('video, audio').forEach((el) => {
               try {

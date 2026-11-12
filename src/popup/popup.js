@@ -5307,6 +5307,120 @@
     window.__pmCopyAudioDiagnostics = copyAudioDiagnosticsToClipboard;
     document.getElementById('btn-copy-audio-diagnostics')?.addEventListener('click', copyAudioDiagnosticsToClipboard);
 
+    let liveAudioLogTimer = null;
+    const renderLiveAudioDiagnosticsPanel = async () => {
+      const panel = document.getElementById('pm-live-audio-log-panel');
+      if (!panel || panel.classList.contains('hidden')) {
+        if (liveAudioLogTimer) {
+          clearInterval(liveAudioLogTimer);
+          liveAudioLogTimer = null;
+        }
+        return;
+      }
+      if (!panel.offsetParent && typeof window.__pmForceRenderAudioLog !== 'boolean') {
+        return;
+      }
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'GET_AUDIO_DIAGNOSTICS' });
+        const diag = res && res.diagnostics ? res.diagnostics : null;
+        const frag = document.createDocumentFragment();
+
+        const summaryRow = document.createElement('div');
+        summaryRow.style.cssText =
+          'padding-bottom:5px;margin-bottom:5px;border-bottom:1px solid rgba(255,255,255,0.1);color:#82aaff;font-weight:600;word-break:break-word;';
+        if (diag) {
+          const spPlayer = diag.activePlayers && diag.activePlayers.spotify ? diag.activePlayers.spotify : null;
+          const nxPlayer = diag.nextPlayers && diag.nextPlayers.spotify ? diag.nextPlayers.spotify : null;
+          const spSummary = spPlayer
+            ? `sp#${spPlayer.id}(ms=${spPlayer.msId} t=${spPlayer.currentTime}s paused=${spPlayer.paused} lic=${spPlayer.hasLicense} buf=${(spPlayer.buffered || []).join(',') || 'empty'})`
+            : 'none';
+          const nxSummary = nxPlayer ? ` | next=sp#${nxPlayer.id}(ms=${nxPlayer.msId} lic=${nxPlayer.hasLicense})` : '';
+          const waState = diag.keepalive ? diag.keepalive.webAudioState : 'n/a';
+          summaryRow.textContent = `Audible: ${diag.audibleAppId || 'none'} | Active: ${spSummary}${nxSummary} | WebAudio: ${waState} | TabAutoPause: ${Boolean(diag.isAutoPausedByTabAudio)}`;
+        } else {
+          summaryRow.textContent = 'Diagnostics snapshot unavailable.';
+        }
+        frag.appendChild(summaryRow);
+
+        const events = diag && Array.isArray(diag.recentEvents) ? diag.recentEvents.slice().reverse() : [];
+        if (events.length === 0) {
+          const emptyEl = document.createElement('div');
+          emptyEl.style.color = '#8b95a5';
+          emptyEl.textContent = 'No audio events recorded yet.';
+          frag.appendChild(emptyEl);
+        } else {
+          events.slice(0, 80).forEach((ev) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'padding:1.5px 0;border-bottom:1px solid rgba(255,255,255,0.04);word-break:break-word;';
+
+            const timeSpan = document.createElement('span');
+            timeSpan.style.color = '#7f8c98';
+            const isoStr = typeof ev.iso === 'string' && ev.iso.includes('T') ? ev.iso.split('T')[1].replace('Z', '') : '';
+            timeSpan.textContent = `${isoStr || String(ev.ts || '')} `;
+
+            const evName = String(ev.event || 'event');
+            const nameSpan = document.createElement('span');
+            nameSpan.style.fontWeight = '700';
+            if (/error|stall|fail|abort|emptied|waiting/i.test(evName)) {
+              nameSpan.style.color = '#ff6b6b';
+            } else if (/pause|stop/i.test(evName) && !/ignore|suppress|clear|resume/i.test(evName)) {
+              nameSpan.style.color = '#ffb454';
+            } else if (/ignore|suppress|hold/i.test(evName)) {
+              nameSpan.style.color = '#c792ea';
+            } else {
+              nameSpan.style.color = '#1ed760';
+            }
+            nameSpan.textContent = `[${evName}] `;
+
+            const detailParts = [];
+            Object.keys(ev).forEach((k) => {
+              if (k === 'ts' || k === 'iso' || k === 'event') return;
+              const val = ev[k];
+              detailParts.push(`${k}=${typeof val === 'object' ? JSON.stringify(val) : String(val)}`);
+            });
+            const detailSpan = document.createElement('span');
+            detailSpan.style.color = '#d6deeb';
+            detailSpan.textContent = detailParts.join(' ');
+
+            row.appendChild(timeSpan);
+            row.appendChild(nameSpan);
+            row.appendChild(detailSpan);
+            frag.appendChild(row);
+          });
+        }
+
+        panel.replaceChildren(frag);
+      } catch (_) {}
+    };
+    window.__pmRenderLiveAudioDiagnosticsPanel = renderLiveAudioDiagnosticsPanel;
+
+    document.getElementById('btn-toggle-audio-log')?.addEventListener('click', () => {
+      const panel = document.getElementById('pm-live-audio-log-panel');
+      const clearBtn = document.getElementById('btn-clear-audio-log');
+      const lbl = document.getElementById('lbl-toggle-audio-log');
+      if (!panel) return;
+      const willShow = panel.classList.contains('hidden');
+      panel.classList.toggle('hidden', !willShow);
+      clearBtn?.classList.toggle('hidden', !willShow);
+      if (lbl) lbl.textContent = willShow ? 'Hide Live Log' : 'View Live Log';
+      if (liveAudioLogTimer) {
+        clearInterval(liveAudioLogTimer);
+        liveAudioLogTimer = null;
+      }
+      if (willShow) {
+        renderLiveAudioDiagnosticsPanel();
+        liveAudioLogTimer = setInterval(renderLiveAudioDiagnosticsPanel, 1000);
+      }
+    });
+
+    document.getElementById('btn-clear-audio-log')?.addEventListener('click', async () => {
+      try {
+        await browser.runtime.sendMessage({ type: 'CLEAR_AUDIO_DIAGNOSTICS' });
+        await renderLiveAudioDiagnosticsPanel();
+        showToast('Cleared audio diagnostics log');
+      } catch (_) {}
+    });
+
     document.querySelectorAll('[data-tab-audio-mode]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const nextMode = btn.getAttribute('data-tab-audio-mode') || 'pause-resume';
@@ -7063,6 +7177,17 @@
             {
               target: 'pocketmail-media-frame',
               cmd: 'SKIP_NEXT_SP_TRACK'
+            },
+            '*'
+          );
+        } catch (_) {}
+      } else if (msg.type === 'PM_RESUME_SIDEBAR_SP') {
+        const spEntry = mediaFramePool.get(msg.appId || 'spotify');
+        try {
+          spEntry?.frame?.contentWindow?.postMessage(
+            {
+              target: 'pocketmail-media-frame',
+              cmd: 'RESUME_BG_SP_MEDIA'
             },
             '*'
           );

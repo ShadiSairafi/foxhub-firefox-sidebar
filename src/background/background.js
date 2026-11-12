@@ -1703,6 +1703,10 @@ let lastAlarmWakePulseAt = 0;
 let alarmWakePulseCount = 0;
 let lastHeartbeatBroadcastAt = 0;
 let heartbeatBroadcastCount = 0;
+let bgWebAudioKeepaliveCtx = null;
+let bgWebAudioGainNode = null;
+let bgWebAudioOscNode = null;
+const lastLoggedDrainIgnoreMap = new Map(); // tabId -> stoppedAt already logged
 let bgSpInstanceCounter = 0;
 let standbySpotifyPrewarmTimer = null;
 let pendingShortcutLaunch = null; // { appId, openMode, ts }
@@ -1761,6 +1765,7 @@ function summarizeSpInstanceDiag(sp) {
   return {
     id: sp.id,
     appId: sp.appId,
+    msId: sp.msId || 0,
     sourceType: sp.sourceType,
     isStaging: Boolean(sp.isStaging),
     isNextPreload: Boolean(sp.isNextPreload),
@@ -2410,6 +2415,7 @@ function promoteNextSpPlayer(appId, initialTargetTime = 0) {
   nextSp.isStaging = false;
   nextSp.isNextPreload = false;
   nextSp.awaitingBgFrameHandoff = false;
+  nextSp.lastTimeAdvanceAt = Date.now();
   nextSp.desiredVolume = activeSp && activeSp.desiredVolume > 0 ? activeSp.desiredVolume : 1.0;
   nextSp.desiredMuted = Boolean(activeSp && activeSp.desiredMuted);
   if (initialTargetTime > 0) {
@@ -2614,6 +2620,7 @@ function syncSpInstanceTimeAndPlay(sp, forceSeek = false, isExplicitUserScrub = 
       return;
     }
     if (!sp.isStaging && !sp.remotePaused) {
+      ensureBgWebAudioKeepalive();
       sp.lastPlayedAt = Date.now();
       sp.videoEl.muted = Boolean(sp.desiredMuted);
       if (sp.desiredVolume > 0) {
@@ -3319,6 +3326,15 @@ function initSpPlayerInstance(sp) {
             sourceType: sp.sourceType,
             error: err
           });
+        }],
+        ['encrypted', (ev) => {
+          if (sp.disposed || sp.isClear || !ev || !ev.initData) return;
+          const initBuf = toLocalArrayBuffer(ev.initData);
+          if (!initBuf) return;
+          const initDataType = String(ev.initDataType || 'cenc');
+          recordRecentSpGenReq(sp.appId, initDataType, initBuf);
+          sp.pendingGenReqs.push({ initDataType, initData: initBuf });
+          processSpInstanceGenReqs(sp);
         }]
       ];
 
@@ -3404,6 +3420,16 @@ function ensureBgSpEmePlayer(appId, mime = 'audio/mp4; codecs="mp4a.40.2"', newM
   if (newMsId && !sp.msId) {
     sp.msId = newMsId;
   } else if (newMsId && sp.msId && newMsId !== sp.msId) {
+    // If this msId was already staged in bgNextSpPlayers (Song 2 preload), NEVER create a separate init-less player!
+    const existingNx = appId === 'spotify' ? bgNextSpPlayers.get(appId) : null;
+    if (existingNx && !existingNx.disposed && existingNx.msId === newMsId) {
+      existingNx.sourceType = sourceType;
+      if (isSpActivelyPlayingCurrentTrack(sp)) {
+        return initSpPlayerInstance(existingNx);
+      }
+      promoteNextSpPlayer(appId, 0);
+      return initSpPlayerInstance(existingNx);
+    }
     // Gapless Preload Guard: if Spotify Harmony creates a second MediaSource ~20s before Song 1 ends,
     // stage Song 2 in bgNextSpPlayers instead of killing Song 1 early!
     if (appId === 'spotify' && isSpActivelyPlayingCurrentTrack(sp)) {
@@ -3845,6 +3871,29 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       }
     } else {
       const curSp = bgSpEmePlayers.get(appId);
+      const existingNx = appId === 'spotify' ? bgNextSpPlayers.get(appId) : null;
+      if (existingNx && !existingNx.disposed && data.msId && existingNx.msId === data.msId) {
+        existingNx.sourceType = sourceType;
+        existingNx.queue.push({ type: 'append', chunk: chunkBuf, timestampOffset: data.timestampOffset });
+        drainSpInstanceQueue(existingNx);
+        const curFinishedOrNearEnd =
+          !curSp ||
+          curSp.disposed ||
+          !curSp.videoEl ||
+          curSp.videoEl.ended ||
+          (getSpBufferedEnd(curSp) > 2 &&
+            (Number(curSp.videoEl.currentTime) || 0) >= getSpBufferedEnd(curSp) - 0.12);
+        if (
+          curFinishedOrNearEnd &&
+          existingNx.hasLicense &&
+          existingNx.sb &&
+          existingNx.sb.buffered &&
+          existingNx.sb.buffered.length > 0
+        ) {
+          promoteNextSpPlayer(appId, 0);
+        }
+        return;
+      }
       if (
         appId === 'spotify' &&
         curSp &&
@@ -4250,10 +4299,6 @@ setInterval(() => {
 }, 400);
 
 // Web Audio Keepalive Context: maintains continuous IsPlayingAudio() Gecko budget exemption
-let bgWebAudioKeepaliveCtx = null;
-let bgWebAudioGainNode = null;
-let bgWebAudioOscNode = null;
-
 function ensureBgWebAudioKeepalive() {
   try {
     if (bgWebAudioKeepaliveCtx && bgWebAudioKeepaliveCtx.state !== 'closed') {
@@ -5637,6 +5682,22 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       });
     }
 
+    case 'CLEAR_AUDIO_DIAGNOSTICS': {
+      bgAudioDiagLog.length = 0;
+      logAudioDiag('diag-log-cleared');
+      return Promise.resolve({
+        ok: true,
+        diagnostics: buildAudioDiagnosticsSnapshot()
+      });
+    }
+
+    case 'LOG_CONTENT_AUDIO_DIAG': {
+      if (msg.event) {
+        logAudioDiag(String(msg.event), msg.details && typeof msg.details === 'object' ? msg.details : {});
+      }
+      return Promise.resolve({ ok: true });
+    }
+
     case 'EXTERNAL_TAB_MEDIA_PLAYING': {
       if (sender && sender.tab && isExternalBrowserTab(sender.tab)) {
         const tid = sender.tab.id;
@@ -6018,17 +6079,30 @@ async function checkExternalTabAudioState() {
         continue;
       }
       const stoppedAt = typeof tid === 'number' ? recentlyStoppedMediaTabMap.get(tid) || 0 : 0;
-      if (stoppedAt && Date.now() - stoppedAt < 2400) {
+      if (stoppedAt && Date.now() - stoppedAt >= 30000) {
+        recentlyStoppedMediaTabMap.delete(tid);
+        lastLoggedDrainIgnoreMap.delete(tid);
+      } else if (stoppedAt && Date.now() - stoppedAt < 20000) {
+        // Windows WASAPI / Cubeb keeps tab.audible === true for 2.5s–6.5s+ after pausing a <video>/<audio>!
+        // Verify DOM media state throughout the full 20s OS drain window so Spotify never re-pauses 5s after resuming.
         const mediaCheck = await Promise.race([
           browser.tabs.sendMessage(tid, { type: 'CHECK_TAB_HAS_ACTIVE_MEDIA' }).catch(() => null),
-          new Promise((resolve) => setTimeout(() => resolve(null), 180))
+          new Promise((resolve) => setTimeout(() => resolve(null), 220))
         ]);
         if (!(mediaCheck && mediaCheck.hasActiveMedia)) {
           knownActiveMediaTabIds.delete(tid);
           silentTabHoldSince.delete(tid);
+          if (lastLoggedDrainIgnoreMap.get(tid) !== stoppedAt) {
+            lastLoggedDrainIgnoreMap.set(tid, stoppedAt);
+            logAudioDiag('tab-audible-drain-ignored', {
+              tabId: tid,
+              msSinceStopped: Date.now() - stoppedAt
+            });
+          }
           continue;
         }
         recentlyStoppedMediaTabMap.delete(tid);
+        lastLoggedDrainIgnoreMap.delete(tid);
       }
       externalAudible.push(t);
     }

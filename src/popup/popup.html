@@ -836,11 +836,22 @@
             </div>
             <div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--border-color);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
               <span style="font-size:10.5px;color:var(--text-muted);">Live MSE / Widevine &amp; Tab-Audio Event Log</span>
-              <button type="button" id="btn-copy-audio-diagnostics" class="pm-btn-xs pm-btn-secondary" title="Copy live Spotify, MSE/Widevine buffer &amp; tab-audio diagnostics JSON to clipboard" style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-size:10.8px;">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                <span>Copy Audio Diagnostics</span>
-              </button>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <button type="button" id="btn-toggle-audio-log" class="pm-btn-xs pm-btn-secondary" title="Open live real-time Spotify, MSE/Widevine &amp; tab-audio event viewer" style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-size:10.8px;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                  <span id="lbl-toggle-audio-log">View Live Log</span>
+                </button>
+                <button type="button" id="btn-clear-audio-log" class="pm-btn-xs pm-btn-secondary hidden" title="Clear recorded audio diagnostic events" style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;font-size:10.8px;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                  <span>Clear</span>
+                </button>
+                <button type="button" id="btn-copy-audio-diagnostics" class="pm-btn-xs pm-btn-secondary" title="Copy live Spotify, MSE/Widevine buffer &amp; tab-audio diagnostics JSON to clipboard" style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-size:10.8px;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                  <span>Copy Audio Diagnostics</span>
+                </button>
+              </div>
             </div>
+            <div id="pm-live-audio-log-panel" class="hidden" style="margin-top:8px;max-height:215px;overflow-y:auto;background:rgba(10,12,18,0.94);border:1px solid var(--border-color);border-radius:8px;padding:7px 9px;font-family:Consolas,ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.2px;line-height:1.45;color:#d6deeb;"></div>
           </div>
 
           <div class="pm-control-card">
