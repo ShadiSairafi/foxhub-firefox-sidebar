@@ -3104,7 +3104,6 @@
 
   function isAppAllowedForBgAudio(appId) {
     if (!appId || appId === 'pocketmail') return false;
-    if ((appSettings.persistenceMode || 'selected') === 'eco') return false;
     if (appSettings.keepAudioPlayingWhenClosed === false) return false;
     const allowedList = Array.isArray(appSettings.bgAudioAppIds)
       ? appSettings.bgAudioAppIds
@@ -3133,14 +3132,16 @@
 
   function syncPersistentSessionToBackground(appId, url, playback = null, explicitMailClick = false) {
     if (IS_POPOUT_VIEW) return;
-    if ((appSettings.persistenceMode || 'selected') === 'eco') return;
-    if (appId && isAppPersistent(appId)) {
-      knownOpenPersistentIds.add(appId);
+    if ((appSettings.persistenceMode || 'selected') === 'eco' && !isAppAllowedForBgAudio(appId)) return;
+    if (appId && (isAppPersistent(appId) || isAppAllowedForBgAudio(appId))) {
+      if (isAppPersistent(appId)) {
+        knownOpenPersistentIds.add(appId);
+      }
       if (url && !isTransientAuthOrBootUrl(url)) {
         hibernatedAppUrls.set(appId, url);
       }
     }
-    if (activeRailAppId && activeRailAppId !== 'pocketmail' && isAppPersistent(activeRailAppId)) {
+    if (activeRailAppId && activeRailAppId !== 'pocketmail' && (isAppPersistent(activeRailAppId) || isAppAllowedForBgAudio(activeRailAppId))) {
       appSettings.persistentLastActiveAppId = activeRailAppId;
     } else if (activeRailAppId === 'pocketmail' && explicitMailClick) {
       appSettings.persistentLastActiveAppId = 'pocketmail';
@@ -3230,7 +3231,7 @@
       iframe.setAttribute('allowfullscreen', 'true');
       iframe.setAttribute(
         'allow',
-        'autoplay; clipboard-write; encrypted-media; picture-in-picture; microphone; camera; fullscreen *'
+        'autoplay *; encrypted-media *; clipboard-write *; picture-in-picture *; microphone; camera; fullscreen *'
       );
 
       entry = {
@@ -3912,8 +3913,12 @@
 
     const chkKeepAudio = document.getElementById('chk-keep-audio-closed');
     if (chkKeepAudio) {
-      chkKeepAudio.checked = appSettings.keepAudioPlayingWhenClosed !== false;
-      chkKeepAudio.disabled = pMode === 'eco';
+      chkKeepAudio.checked = pMode !== 'eco' && appSettings.keepAudioPlayingWhenClosed !== false;
+      chkKeepAudio.disabled = false;
+      chkKeepAudio.title =
+        pMode === 'eco'
+          ? 'Eco Mode currently pauses background audio. Click to switch to Selected Apps and enable background playback.'
+          : 'Keep Spotify & YouTube audio playing even after closing the sidebar for full screen space';
     }
 
     const curTabAudioMode = getEffectiveTabAudioBehavior(appSettings);
@@ -3933,7 +3938,7 @@
       if (pMode === 'eco') {
         strongEl.textContent = 'Resource Impact (Eco Mode): ';
         descSpan.textContent =
-          'Uses 0 MB extra RAM and zero CPU/GPU when closed. Closing the sidebar unloads apps and resets to Mail Inbox.';
+          'Uses 0 MB extra RAM and zero CPU/GPU when closed. All apps are unloaded and background audio is paused when closed. Switch to Selected Apps to keep Spotify or YouTube playing.';
       } else if (pMode === 'selected') {
         strongEl.textContent = 'Resource Impact (Selected Apps): ';
         descSpan.textContent =
@@ -4005,9 +4010,45 @@
       ? appSettings.bgAudioAppIds
       : ['spotify', 'youtube'];
     if (bgAudioPickerWrap && bgAudioPickerEl) {
-      const showBgAudioPicker = pMode !== 'eco' && appSettings.keepAudioPlayingWhenClosed !== false;
+      const showBgAudioPicker = pMode === 'eco' || appSettings.keepAudioPlayingWhenClosed !== false;
       bgAudioPickerWrap.classList.toggle('hidden', !showBgAudioPicker);
       bgAudioPickerEl.replaceChildren();
+
+      if (pMode === 'eco') {
+        const ecoBanner = document.createElement('div');
+        ecoBanner.className = 'pm-eco-guardrail-banner';
+        ecoBanner.style.cssText =
+          'grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:rgba(217,107,67,0.1);border:1px solid rgba(217,107,67,0.28);border-radius:8px;margin-bottom:6px;font-size:11px;color:var(--text-secondary);';
+
+        const bannerLeft = document.createElement('div');
+        bannerLeft.style.cssText = 'display:flex;align-items:center;gap:7px;min-width:0;';
+        const leafIcon = mediaApi.createSubViewIcon('eco-leaf', 14);
+        leafIcon.style.cssText = 'flex-shrink:0;color:var(--accent);';
+        const bannerText = document.createElement('span');
+        bannerText.textContent = 'Eco Mode unloads all apps when closed. To enable background audio, switch to Selected Apps.';
+        bannerLeft.appendChild(leafIcon);
+        bannerLeft.appendChild(bannerText);
+
+        const switchBtn = document.createElement('button');
+        switchBtn.type = 'button';
+        switchBtn.className = 'pm-btn-xs pm-btn-accent';
+        switchBtn.style.cssText = 'flex-shrink:0;padding:3px 7px;font-size:10.5px;font-weight:600;cursor:pointer;';
+        switchBtn.textContent = 'Enable';
+        switchBtn.addEventListener('click', async () => {
+          await saveSettingsPatch({
+            persistenceMode: 'selected',
+            keepAudioPlayingWhenClosed: true,
+            persistentLastActiveAppId: activeRailAppId
+          });
+          renderMediaAppsManager();
+          showToast('Switched to Selected Apps — Background audio enabled!');
+        });
+
+        ecoBanner.appendChild(bannerLeft);
+        ecoBanner.appendChild(switchBtn);
+        bgAudioPickerEl.appendChild(ecoBanner);
+      }
+
       const allAppsForBg = [
         ...(mediaApi.getOrderedBuiltInApps ? mediaApi.getOrderedBuiltInApps(appSettings) : mediaApi.BUILTIN_MEDIA_APPS),
         ...(Array.isArray(appSettings.customMediaApps) ? appSettings.customMediaApps : [])
@@ -4039,15 +4080,39 @@
         chip.appendChild(leftWrap);
         chip.appendChild(statusBadge);
         chip.addEventListener('click', async () => {
+          if (pMode === 'eco') {
+            const nextBgAudioIds = Array.from(new Set([...pickedBgAudioIds, app.id]));
+            const nextPersistIds = Array.from(
+              new Set([...(Array.isArray(appSettings.persistentAppIds) ? appSettings.persistentAppIds : []), app.id])
+            );
+            await saveSettingsPatch({
+              persistenceMode: 'selected',
+              keepAudioPlayingWhenClosed: true,
+              bgAudioAppIds: nextBgAudioIds,
+              persistentAppIds: nextPersistIds,
+              persistentLastActiveAppId: activeRailAppId
+            });
+            renderMediaAppsManager();
+            showToast(`${app.name}: Background audio and session memory enabled (Switched to Selected Apps)`);
+            return;
+          }
           const nextBgAudioIds = isAllowed
             ? pickedBgAudioIds.filter((id) => id !== app.id)
             : [...pickedBgAudioIds, app.id];
-          await saveSettingsPatch({ bgAudioAppIds: nextBgAudioIds });
+          const patch = { bgAudioAppIds: nextBgAudioIds };
+          if (!isAllowed) {
+            patch.keepAudioPlayingWhenClosed = true;
+            const curPersist = Array.isArray(appSettings.persistentAppIds) ? appSettings.persistentAppIds : [];
+            if (!curPersist.includes(app.id)) {
+              patch.persistentAppIds = [...curPersist, app.id];
+            }
+          }
+          await saveSettingsPatch(patch);
           renderMediaAppsManager();
           showToast(
             isAllowed
               ? `${app.name}: Background audio when closed turned OFF`
-              : `${app.name}: Background audio when closed turned ON`
+              : `${app.name}: Background audio and session memory enabled!`
           );
         });
         bgAudioPickerEl.appendChild(chip);
@@ -4056,14 +4121,9 @@
 
     const spAutoplayTipEl = document.getElementById('pm-spotify-bg-autoplay-tip');
     if (spAutoplayTipEl) {
-      const pickedIdsForTip = Array.isArray(appSettings.persistentAppIds)
-        ? appSettings.persistentAppIds
-        : [];
-      const isSpotifyPersistent = pMode === 'all' || (pMode === 'selected' && pickedIdsForTip.includes('spotify'));
       const showSpTip =
         pMode !== 'eco' &&
         appSettings.keepAudioPlayingWhenClosed !== false &&
-        isSpotifyPersistent &&
         pickedBgAudioIds.includes('spotify');
       spAutoplayTipEl.classList.toggle('hidden', !showSpTip);
     }
@@ -5175,6 +5235,16 @@
 
     document.getElementById('chk-keep-audio-closed')?.addEventListener('change', async (e) => {
       const enabled = Boolean(e.target.checked);
+      if (enabled && (appSettings.persistenceMode || 'selected') === 'eco') {
+        await saveSettingsPatch({
+          persistenceMode: 'selected',
+          keepAudioPlayingWhenClosed: true,
+          persistentLastActiveAppId: activeRailAppId
+        });
+        renderMediaAppsManager();
+        showToast('Switched from Eco Mode to Selected Apps — Background audio enabled!');
+        return;
+      }
       await saveSettingsPatch({ keepAudioPlayingWhenClosed: enabled });
       renderMediaAppsManager();
       showToast(
@@ -7097,7 +7167,7 @@
           return;
         }
         const mode = appSettings.persistenceMode || 'selected';
-        if (mode === 'eco') return;
+        if (mode === 'eco' && appSettings.keepAudioPlayingWhenClosed === false) return;
 
         const savedUrls = {};
         const playingApps = [];
@@ -7119,10 +7189,12 @@
               }
             } catch (_) {}
           }
-          if (bestUrl && !isTransientAuthOrBootUrl(bestUrl) && isAppPersistent(id)) {
+          if (bestUrl && !isTransientAuthOrBootUrl(bestUrl) && (isAppPersistent(id) || isAppAllowedForBgAudio(id))) {
             savedUrls[id] = bestUrl;
             hibernatedAppUrls.set(id, bestUrl);
-            knownOpenPersistentIds.add(id);
+            if (isAppPersistent(id)) {
+              knownOpenPersistentIds.add(id);
+            }
           }
           if (!isAppAllowedForBgAudio(id)) {
             try {
@@ -7152,14 +7224,30 @@
         });
 
         // Also include any app still playing in background.html (when the user opened onto Mail/Instagram and closed without switching to the media app)
-        new Set([...pendingSidebarAudioTakeoverSet, ...bgMasterAudioSet]).forEach((bgId) => {
+        const bgCandidateIds = new Set([
+          ...pendingSidebarAudioTakeoverSet,
+          ...bgMasterAudioSet,
+          ...(currentAudibleBgAppId ? [currentAudibleBgAppId] : [])
+        ]);
+        bgCandidateIds.forEach((bgId) => {
           if (!addedPlayingIds.has(bgId) && isAppAllowedForBgAudio(bgId)) {
-            const bgUrl = hibernatedAppUrls.get(bgId) || appSettings.persistentSavedAppUrls?.[bgId] || '';
+            const fallbackUrl =
+              bgId === 'spotify'
+                ? 'https://open.spotify.com/'
+                : bgId === 'youtube'
+                  ? 'https://www.youtube.com/'
+                  : window.PocketMailMediaApps?.getAppById(bgId, appSettings)?.defaultUrl || '';
+            const bgUrl =
+              hibernatedAppUrls.get(bgId) ||
+              appSettings.persistentSavedAppUrls?.[bgId] ||
+              framePlaybackStates.get(bgId)?.resumeUrl ||
+              fallbackUrl;
             if (bgUrl) {
+              addedPlayingIds.add(bgId);
               playingApps.push({
                 appId: bgId,
                 url: bgUrl,
-                title: ''
+                title: framePlaybackStates.get(bgId)?.title || ''
               });
             }
           }
@@ -7433,10 +7521,16 @@
         }
       }
 
-      // Pre-seed hibernatedAppUrls & knownOpenPersistentIds for all persistent apps so clicking them or auto-restoring resumes their exact saved URL/timestamp!
+      // Pre-seed hibernatedAppUrls & knownOpenPersistentIds for all persistent apps and background audio apps
+      // so clicking them, auto-restoring, or closing from Mail resumes their exact saved URL/timestamp!
       const savedMap = appSettings.persistentSavedAppUrls || {};
       Object.entries(savedMap).forEach(([id, savedUrl]) => {
-        if (savedUrl && !isTransientAuthOrBootUrl(savedUrl) && isAppPersistent(id) && !hibernatedAppUrls.has(id)) {
+        if (
+          savedUrl &&
+          !isTransientAuthOrBootUrl(savedUrl) &&
+          (isAppPersistent(id) || isAppAllowedForBgAudio(id)) &&
+          !hibernatedAppUrls.has(id)
+        ) {
           hibernatedAppUrls.set(id, savedUrl);
         }
       });

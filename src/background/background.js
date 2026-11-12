@@ -1791,7 +1791,7 @@ function buildAudioDiagnosticsSnapshot() {
     nextPlayers[id] = summarizeSpInstanceDiag(sp);
   });
   return {
-    version: '2.7.7',
+    version: '2.7.8',
     generatedAt: new Date().toISOString(),
     audibleAppId: getAudibleBgAudioAppId(),
     sidebarPortCount,
@@ -2097,8 +2097,7 @@ function isAppAllowedForPersistence(appId) {
 
 function isAppAllowedForBgAudio(appId) {
   if (!appId || appId === 'pocketmail') return false;
-  const mode = currentSettings.persistenceMode || 'selected';
-  if (mode === 'eco' || currentSettings.keepAudioPlayingWhenClosed === false) return false;
+  if (currentSettings.keepAudioPlayingWhenClosed === false) return false;
   const allowed = Array.isArray(currentSettings.bgAudioAppIds)
     ? currentSettings.bgAudioAppIds
     : ['spotify', 'youtube'];
@@ -2189,6 +2188,13 @@ function removeBgAudioIframeOnly(appId) {
       entry.frame.src = 'about:blank';
     } catch (_) {}
   }
+  try {
+    const domFrames = document.querySelectorAll(`iframe[name="pm-bg-audio-${appId}"]`);
+    for (const f of domFrames) {
+      f.remove();
+      f.src = 'about:blank';
+    }
+  } catch (_) {}
   const st = bgStagingSpPlayers.get(appId);
   if (st && st.sourceType === 'bg') {
     bgStagingSpPlayers.delete(appId);
@@ -2256,6 +2262,10 @@ function createSpPlayerInstance(appId, mime, msId = 0, isStaging = false, source
     targetTime: 0,
     pendingSeekTarget: 0,
     pendingSeekSetAt: 0,
+    pendingSeekIsUserScrub: false,
+    maxObservedCt: 0,
+    isExplicitUserScrub: false,
+    explicitUserScrubUntil: 0,
     trackDuration: 0,
     trackTitle: '',
     desiredVolume: 1.0,
@@ -2401,11 +2411,21 @@ function promoteNextSpPlayer(appId, initialTargetTime = 0) {
   return true;
 }
 
-function syncSpInstanceTimeAndPlay(sp, forceSeek = false) {
+function syncSpInstanceTimeAndPlay(sp, forceSeek = false, isExplicitUserScrub = false) {
   if (!sp || sp.disposed || !sp.videoEl) return;
   try {
+    const isUserScrub = Boolean(
+      forceSeek ||
+      isExplicitUserScrub ||
+      (sp.explicitUserScrubUntil && Date.now() < sp.explicitUserScrubUntil) ||
+      sp.pendingSeekIsUserScrub
+    );
+    const ct = Number(sp.videoEl.currentTime) || 0;
+    if (!sp.maxObservedCt || ct > sp.maxObservedCt) {
+      sp.maxObservedCt = ct;
+    }
+
     if (sp.sb && sp.sb.buffered && sp.sb.buffered.length > 0) {
-      const ct = sp.videoEl.currentTime || 0;
       const inBuffered = isTimeInSpBuffered(sp, ct);
       const bufStart0 = sp.sb.buffered.start(0);
       const bufEnd = getSpBufferedEnd(sp);
@@ -2413,18 +2433,57 @@ function syncSpInstanceTimeAndPlay(sp, forceSeek = false) {
       // 1. Honor explicit user/handoff seek target once its fMP4 segment arrives in SourceBuffer
       if (forceSeek && sp.targetTime >= 0) {
         if (isTimeInSpBuffered(sp, sp.targetTime)) {
-          if (Math.abs(ct - sp.targetTime) > 0.35) {
-            sp.videoEl.currentTime = sp.targetTime;
+          const allowSeek = isUserScrub || sp.targetTime >= ct - 0.05;
+          if (allowSeek) {
+            if (Math.abs(ct - sp.targetTime) > 0.35) {
+              sp.videoEl.currentTime = sp.targetTime;
+              if (isUserScrub) {
+                sp.maxObservedCt = sp.targetTime;
+              }
+            }
+          } else {
+            logAudioDiag('clamp-backward-seek-target', {
+              appId: sp.appId,
+              targetTime: Math.round(sp.targetTime * 100) / 100,
+              ct: Math.round(ct * 100) / 100,
+              maxObservedCt: Math.round((sp.maxObservedCt || 0) * 100) / 100
+            });
           }
           sp.pendingSeekTarget = 0;
+          sp.pendingSeekSetAt = 0;
+          sp.pendingSeekIsUserScrub = false;
+          sp.explicitUserScrubUntil = 0;
         } else {
-          sp.pendingSeekTarget = sp.targetTime;
-          sp.pendingSeekSetAt = Date.now();
+          if (isUserScrub || sp.targetTime >= ct - 0.05) {
+            sp.pendingSeekTarget = sp.targetTime;
+            sp.pendingSeekSetAt = Date.now();
+            sp.pendingSeekIsUserScrub = isUserScrub;
+          } else {
+            sp.pendingSeekTarget = 0;
+            sp.pendingSeekSetAt = 0;
+            sp.pendingSeekIsUserScrub = false;
+          }
         }
       } else if (sp.pendingSeekTarget > 0 && Date.now() - (sp.pendingSeekSetAt || 0) < 8500) {
         if (isTimeInSpBuffered(sp, sp.pendingSeekTarget)) {
-          sp.videoEl.currentTime = sp.pendingSeekTarget;
+          const allowPending = sp.pendingSeekIsUserScrub || isUserScrub || sp.pendingSeekTarget >= ct - 0.05;
+          if (allowPending) {
+            if (Math.abs(ct - sp.pendingSeekTarget) > 0.08) {
+              sp.videoEl.currentTime = sp.pendingSeekTarget;
+              if (sp.pendingSeekIsUserScrub || isUserScrub) {
+                sp.maxObservedCt = sp.pendingSeekTarget;
+              }
+            }
+          } else {
+            logAudioDiag('discard-stale-pending-seek', {
+              appId: sp.appId,
+              pendingSeekTarget: Math.round(sp.pendingSeekTarget * 100) / 100,
+              ct: Math.round(ct * 100) / 100
+            });
+          }
           sp.pendingSeekTarget = 0;
+          sp.pendingSeekSetAt = 0;
+          sp.pendingSeekIsUserScrub = false;
         }
       } else if (!inBuffered) {
         // 2. ONLY snap forward — NEVER jump backwards to an older anchor range!
@@ -2483,10 +2542,17 @@ function syncSpInstanceTimeAndPlay(sp, forceSeek = false) {
         }
       }
     } else if (forceSeek && sp.targetTime > 0) {
-      sp.pendingSeekTarget = sp.targetTime;
-      sp.pendingSeekSetAt = Date.now();
-      if (sp.videoEl.readyState >= 1) {
-        sp.videoEl.currentTime = sp.targetTime;
+      const allowSeek = isUserScrub || sp.targetTime >= ct - 0.05;
+      if (allowSeek) {
+        sp.pendingSeekTarget = sp.targetTime;
+        sp.pendingSeekSetAt = Date.now();
+        sp.pendingSeekIsUserScrub = isUserScrub;
+        if (sp.videoEl.readyState >= 1) {
+          sp.videoEl.currentTime = sp.targetTime;
+          if (isUserScrub) {
+            sp.maxObservedCt = sp.targetTime;
+          }
+        }
       }
     }
     if (!sp.isStaging && isTabAutoPauseEnforced()) {
@@ -2659,22 +2725,67 @@ function promoteStagingSpPlayer(appId, syncFromActive = true) {
       activeSp.trackTitle &&
       stagingSp.trackTitle !== activeSp.trackTitle
   );
+  const activeIsAlive = Boolean(
+    activeSp && activeSp.videoEl && !activeSp.disposed
+  );
   const liveCt =
-    syncFromActive && !isDifferentTrack && activeSp && activeSp.videoEl && !activeSp.disposed
+    syncFromActive && !isDifferentTrack && activeIsAlive
       ? Number(activeSp.videoEl.currentTime) || 0
       : 0;
 
   let shouldForceSeek = false;
   if (liveCt > 0 && isTimeInSpBuffered(stagingSp, liveCt)) {
-    // Zero 5-second rewind: align directly to liveCt!
-    stagingSp.targetTime = liveCt;
-    shouldForceSeek = true;
-    if (!stagingSp.isClear && Math.abs((stagingSp.targetTime || 0) - liveCt) > 0.8) {
-      postSpSeekToSource(appId, stagingSp.sourceType, liveCt, false);
+    // Exact 0.00s alignment: align directly to liveCt at the instant of swap!
+    let exactCt = liveCt;
+    if (stagingSp.sb && stagingSp.sb.buffered) {
+      for (let i = 0; i < stagingSp.sb.buffered.length; i++) {
+        const bStart = stagingSp.sb.buffered.start(i);
+        const bEnd = stagingSp.sb.buffered.end(i);
+        if (liveCt >= bStart - 0.15 && liveCt <= bEnd - 0.02) {
+          exactCt = Math.max(liveCt, bStart);
+          break;
+        }
+      }
+    }
+    stagingSp.targetTime = exactCt;
+    stagingSp.pendingSeekTarget = 0;
+    if (stagingSp.videoEl) {
+      try {
+        stagingSp.videoEl.currentTime = exactCt;
+      } catch (_) {}
+    }
+    shouldForceSeek = false;
+  } else if (activeIsAlive && !isDifferentTrack && liveCt > 0) {
+    // Defend against premature fallback: if activeSp is alive on the same track, NEVER rewind to buffer start!
+    let forwardRange = null;
+    if (stagingSp.sb && stagingSp.sb.buffered) {
+      for (let i = 0; i < stagingSp.sb.buffered.length; i++) {
+        const bStart = stagingSp.sb.buffered.start(i);
+        const bEnd = stagingSp.sb.buffered.end(i);
+        if (bStart > liveCt && bStart - liveCt <= 3.0 && bEnd > bStart + 0.08) {
+          forwardRange = bStart + 0.02;
+          break;
+        }
+      }
+    }
+    if (forwardRange !== null) {
+      stagingSp.targetTime = forwardRange;
+      stagingSp.pendingSeekTarget = 0;
+      if (stagingSp.videoEl) {
+        try {
+          stagingSp.videoEl.currentTime = forwardRange;
+        } catch (_) {}
+      }
+      shouldForceSeek = false;
+    } else {
+      stagingSp.targetTime = liveCt;
+      stagingSp.pendingSeekTarget = 0;
+      shouldForceSeek = false;
     }
   } else if (stagingSp.targetTime > 0 && isTimeInSpBuffered(stagingSp, stagingSp.targetTime)) {
     shouldForceSeek = true;
   } else if (stagingSp.sb && stagingSp.sb.buffered && stagingSp.sb.buffered.length > 0) {
+    // Only fall back to buffer start if starting fresh or on a different track
     stagingSp.targetTime = stagingSp.sb.buffered.start(0) + 0.02;
     shouldForceSeek = true;
   }
@@ -2712,6 +2823,10 @@ function promoteStagingSpPlayer(appId, syncFromActive = true) {
     }
   } else {
     syncSpInstanceTimeAndPlay(stagingSp, shouldForceSeek);
+  }
+
+  if (stagingSp.sourceType === 'sidebar' && bgAudioPool.has(appId)) {
+    removeBgAudioIframeOnly(appId);
   }
 
   if (activeSp && activeSp !== stagingSp) {
@@ -2820,7 +2935,7 @@ function checkAndPromoteStagingSpPlayer(appId) {
       !stagingSp.lastSeekSentAt ||
       (now - stagingSp.lastSeekSentAt > retryDelayMs && confirmedSeeks < 4 && rawAttempts < 12)
     ) {
-      const aheadSec = activeDeadOrNearEnd ? 0 : 0.35;
+      const aheadSec = Math.max(1.5, Math.min(3.0, (now - (stagingSp.licensedAt || now)) * 0.001 + 1.2));
       const sentOk = postSpSeekToSource(appId, stagingSp.sourceType, liveCt + aheadSec, true);
       if (sentOk) {
         stagingSp.lastSeekSentAt = now;
@@ -2829,7 +2944,14 @@ function checkAndPromoteStagingSpPlayer(appId) {
     }
     const maxStagingWaitMs = stagingSp.isClear ? 3500 : 9500;
     const timedOut = stagingSp.licensedAt > 0 && now - stagingSp.licensedAt > maxStagingWaitMs;
-    if (!activeDeadOrNearEnd && !timedOut) {
+    const activeIsPlaying = Boolean(
+      activeSp &&
+        !activeSp.disposed &&
+        activeSp.videoEl &&
+        !activeSp.videoEl.paused &&
+        !activeSp.videoEl.ended
+    );
+    if (activeIsPlaying || (!activeDeadOrNearEnd && !timedOut)) {
       return;
     }
   }
@@ -3251,6 +3373,18 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
   }
 
   if (bt === 'USER_INTERACTION') {
+    if (data.isSeekBar) {
+      const sp = bgSpEmePlayers.get(appId);
+      if (sp) {
+        sp.isExplicitUserScrub = true;
+        sp.explicitUserScrubUntil = Date.now() + 3000;
+      }
+      const st = bgStagingSpPlayers.get(appId);
+      if (st) {
+        st.isExplicitUserScrub = true;
+        st.explicitUserScrubUntil = Date.now() + 3000;
+      }
+    }
     if (sourceType === 'sidebar' && bgAudioPool.has(appId)) {
       const bgPort = emeBridgePorts.get(`bg:${appId}`);
       if (bgPort) {
@@ -3315,7 +3449,11 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       }
       prevSt.updatedAt = Date.now();
     }
-    if (data.href && !data.href.includes('pm_boot=1') && isAppAllowedForPersistence(appId)) {
+    if (
+      data.href &&
+      !data.href.includes('pm_boot=1') &&
+      (isAppAllowedForPersistence(appId) || isAppAllowedForBgAudio(appId))
+    ) {
       if (!currentSettings.persistentSavedAppUrls) currentSettings.persistentSavedAppUrls = {};
       currentSettings.persistentSavedAppUrls[appId] = data.href;
     }
@@ -3417,19 +3555,14 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
         activeSp.remotePaused = false;
       }
       const remBuf = getSpBufferedEnd(activeSp) - (Number(activeSp.videoEl?.currentTime) || 0);
-      if (appId !== 'spotify' || remBuf >= 5.5) {
+      if (appId !== 'spotify') {
         activeSp.retireBgWhenBuffered = false;
         clearTimeout(activeSp.retireBgTimer);
         removeBgAudioIframeOnly(appId);
-      } else if (!activeSp.retireBgWhenBuffered) {
-        activeSp.retireBgWhenBuffered = true;
+      } else {
+        // Defer background iframe retirement for Spotify until stagingSp promotes in checkAndPromoteStagingSpPlayer
+        activeSp.retireBgWhenBuffered = false;
         clearTimeout(activeSp.retireBgTimer);
-        activeSp.retireBgTimer = setTimeout(() => {
-          activeSp.retireBgWhenBuffered = false;
-          if (bgAudioPool.has(appId)) {
-            removeBgAudioIframeOnly(appId);
-          }
-        }, 3800);
       }
     } else {
       removeBgAudioIframeOnly(appId);
@@ -3653,7 +3786,16 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       if (!st) return;
       st.targetTime = Number(data.currentTime) || 0;
       if (Number(data.duration) > 0) st.trackDuration = Number(data.duration);
-      if (data.trackTitle) st.trackTitle = String(data.trackTitle);
+      if (data.trackTitle) {
+        if (st.trackTitle && st.trackTitle !== String(data.trackTitle)) {
+          st.maxObservedCt = 0;
+        }
+        st.trackTitle = String(data.trackTitle);
+      }
+      if (data.isExplicitUserScrub) {
+        st.isExplicitUserScrub = true;
+        st.explicitUserScrubUntil = Date.now() + 3000;
+      }
       if (isTabAutoPauseEnforced() && !data.paused) {
         const stayStopped = getTabAudioBehavior() === 'pause-only';
         st.remotePaused = true;
@@ -3713,7 +3855,18 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
     const sp = bgSpEmePlayers.get(appId);
     if (!sp) return;
     if (Number(data.duration) > 0) sp.trackDuration = Number(data.duration);
-    if (data.trackTitle) sp.trackTitle = String(data.trackTitle);
+    if (data.trackTitle) {
+      if (sp.trackTitle && sp.trackTitle !== String(data.trackTitle)) {
+        sp.maxObservedCt = 0;
+      }
+      sp.trackTitle = String(data.trackTitle);
+    }
+    const isExplicitUserScrub = Boolean(data.isExplicitUserScrub);
+    if (isExplicitUserScrub) {
+      sp.isExplicitUserScrub = true;
+      sp.explicitUserScrubUntil = Date.now() + 3000;
+    }
+    const effectiveForceSeek = Boolean(data.forceSeek && !data.isInternalHandoff);
     if (sourceType === 'sidebar' && sp.sourceType === 'bg' && data.paused && !data.explicitPause) {
       // Ignore passive paused ticks from the newly opened sidebar iframe while background audio is still playing
       return;
@@ -3724,10 +3877,10 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
     }
     if (data.fromSeek && data.paused) {
       // Only honor explicit user/handoff seeks while paused — never snap backwards to an old Spotify server cluster anchor!
-      if (data.forceSeek) {
+      if (effectiveForceSeek) {
         sp.targetTime = Number(data.currentTime) || 0;
         if (sp.videoEl && !sp.videoEl.paused) {
-          syncSpInstanceTimeAndPlay(sp, true);
+          syncSpInstanceTimeAndPlay(sp, true, isExplicitUserScrub);
         }
       } else if (!sp.videoEl || sp.videoEl.paused) {
         sp.targetTime = Number(data.currentTime) || 0;
@@ -3840,7 +3993,7 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
         if (sp.isClear) {
           syncClearMirrorToFrame(sp, Number(data.currentTime) || 0);
         } else {
-          syncSpInstanceTimeAndPlay(sp, Boolean(data.forceSeek));
+          syncSpInstanceTimeAndPlay(sp, effectiveForceSeek, isExplicitUserScrub);
         }
         const bgEntry = bgAudioPool.get(appId);
         const prevSt = liveMediaPlaybackState.get(appId);
@@ -3863,7 +4016,7 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
         if (bgEntry && nextResumeUrl) {
           bgEntry.url = nextResumeUrl;
         }
-        if (nextResumeUrl && isAppAllowedForPersistence(appId)) {
+        if (nextResumeUrl && (isAppAllowedForPersistence(appId) || isAppAllowedForBgAudio(appId))) {
           if (!currentSettings.persistentSavedAppUrls) currentSettings.persistentSavedAppUrls = {};
           currentSettings.persistentSavedAppUrls[appId] = nextResumeUrl;
         }
@@ -3906,17 +4059,29 @@ setInterval(() => {
   }
 }, 250);
 
-// Unthrottled background heartbeat so hidden pm-bg-audio-* frames never get throttled by Gecko's background execution budget
+// Unthrottled background heartbeat broadcast to both bg:* and sidebar:* frames so Gecko never throttles execution budget
 setInterval(() => {
-  if (bgAudioPool.size === 0) return;
-  bgAudioPool.forEach((_, appId) => {
-    const p = emeBridgePorts.get(`bg:${appId}`);
-    if (p) {
-      try {
-        p.postMessage({ cmd: 'BG_HEARTBEAT_TICK', ts: Date.now() });
-      } catch (_) {}
+  if (emeBridgePorts.size === 0) return;
+  const now = Date.now();
+  const deadKeys = [];
+  emeBridgePorts.forEach((p, key) => {
+    if (!p) {
+      deadKeys.push(key);
+      return;
+    }
+    // Broadcast heartbeat to both bg and sidebar frames (exclude standby)
+    if (!key.startsWith('bg:') && !key.startsWith('sidebar:')) return;
+    try {
+      p.postMessage({ cmd: 'BG_HEARTBEAT_TICK', ts: now });
+    } catch (_) {
+      deadKeys.push(key);
     }
   });
+  for (let i = 0; i < deadKeys.length; i++) {
+    try {
+      emeBridgePorts.delete(deadKeys[i]);
+    } catch (_) {}
+  }
 }, 400);
 
 function disposeStandbyBgFrame(appId) {
@@ -3965,6 +4130,13 @@ function stopSingleBackgroundAudioFrame(appId) {
       entry.frame.src = 'about:blank';
     } catch (_) {}
   }
+  try {
+    const domFrames = document.querySelectorAll(`iframe[name="pm-bg-audio-${appId}"]`);
+    for (const f of domFrames) {
+      f.remove();
+      f.src = 'about:blank';
+    }
+  } catch (_) {}
   if (bgAudioPool.size === 0) {
     updateToolbarBadge();
   }
@@ -4141,6 +4313,14 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
     return;
   }
 
+  try {
+    const staleFrames = document.querySelectorAll(`iframe[name="pm-bg-audio-${appId}"]`);
+    for (const f of staleFrames) {
+      f.remove();
+      f.src = 'about:blank';
+    }
+  } catch (_) {}
+
   const iframe = document.createElement('iframe');
   iframe.name = `pm-bg-audio-${appId}`;
   iframe.setAttribute(
@@ -4162,8 +4342,7 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
 }
 
 function triggerSidebarClosedAudioHandoff(candidates = []) {
-  const mode = currentSettings.persistenceMode || 'selected';
-  if (mode === 'eco' || currentSettings.keepAudioPlayingWhenClosed === false) {
+  if (currentSettings.keepAudioPlayingWhenClosed === false) {
     stopBackgroundAudioFrames();
     return;
   }
@@ -4192,8 +4371,14 @@ function triggerSidebarClosedAudioHandoff(candidates = []) {
     liveMediaPlaybackState.forEach((st, id) => {
       const sp = bgSpEmePlayers.get(id);
       if (sp && sp.explicitUserPause) return;
-      if (st.isPlaying && Date.now() - st.updatedAt < 60000 && isAppAllowedForBgAudio(id)) {
-        const candidateUrl = st.resumeUrl || currentSettings.persistentSavedAppUrls?.[id] || '';
+      const isActivelyPlaying =
+        (sp && !sp.disposed && sp.videoEl && !sp.videoEl.paused && !sp.explicitUserPause) ||
+        (st.isPlaying && Date.now() - st.updatedAt < 120000);
+      if (isActivelyPlaying && isAppAllowedForBgAudio(id)) {
+        const candidateUrl =
+          st.resumeUrl ||
+          currentSettings.persistentSavedAppUrls?.[id] ||
+          (id === 'spotify' ? 'https://open.spotify.com/' : '');
         if (id === 'youtube' && !isPlayableYouTubeUrl(candidateUrl)) return;
         if (!bestSt || id === currentSettings.persistentLastActiveAppId || st.updatedAt >= bestSt.updatedAt) {
           bestId = id;
@@ -4221,7 +4406,9 @@ function triggerSidebarClosedAudioHandoff(candidates = []) {
         sp &&
         !sp.disposed &&
         !sp.explicitUserPause &&
-        (!sp.remotePaused || Date.now() - (sp.lastPlayedAt || 0) < 2000);
+        (!sp.remotePaused ||
+          (sp.videoEl && !sp.videoEl.paused) ||
+          Date.now() - (sp.lastPlayedAt || 0) < 60000);
       if (recentlyActive && sp.sb && sp.sb.buffered && sp.sb.buffered.length > 0) {
         const targetUrl =
           liveMediaPlaybackState.get(mirrorId)?.resumeUrl ||
@@ -4243,6 +4430,22 @@ function triggerSidebarClosedAudioHandoff(candidates = []) {
     });
     bgSpEmePlayers.forEach((sp, id) => {
       if (!bgAudioPool.has(id)) {
+        if (
+          isAppAllowedForBgAudio(id) &&
+          !sp.explicitUserPause &&
+          sp.sb &&
+          sp.sb.buffered &&
+          sp.sb.buffered.length > 0
+        ) {
+          const targetUrl =
+            liveMediaPlaybackState.get(id)?.resumeUrl ||
+            currentSettings.persistentSavedAppUrls?.[id] ||
+            (id === 'spotify' ? 'https://open.spotify.com/' : '');
+          if (targetUrl) {
+            startBackgroundAudioKeepAlive(id, targetUrl, sp.trackTitle || (id === 'spotify' ? 'Spotify' : id));
+            return;
+          }
+        }
         cleanupSpEmePlayer(id);
       }
     });
@@ -4320,7 +4523,7 @@ if (browser.runtime && browser.runtime.onConnect) {
         return;
       }
       if (msg.type === 'UPDATE_PERSISTENT_SESSION') {
-        if (msg.activeAppId && isAppAllowedForPersistence(msg.activeAppId)) {
+        if (msg.activeAppId && (isAppAllowedForPersistence(msg.activeAppId) || isAppAllowedForBgAudio(msg.activeAppId))) {
           currentSettings.persistentLastActiveAppId = msg.activeAppId;
         } else if (msg.activeAppId === 'pocketmail' && msg.explicitMailClick && bgAudioPool.size === 0) {
           currentSettings.persistentLastActiveAppId = 'pocketmail';
@@ -4332,7 +4535,7 @@ if (browser.runtime && browser.runtime.onConnect) {
           if (!currentSettings.persistentSavedAppUrls) {
             currentSettings.persistentSavedAppUrls = {};
           }
-          if (isAppAllowedForPersistence(msg.appId)) {
+          if (isAppAllowedForPersistence(msg.appId) || isAppAllowedForBgAudio(msg.appId)) {
             currentSettings.persistentSavedAppUrls[msg.appId] = msg.url;
           }
           if (msg.appId === 'youtube' && !isPlayableYouTubeUrl(msg.url)) {
@@ -4397,7 +4600,7 @@ if (browser.runtime && browser.runtime.onConnect) {
             handedOffAt: inTakeoverGrace ? prev.handedOffAt : undefined,
             updatedAt: Date.now()
           });
-          if (candidateUrl && isAppAllowedForPersistence(msg.appId)) {
+          if (candidateUrl && (isAppAllowedForPersistence(msg.appId) || isAppAllowedForBgAudio(msg.appId))) {
             if (!currentSettings.persistentSavedAppUrls) {
               currentSettings.persistentSavedAppUrls = {};
             }
@@ -4675,6 +4878,14 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         }
         const prevPoll = currentSettings.pollIntervalSeconds;
         const prevSocialTheme = currentSettings.socialAppThemeMode;
+        if (patch.mediaPersistenceMode !== undefined && patch.persistenceMode === undefined) {
+          patch.persistenceMode =
+            patch.mediaPersistenceMode === 'none'
+              ? 'eco'
+              : patch.mediaPersistenceMode === 'custom'
+                ? 'selected'
+                : patch.mediaPersistenceMode;
+        }
         currentSettings = { ...currentSettings, ...patch };
         if (patch.globalShortcuts !== undefined || patch.appShortcuts !== undefined) {
           await syncBrowserCommandsFromSettings();
@@ -4850,7 +5061,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       })();
 
     case 'UPDATE_PERSISTENT_SESSION': {
-      if (msg.activeAppId && isAppAllowedForPersistence(msg.activeAppId)) {
+      if (msg.activeAppId && (isAppAllowedForPersistence(msg.activeAppId) || isAppAllowedForBgAudio(msg.activeAppId))) {
         currentSettings.persistentLastActiveAppId = msg.activeAppId;
       } else if (msg.activeAppId === 'pocketmail' && msg.explicitMailClick && bgAudioPool.size === 0) {
         currentSettings.persistentLastActiveAppId = 'pocketmail';
@@ -4862,7 +5073,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         if (!currentSettings.persistentSavedAppUrls) {
           currentSettings.persistentSavedAppUrls = {};
         }
-        if (isAppAllowedForPersistence(msg.appId)) {
+        if (isAppAllowedForPersistence(msg.appId) || isAppAllowedForBgAudio(msg.appId)) {
           currentSettings.persistentSavedAppUrls[msg.appId] = msg.url;
         }
         if (msg.appId === 'youtube' && !isPlayableYouTubeUrl(msg.url)) {
@@ -4936,7 +5147,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
           handedOffAt: inTakeoverGrace ? prev.handedOffAt : undefined,
           updatedAt: Date.now()
         });
-        if (candidateUrl && isAppAllowedForPersistence(msg.appId)) {
+        if (candidateUrl && (isAppAllowedForPersistence(msg.appId) || isAppAllowedForBgAudio(msg.appId))) {
           if (!currentSettings.persistentSavedAppUrls) {
             currentSettings.persistentSavedAppUrls = {};
           }
@@ -5019,19 +5230,15 @@ browser.runtime.onMessage.addListener((msg, sender) => {
           remBuf: Math.round(remBuf * 100) / 100,
           ct: Math.round((Number(activeSp.videoEl?.currentTime) || 0) * 100) / 100
         });
-        if (appId !== 'spotify' || remBuf >= 5.5) {
+        if (appId !== 'spotify') {
           activeSp.retireBgWhenBuffered = false;
           clearTimeout(activeSp.retireBgTimer);
           removeBgAudioIframeOnly(appId);
         } else {
-          activeSp.retireBgWhenBuffered = true;
+          // Defer background iframe retirement for Spotify until stagingSp actually promotes!
+          // Keeping pm-bg-audio-spotify alive in bgAudioPool ensures activeSp continues receiving MSE chunks.
+          activeSp.retireBgWhenBuffered = false;
           clearTimeout(activeSp.retireBgTimer);
-          activeSp.retireBgTimer = setTimeout(() => {
-            activeSp.retireBgWhenBuffered = false;
-            if (bgAudioPool.has(appId)) {
-              removeBgAudioIframeOnly(appId);
-            }
-          }, 3800);
         }
       } else {
         removeBgAudioIframeOnly(appId);
@@ -5068,18 +5275,18 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 
     case 'SIDEBAR_CLOSED_HANDOFF': {
       const mode = currentSettings.persistenceMode || 'selected';
-      if (mode === 'eco') {
+      if (mode === 'eco' && currentSettings.keepAudioPlayingWhenClosed === false) {
         stopBackgroundAudioFrames();
         return Promise.resolve({ ok: true });
       }
 
-      if (msg.activeAppId && isAppAllowedForPersistence(msg.activeAppId)) {
+      if (msg.activeAppId && (isAppAllowedForPersistence(msg.activeAppId) || isAppAllowedForBgAudio(msg.activeAppId))) {
         currentSettings.persistentLastActiveAppId = msg.activeAppId;
       } else if (
         Array.isArray(msg.playingApps) &&
         msg.playingApps.length > 0 &&
         msg.playingApps[0].appId &&
-        isAppAllowedForPersistence(msg.playingApps[0].appId)
+        (isAppAllowedForPersistence(msg.playingApps[0].appId) || isAppAllowedForBgAudio(msg.playingApps[0].appId))
       ) {
         currentSettings.persistentLastActiveAppId = msg.playingApps[0].appId;
       }
@@ -5089,7 +5296,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       if (msg.savedUrls && typeof msg.savedUrls === 'object') {
         if (!currentSettings.persistentSavedAppUrls) currentSettings.persistentSavedAppUrls = {};
         Object.entries(msg.savedUrls).forEach(([id, u]) => {
-          if (u && isAppAllowedForPersistence(id)) {
+          if (u && (isAppAllowedForPersistence(id) || isAppAllowedForBgAudio(id))) {
             currentSettings.persistentSavedAppUrls[id] = u;
           }
         });

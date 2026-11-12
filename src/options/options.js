@@ -668,8 +668,20 @@
     if (showBottomBarEl) showBottomBarEl.checked = !appSettings.hideMediaBottomBar;
 
     const chkKeepAudio = document.getElementById('opt-keep-audio-closed');
+    const pMode =
+      appSettings.persistenceMode ||
+      (appSettings.mediaPersistenceMode === 'none'
+        ? 'eco'
+        : appSettings.mediaPersistenceMode === 'custom'
+          ? 'selected'
+          : appSettings.mediaPersistenceMode) ||
+      'selected';
     if (chkKeepAudio) {
-      chkKeepAudio.checked = appSettings.keepAudioPlayingWhenClosed !== false;
+      chkKeepAudio.checked = pMode !== 'eco' && appSettings.keepAudioPlayingWhenClosed !== false;
+      chkKeepAudio.title =
+        pMode === 'eco'
+          ? 'Eco Mode currently pauses background audio. Click to switch to Selected Apps and enable background playback.'
+          : 'Keep Spotify & YouTube audio playing even after closing the sidebar for full screen space';
     }
 
     const tabAudioBehaviorEl = document.getElementById('opt-tab-audio-behavior');
@@ -700,6 +712,36 @@
       const pickedBgAudioIds = Array.isArray(appSettings.bgAudioAppIds)
         ? appSettings.bgAudioAppIds
         : ['spotify', 'youtube'];
+
+      if (pMode === 'eco') {
+        const banner = document.createElement('div');
+        banner.className = 'opt-eco-banner';
+        banner.style.cssText =
+          'grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;background:rgba(217,107,67,0.1);border:1px solid rgba(217,107,67,0.28);border-radius:10px;margin-bottom:8px;font-size:12px;color:var(--text-secondary);';
+        const bannerLeft = document.createElement('div');
+        bannerLeft.style.cssText = 'display:flex;align-items:center;gap:8px;';
+        const leafSvg = mediaApi.createSubViewIcon('eco-leaf', 16);
+        leafSvg.style.cssText = 'flex-shrink:0;color:var(--accent);';
+        const bannerText = document.createElement('span');
+        bannerText.textContent = 'Eco Mode unloads all apps when closed. To enable background audio, switch to Selected Apps.';
+        bannerLeft.appendChild(leafSvg);
+        bannerLeft.appendChild(bannerText);
+
+        const enableBtn = document.createElement('button');
+        enableBtn.type = 'button';
+        enableBtn.className = 'opt-btn opt-btn-secondary';
+        enableBtn.style.cssText = 'padding:4px 10px;font-size:11px;white-space:nowrap;cursor:pointer;';
+        enableBtn.textContent = 'Switch to Selected Apps';
+        enableBtn.addEventListener('click', async () => {
+          await saveSettings(
+            { persistenceMode: 'selected', keepAudioPlayingWhenClosed: true },
+            'Switched from Eco Mode to Selected Apps — Background audio enabled'
+          );
+        });
+        banner.appendChild(bannerLeft);
+        banner.appendChild(enableBtn);
+        bgPicker.appendChild(banner);
+      }
 
       allApps.forEach((app) => {
         const isAllowed = pickedBgAudioIds.includes(app.id);
@@ -740,14 +782,37 @@
         card.appendChild(pill);
 
         card.addEventListener('click', async () => {
+          if (pMode === 'eco') {
+            const nextBgIds = Array.from(new Set([...pickedBgAudioIds, app.id]));
+            const curPersist = Array.isArray(appSettings.persistentAppIds) ? appSettings.persistentAppIds : [];
+            const nextPersist = Array.from(new Set([...curPersist, app.id]));
+            await saveSettings(
+              {
+                persistenceMode: 'selected',
+                keepAudioPlayingWhenClosed: true,
+                bgAudioAppIds: nextBgIds,
+                persistentAppIds: nextPersist
+              },
+              `${app.name}: Background audio and session memory enabled (Switched to Selected Apps)`
+            );
+            return;
+          }
           const nextIds = isAllowed
             ? pickedBgAudioIds.filter((id) => id !== app.id)
             : [...pickedBgAudioIds, app.id];
+          const patch = { bgAudioAppIds: nextIds };
+          if (!isAllowed) {
+            patch.keepAudioPlayingWhenClosed = true;
+            const curPersist = Array.isArray(appSettings.persistentAppIds) ? appSettings.persistentAppIds : [];
+            if (!curPersist.includes(app.id)) {
+              patch.persistentAppIds = [...curPersist, app.id];
+            }
+          }
           await saveSettings(
-            { bgAudioAppIds: nextIds },
+            patch,
             isAllowed
               ? `${app.name}: Background audio when closed turned OFF`
-              : `${app.name}: Background audio when closed turned ON`
+              : `${app.name}: Background audio and session memory enabled!`
           );
         });
         bgPicker.appendChild(card);
@@ -755,7 +820,14 @@
     }
 
     // 2. Session & Page Memory (Persistent Memory) Mode + 2-column SVG card grid
-    const persistMode = appSettings.mediaPersistenceMode || 'custom';
+    const persistMode =
+      appSettings.persistenceMode ||
+      (appSettings.mediaPersistenceMode === 'none'
+        ? 'eco'
+        : appSettings.mediaPersistenceMode === 'custom'
+          ? 'selected'
+          : appSettings.mediaPersistenceMode) ||
+      'selected';
     document.querySelectorAll('#opt-persistence-mode-group [data-persist-mode]').forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-persist-mode') === persistMode);
     });
@@ -769,7 +841,7 @@
 
       allApps.forEach((app) => {
         const isPersist =
-          persistMode === 'all' ? true : persistMode === 'none' ? false : pickedPersistIds.includes(app.id);
+          persistMode === 'all' ? true : persistMode === 'eco' ? false : pickedPersistIds.includes(app.id);
         const card = document.createElement('button');
         card.type = 'button';
         card.className = `opt-app-toggle-card ${isPersist ? 'is-active' : ''}`;
@@ -810,12 +882,12 @@
           const baseIds =
             persistMode === 'all'
               ? allApps.map((a) => a.id)
-              : persistMode === 'none'
+              : persistMode === 'eco'
                 ? []
                 : pickedPersistIds;
           const nextIds = isPersist ? baseIds.filter((id) => id !== app.id) : [...baseIds, app.id];
           await saveSettings(
-            { mediaPersistenceMode: 'custom', persistentAppIds: nextIds },
+            { persistenceMode: 'selected', persistentAppIds: nextIds },
             isPersist
               ? `${app.name}: Persistent page memory turned OFF`
               : `${app.name}: Persistent page & video memory turned ON`
@@ -1315,10 +1387,26 @@
       saveSettings({ hideMediaBottomBar: !e.target.checked }, 'Updated quick sub-view bottom bar');
     });
 
-    document.getElementById('opt-keep-audio-closed')?.addEventListener('change', (e) => {
-      saveSettings(
-        { keepAudioPlayingWhenClosed: Boolean(e.target.checked) },
-        e.target.checked
+    document.getElementById('opt-keep-audio-closed')?.addEventListener('change', async (e) => {
+      const enabled = Boolean(e.target.checked);
+      const currentPMode =
+        appSettings.persistenceMode ||
+        (appSettings.mediaPersistenceMode === 'none'
+          ? 'eco'
+          : appSettings.mediaPersistenceMode === 'custom'
+            ? 'selected'
+            : appSettings.mediaPersistenceMode) ||
+        'selected';
+      if (enabled && currentPMode === 'eco') {
+        await saveSettings(
+          { persistenceMode: 'selected', keepAudioPlayingWhenClosed: true },
+          'Switched from Eco Mode to Selected Apps — Background audio enabled'
+        );
+        return;
+      }
+      await saveSettings(
+        { keepAudioPlayingWhenClosed: enabled },
+        enabled
           ? 'Background audio keep-alive enabled when closed'
           : 'Background audio will pause when closed'
       );
@@ -1342,14 +1430,14 @@
 
     document.querySelectorAll('#opt-persistence-mode-group [data-persist-mode]').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const mode = btn.getAttribute('data-persist-mode');
+        const mode = btn.getAttribute('data-persist-mode') || 'selected';
         const label =
-          mode === 'none'
+          mode === 'eco'
             ? 'Eco Mode (0 MB background memory)'
             : mode === 'all'
               ? 'All Apps persistent memory enabled'
               : 'Selected Apps persistent memory enabled';
-        await saveSettings({ mediaPersistenceMode: mode }, label);
+        await saveSettings({ persistenceMode: mode }, label);
       });
     });
 

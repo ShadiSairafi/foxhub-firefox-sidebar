@@ -2715,9 +2715,14 @@ html[data-sidebar="true"] .pm-resize-grip {
 /* Keep media workspace alive in background when reading Mail so Spotify/YouTube keep playing */
 .pm-drawer.pm-workspace-keepalive {
   display: flex !important;
-  visibility: hidden !important;
-  opacity: 0 !important;
+  visibility: visible !important;
+  opacity: 0.001 !important;
   pointer-events: none !important;
+  position: absolute !important;
+  left: -9999px !important;
+  top: 0 !important;
+  width: 420px !important;
+  height: 680px !important;
   z-index: -1 !important;
 }
 

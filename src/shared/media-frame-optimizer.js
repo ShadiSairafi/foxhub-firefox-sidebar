@@ -174,16 +174,25 @@
   const initialAutoplayPolicy =
     typeof navigator.getAutoplayPolicy === 'function' ? navigator.getAutoplayPolicy('mediaelement') : 'allowed';
   const isMirrorAudioHost = host.includes('spotify.com') || host.includes('youtube.com');
+  const INAUDIBLE_VOLUME = 1e-5; // 0.00001: strictly > 0 for Gecko C++ AudioChannelService, completely silent to human ear (-100 dBFS)
 
   // Ensure background audio keep-alive frames and mirrored media frames report visibilityState='visible'
   // so YouTube & Spotify never defer player boot or self-pause when the popup/sidebar loses focus or closes.
   if ((isBgAudioFrame || (isFoxHubMediaFrame && isMirrorAudioHost)) && window.wrappedJSObject && typeof exportFunction === 'function') {
     try {
       const pageWin = window.wrappedJSObject;
-      const getVisible = exportFunction(() => 'visible', pageWin);
-      const getFalse = exportFunction(() => false, pageWin);
-      Object.defineProperty(pageWin.Document.prototype, 'visibilityState', { get: getVisible, configurable: true });
-      Object.defineProperty(pageWin.Document.prototype, 'hidden', { get: getFalse, configurable: true });
+      if (pageWin.Document && pageWin.Document.prototype) {
+        const getVisible = exportFunction(() => 'visible', pageWin);
+        const getFalse = exportFunction(() => false, pageWin);
+        const getHasFocus = exportFunction(() => true, pageWin);
+        Object.defineProperty(pageWin.Document.prototype, 'visibilityState', { get: getVisible, configurable: true });
+        Object.defineProperty(pageWin.Document.prototype, 'hidden', { get: getFalse, configurable: true });
+        Object.defineProperty(pageWin.Document.prototype, 'hasFocus', {
+          value: getHasFocus,
+          writable: true,
+          configurable: true
+        });
+      }
       window.addEventListener(
         'visibilitychange',
         (ev) => {
@@ -191,6 +200,25 @@
         },
         true
       );
+      window.addEventListener(
+        'blur',
+        (ev) => {
+          if (!ev.target || ev.target === window || ev.target === document) {
+            ev.stopImmediatePropagation();
+          }
+        },
+        true
+      );
+      window.addEventListener(
+        'freeze',
+        (ev) => {
+          ev.stopImmediatePropagation();
+        },
+        true
+      );
+      if (navigator.locks && typeof navigator.locks.request === 'function') {
+        navigator.locks.request('foxhub_media_keepalive', () => new Promise(() => {})).catch(() => {});
+      }
     } catch (_) {}
   }
 
@@ -282,6 +310,8 @@
     let msCounter = Date.now();
     let isFrameUnloading = false;
     let lastUserGestureAt = 0;
+    let internalHandoffSeekUntil = 0;
+    let lastUserSeekBarScrubAt = 0;
     let lastPlayStartedAt = 0;
     let lastParentSyncSentAt = 0;
     let lastSidebarGestureBridgeAt = 0;
@@ -290,6 +320,39 @@
     let mirrorAutoPausedByTab = false;
     let pendingYtSeekTarget = null; // { time: number, expiresAt: number }
     let runMirrorSyncTick = () => {};
+
+    let keepaliveAudioCtx = null;
+    let keepaliveOscNode = null;
+    let keepaliveGainNode = null;
+
+    function ensureWebAudioKeepalive() {
+      try {
+        if (keepaliveAudioCtx && keepaliveAudioCtx.state !== 'closed') {
+          if (keepaliveAudioCtx.state === 'suspended') {
+            keepaliveAudioCtx.resume().catch(() => {});
+          }
+          return keepaliveAudioCtx;
+        }
+        const AudioCtx = window.AudioContext || window.webkitAudioContext || (pageWin && (pageWin.AudioContext || pageWin.webkitAudioContext));
+        if (!AudioCtx) return null;
+        keepaliveAudioCtx = new AudioCtx();
+        keepaliveOscNode = keepaliveAudioCtx.createOscillator();
+        keepaliveGainNode = keepaliveAudioCtx.createGain();
+        keepaliveGainNode.gain.value = INAUDIBLE_VOLUME; // -100 dBFS: strictly > 0 for Gecko C++ AudioChannelAgent, silent to human ear
+        keepaliveOscNode.type = 'sine';
+        keepaliveOscNode.frequency.value = 440;
+        keepaliveOscNode.connect(keepaliveGainNode);
+        keepaliveGainNode.connect(keepaliveAudioCtx.destination);
+        keepaliveOscNode.start();
+        if (keepaliveAudioCtx.state === 'suspended') {
+          keepaliveAudioCtx.resume().catch(() => {});
+        }
+        return keepaliveAudioCtx;
+      } catch (_) {
+        return null;
+      }
+    }
+    ensureWebAudioKeepalive();
 
     const closeDealerSocketsForHandoff = () => {
       isFrameUnloading = true;
@@ -305,6 +368,11 @@
 
     const markUnloading = () => {
       closeDealerSocketsForHandoff();
+      try {
+        if (keepaliveAudioCtx && keepaliveAudioCtx.state !== 'closed') {
+          keepaliveAudioCtx.close().catch(() => {});
+        }
+      } catch (_) {}
     };
     window.addEventListener('pagehide', markUnloading, true);
     window.addEventListener('beforeunload', markUnloading, true);
@@ -318,10 +386,13 @@
       try {
         if (ev.target && ev.target.closest) {
           isSeekBar = Boolean(
-            ev.target.closest('[data-testid="playback-progressbar"], [data-testid="progress-bar"]')
+            ev.target.closest('[data-testid="playback-progressbar"], [data-testid="progress-bar"], .playback-bar, .ytp-progress-bar')
           );
         }
       } catch (_) {}
+      if (isSeekBar) {
+        lastUserSeekBarScrubAt = now;
+      }
       if (!isSeekBar && now - lastSidebarGestureBridgeAt < 220) return;
       lastSidebarGestureBridgeAt = now;
       postBridge('USER_INTERACTION', { isSeekBar });
@@ -329,6 +400,14 @@
 
     const recordUserGesture = (ev) => {
       lastUserGestureAt = Date.now();
+      if (ev && ev.isTrusted && ev.target && ev.target.closest) {
+        try {
+          if (ev.target.closest('[data-testid="playback-progressbar"], [data-testid="progress-bar"], .playback-bar, .ytp-progress-bar')) {
+            lastUserSeekBarScrubAt = Date.now();
+          }
+        } catch (_) {}
+      }
+      ensureWebAudioKeepalive();
       notifySidebarUserInteraction(ev);
     };
     window.addEventListener('pointerdown', recordUserGesture, { capture: true, passive: true });
@@ -340,6 +419,13 @@
       (ev) => {
         if (ev && ev.isTrusted && ev.buttons > 0) {
           lastUserGestureAt = Date.now();
+          if (ev.target && ev.target.closest) {
+            try {
+              if (ev.target.closest('[data-testid="playback-progressbar"], [data-testid="progress-bar"], .playback-bar, .ytp-progress-bar')) {
+                lastUserSeekBarScrubAt = Date.now();
+              }
+            } catch (_) {}
+          }
         }
       },
       { capture: true, passive: true }
@@ -349,6 +435,13 @@
       (ev) => {
         if (ev && ev.isTrusted) {
           lastUserGestureAt = Date.now();
+          if (ev.target && ev.target.closest) {
+            try {
+              if (ev.target.closest('[data-testid="playback-progressbar"], [data-testid="progress-bar"], .playback-bar, .ytp-progress-bar')) {
+                lastUserSeekBarScrubAt = Date.now();
+              }
+            } catch (_) {}
+          }
           notifySidebarUserInteraction(ev);
         }
       },
@@ -386,7 +479,8 @@
           emeBridgePort.onMessage.addListener((msg) => {
             if (!msg || !msg.cmd) return;
             if (msg.cmd === 'BG_HEARTBEAT_TICK') {
-              if (isBgAudioFrame && !isFrameUnloading) {
+              if (!isFrameUnloading) {
+                ensureWebAudioKeepalive();
                 try {
                   runMirrorSyncTick();
                 } catch (_) {}
@@ -447,6 +541,7 @@
                 msg.cmd === 'ACTIVATE_BG_SPOTIFY_HANDOFF'
               ) {
                 mirrorAutoPausedByTab = false;
+                ensureWebAudioKeepalive();
               }
               try {
                 if (typeof window.__pmHandleMediaFrameCommand === 'function') {
@@ -483,6 +578,7 @@
               bridgeType: 'BRIDGE_HELLO',
               href: window.location.href
             });
+            ensureWebAudioKeepalive();
           } catch (_) {}
         }
       } catch (_) {
@@ -772,7 +868,7 @@
           if (other !== el && !other.paused) {
             try {
               suppressPauseEvent.add(other);
-              other.volume = 0;
+              other.volume = INAUDIBLE_VOLUME;
               other.pause();
             } catch (_) {}
           }
@@ -784,11 +880,11 @@
       lockedEls.add(el);
 
       // Keep the real element silent (Xray sets bypass the page-visible accessors below); the page still sees its own volume
-      let desiredVol = typeof el.volume === 'number' && el.volume > 0 ? el.volume : 1.0;
+      let desiredVol = typeof el.volume === 'number' && el.volume > 0.001 ? el.volume : 1.0;
       let desiredMuted = false;
       try {
         el.muted = false;
-        el.volume = 0;
+        el.volume = INAUDIBLE_VOLUME;
         const rawEl = el.wrappedJSObject;
         Object.defineProperty(rawEl, 'volume', {
           get: exportFunction(() => desiredVol, pageWin),
@@ -823,7 +919,7 @@
 
       el.addEventListener('volumechange', () => {
         try {
-          if (el.volume > 0) el.volume = 0;
+          if (el.volume !== INAUDIBLE_VOLUME) el.volume = INAUDIBLE_VOLUME;
           if (el.muted) el.muted = false;
         } catch (_) {}
       });
@@ -841,6 +937,7 @@
       });
       el.addEventListener('play', () => {
         if (isFrameUnloading) return;
+        ensureWebAudioKeepalive();
         if (mirrorAutoPausedByTab || (IS_YT && !isYtPlayableEl(el))) {
           try {
             suppressPauseEvent.add(el);
@@ -849,7 +946,8 @@
           return;
         }
         try {
-          if (el.volume > 0) el.volume = 0;
+          if (el.volume !== INAUDIBLE_VOLUME) el.volume = INAUDIBLE_VOLUME;
+          if (el.muted) el.muted = false;
         } catch (_) {}
         applyPendingYtSeek(el);
         wantPlay.set(el, true);
@@ -860,6 +958,7 @@
       });
       el.addEventListener('playing', () => {
         if (isFrameUnloading) return;
+        ensureWebAudioKeepalive();
         if (mirrorAutoPausedByTab || (IS_YT && !isYtPlayableEl(el))) {
           try {
             suppressPauseEvent.add(el);
@@ -868,7 +967,8 @@
           return;
         }
         try {
-          if (el.volume > 0) el.volume = 0;
+          if (el.volume !== INAUDIBLE_VOLUME) el.volume = INAUDIBLE_VOLUME;
+          if (el.muted) el.muted = false;
         } catch (_) {}
         applyPendingYtSeek(el);
         wantPlay.set(el, true);
@@ -917,11 +1017,18 @@
       el.addEventListener('seeked', () => {
         if (isFrameUnloading) return;
         if (getActiveEl() === el) {
-          const userSeek = Date.now() - lastUserGestureAt < 1500;
+          const now = Date.now();
+          const isInternalHandoff = now < internalHandoffSeekUntil;
+          if (isInternalHandoff) {
+            internalHandoffSeekUntil = 0;
+          }
+          const isExplicitUserScrub = !isInternalHandoff && (now - lastUserSeekBarScrubAt < 2500);
           postBridge('SYNC_TIME', {
             currentTime: el.currentTime,
             paused: !wantPlay.get(el) && el.paused,
-            forceSeek: userSeek,
+            forceSeek: isExplicitUserScrub,
+            isExplicitUserScrub: isExplicitUserScrub,
+            isInternalHandoff: isInternalHandoff,
             fromSeek: true
           });
         }
@@ -1342,6 +1449,7 @@
       postBridge('STOP_PLAYBACK', { currentTime: 0, paused: true, explicitPause: true });
     });
     define(pageWin, '__pmEnsureMirrorPlay', function () {
+      ensureWebAudioKeepalive();
       mirrorAutoPausedByTab = false;
       if (IS_YT && !isYtPlayableRoute()) return false;
       const el = getActiveEl();
@@ -1430,17 +1538,19 @@
           const reqHeaders = Object.assign({}, spConnectState.headers, {
             'content-type': 'application/json'
           });
-          window
-            .fetch(transferUrl, {
-              method: 'POST',
-              headers: reqHeaders,
-              body: JSON.stringify({
-                transfer_options: {
-                  restore_paused: 'resume'
-                }
-              })
-            })
-            .catch(() => {});
+          const postBody = JSON.stringify({
+            transfer_options: {
+              restore_paused: 'resume'
+            }
+          });
+          const fetchOpts = {
+            method: 'POST',
+            headers: reqHeaders,
+            body: postBody
+          };
+          const safeOpts = typeof cloneInto === 'function' ? cloneInto(fetchOpts, pageWin) : fetchOpts;
+          const fetchFn = pageWin.fetch || window.fetch;
+          fetchFn.call(pageWin, transferUrl, safeOpts).catch(() => {});
           return 'transferred';
         }
         if (!forceTransfer && typeof spMediaSessionHandlers.play === 'function') {
@@ -1456,6 +1566,15 @@
             return 'clicked-play';
           }
         }
+        const homeBtn = document.querySelector(
+          '[data-testid="shortcut-item"] button[data-testid="play-button"], ' +
+          'section[data-testid*="recently-played"] button[data-testid="play-button"], ' +
+          'main button[data-testid="play-button"]:not([disabled])'
+        );
+        if (homeBtn && !homeBtn.disabled) {
+          homeBtn.click();
+          return 'clicked-home-play';
+        }
       } catch (_) {}
       return 'noop';
     });
@@ -1463,6 +1582,7 @@
       try {
         const t = Number(targetTime);
         if (!(t >= 0)) return false;
+        internalHandoffSeekUntil = Date.now() + 4000;
         if (IS_YT) {
           if (!(t > 0)) return false;
           pendingYtSeekTarget = { time: t, setAt: Date.now(), expiresAt: Date.now() + 4500 };
@@ -7516,7 +7636,7 @@
     if (!spToggle || spToggle.disabled) return false;
     const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
     const isPlayingUi = aria.includes('pause') || aria.includes('stop');
-    const isPausedUi = aria.includes('play') && !aria.includes('pause');
+    const isPausedUi = !isPlayingUi && (aria.includes('play') || !aria || aria.length < 30);
     if (wantPlaying && !isPausedUi) return false;
     if (!wantPlaying && !isPlayingUi) return false;
     spAutoClickInFlight = true;
@@ -7528,6 +7648,40 @@
         spAutoClickInFlight = false;
       }, 240);
     }
+  }
+
+  function clickSpotifyHomePlayButton() {
+    // Look for Spotify's prominent Quick Resume / Recently Played card play buttons on root/home page
+    const selectors = [
+      '[data-testid="shortcut-item"] button[data-testid="play-button"]',
+      '[data-testid="shortcut-item"] button[aria-label*="Play"]',
+      'section[data-testid*="recently-played"] button[data-testid="play-button"]',
+      'section[aria-label*="Recently played"] button[data-testid="play-button"]',
+      'section[aria-label*="Jump back in"] button[data-testid="play-button"]',
+      'section[aria-label*="Made for"] button[data-testid="play-button"]',
+      '[data-testid="top-result-card"] button[data-testid="play-button"]',
+      '[data-testid="card-click-handler"] button[data-testid="play-button"]',
+      'main button[data-testid="play-button"]:not([disabled])',
+      'main button[aria-label*="Play"]:not([disabled])'
+    ];
+    for (let i = 0; i < selectors.length; i++) {
+      const btn = document.querySelector(selectors[i]);
+      if (btn && !btn.disabled) {
+        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+        if (!aria.includes('pause') && !aria.includes('stop')) {
+          spAutoClickInFlight = true;
+          try {
+            btn.click();
+            return true;
+          } finally {
+            setTimeout(() => {
+              spAutoClickInFlight = false;
+            }, 240);
+          }
+        }
+      }
+    }
+    return false;
   }
 
   function getActiveMediaElement() {
@@ -7616,7 +7770,7 @@
     (async () => {
       try {
         mediaEl.muted = false;
-        mediaEl.volume = 0;
+        mediaEl.volume = INAUDIBLE_VOLUME;
         // Lock page-world .volume and .muted setters on this element so YouTube Polymer hydrating yt-player-volume (v.volume = 1) never triggers Firefox's C++ Autoplay Pause!
         if (window.wrappedJSObject && mediaEl.wrappedJSObject && typeof exportFunction === 'function') {
           try {
@@ -7708,7 +7862,15 @@
         const spPlayBtn = document.querySelector('[data-testid="control-button-playpause"]');
         const posEl = document.querySelector('[data-testid="playback-position"]');
         const posText = posEl ? (posEl.textContent || '').trim() : '';
-        const isSpPlayerHydrated = Boolean(spPlayBtn && !spPlayBtn.disabled && posText && posText !== '-:--');
+        const titleEl = document.querySelector('[data-testid="context-item-info-title"]');
+        const hasTrackTitle = Boolean(titleEl && (titleEl.textContent || '').trim());
+        const hasValidPos = Boolean(posText && posText !== '-:--');
+        const ariaPlayBtn = (spPlayBtn ? spPlayBtn.getAttribute('aria-label') || '' : '').toLowerCase();
+        const isSpPlayerHydrated = Boolean(
+          spPlayBtn &&
+            !spPlayBtn.disabled &&
+            (hasValidPos || hasTrackTitle || ariaPlayBtn.includes('pause'))
+        );
         if (spMediaPlaying) {
           spHydratedWithoutLocalMediaSince = 0;
         } else if (isSpPlayerHydrated) {
@@ -7719,11 +7881,10 @@
           spHydratedWithoutLocalMediaSince = 0;
         }
         if (isSpPlayerHydrated) {
-          const aria = (spPlayBtn.getAttribute('aria-label') || '').toLowerCase();
-          if (aria.includes('pause')) {
+          if (ariaPlayBtn.includes('pause')) {
             isPlaying = true;
           }
-          if (currentTime === 0 && posText.includes(':')) {
+          if (currentTime === 0 && posText && posText !== '-:--' && posText.includes(':')) {
             const parts = posText.split(':').map((n) => parseInt(n, 10));
             if (parts.length === 2 && !Number.isNaN(parts[0]) && !Number.isNaN(parts[1])) {
               currentTime = parts[0] * 60 + parts[1];
@@ -7803,28 +7964,67 @@
           if (spMediaPlaying) {
             bgAudioAutoResumed = true;
           } else {
-            // Wait until Spotify's bottom Now Playing bar is hydrated (not disabled and position !== '-:--')
             const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
             const posEl = document.querySelector('[data-testid="playback-position"]');
             const posText = posEl ? (posEl.textContent || '').trim() : '';
-            if (spToggle && !spToggle.disabled && posText && posText !== '-:--') {
+            const now = Date.now();
+            const canAttemptClick = now - lastSpotifyAutoResumeClickAt > 2200;
+
+            if (spToggle && !spToggle.disabled) {
+              // Case 1: Bottom Now Playing bar is present and enabled (even if posText === '-:--' or title is loading)
               const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-              if (!aria.includes('pause') && Date.now() - lastSpotifyAutoResumeClickAt > 2500) {
-                lastSpotifyAutoResumeClickAt = Date.now();
-                clickSpotifyToggleOnce(true);
+              if (!aria.includes('pause') && !aria.includes('stop')) {
+                if (canAttemptClick) {
+                  lastSpotifyAutoResumeClickAt = now;
+                  clickSpotifyToggleOnce(true);
+                }
               } else if (
                 aria.includes('pause') &&
                 spHydratedWithoutLocalMediaSince > 0 &&
-                Date.now() - spHydratedWithoutLocalMediaSince > 1400 &&
-                Date.now() - lastSpotifyAutoResumeClickAt > 2600
+                now - spHydratedWithoutLocalMediaSince > 1400 &&
+                canAttemptClick
               ) {
-                lastSpotifyAutoResumeClickAt = Date.now();
+                lastSpotifyAutoResumeClickAt = now;
                 try {
                   if (
                     window.wrappedJSObject &&
                     typeof window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover === 'function'
                   ) {
                     window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover(true);
+                  }
+                } catch (_) {}
+              }
+            } else if (canAttemptClick) {
+              // Case 2: Generic root URL (https://open.spotify.com/) where bottom bar has no track queued
+              lastSpotifyAutoResumeClickAt = now;
+              let resumed = false;
+
+              // 2a. Attempt Spotify Connect transfer to local device
+              try {
+                if (
+                  window.wrappedJSObject &&
+                  typeof window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover === 'function'
+                ) {
+                  const res = window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover(true);
+                  if (res === 'transferred' || res === 'playing' || res === 'clicked-play') {
+                    resumed = true;
+                  }
+                }
+              } catch (_) {}
+
+              // 2b. Attempt Quick Resume / Recently Played card click on home page
+              if (!resumed) {
+                resumed = clickSpotifyHomePlayButton();
+              }
+
+              // 2c. Fallback: try MediaSession play handler if registered
+              if (!resumed) {
+                try {
+                  if (
+                    window.wrappedJSObject &&
+                    typeof window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover === 'function'
+                  ) {
+                    window.wrappedJSObject.__pmEnsureSpotifyLocalTakeover(false);
                   }
                 } catch (_) {}
               }
@@ -7863,29 +8063,22 @@
       // 2. If the user reopened the Sidebar while Background Audio was playing (or opened a YouTube /watch video before clicking inside iframe), seamlessly play audio!
       if (!isBgAudioFrame && !isStandbyBgFrame && !isTabAudioAutoPaused) {
         if (sidebarAutoResumeRequested && host.includes('spotify.com')) {
-          // Reopened sidebar took over from the hidden bg player: resume here once hydrated (buffered audio in background.html bridges the gap)
           const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
-          const posEl = document.querySelector('[data-testid="playback-position"]');
-          const posText = posEl ? (posEl.textContent || '').trim() : '';
-          if (spMediaPlaying || Date.now() - sidebarAutoResumeRequestedAt > 30000) {
+          const now = Date.now();
+          if (spMediaPlaying || now - sidebarAutoResumeRequestedAt > 30000) {
             sidebarAutoResumeRequested = false;
-          } else if (spToggle && !spToggle.disabled && posText && posText !== '-:--') {
+          } else if (spToggle && !spToggle.disabled) {
             const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-            if (!aria.includes('pause') && Date.now() - lastSpotifyAutoResumeClickAt > 2500) {
-              lastSpotifyAutoResumeClickAt = Date.now();
-              spAutoClickInFlight = true;
-              try {
-                spToggle.click();
-              } finally {
-                spAutoClickInFlight = false;
-              }
+            if (!aria.includes('pause') && !aria.includes('stop') && now - lastSpotifyAutoResumeClickAt > 2200) {
+              lastSpotifyAutoResumeClickAt = now;
+              clickSpotifyToggleOnce(true);
             } else if (
               aria.includes('pause') &&
               spHydratedWithoutLocalMediaSince > 0 &&
-              Date.now() - spHydratedWithoutLocalMediaSince > 1400 &&
-              Date.now() - lastSpotifyAutoResumeClickAt > 2600
+              now - spHydratedWithoutLocalMediaSince > 1400 &&
+              now - lastSpotifyAutoResumeClickAt > 2600
             ) {
-              lastSpotifyAutoResumeClickAt = Date.now();
+              lastSpotifyAutoResumeClickAt = now;
               try {
                 if (
                   window.wrappedJSObject &&
@@ -7895,6 +8088,10 @@
                 }
               } catch (_) {}
             }
+          } else if (now - lastSpotifyAutoResumeClickAt > 2200) {
+            // Reopened sidebar onto generic root URL without bottom track
+            lastSpotifyAutoResumeClickAt = now;
+            clickSpotifyHomePlayButton();
           }
         } else if (sidebarAutoResumeRequested && isAudioMirrorActive()) {
           // Reopened sidebar took over YouTube from the hidden bg player: keep the silent page element playing (background.html is audible)
