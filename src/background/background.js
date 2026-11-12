@@ -1698,6 +1698,7 @@ const bgSpEmePlayers = new Map(); // appId -> spInstance (active audible player)
 const bgStagingSpPlayers = new Map(); // appId -> spInstance (silent staging player during closed-sidebar handoff)
 const bgNextSpPlayers = new Map(); // appId -> spInstance (gapless preloaded next track player)
 const bgSpCachedMeta = new Map(); // appId -> { serverCert, licAuth, recentGenReqs }
+const bgAudioDiagLog = []; // ring buffer of recent playback/handoff/tab-audio events (max 80)
 let bgSpInstanceCounter = 0;
 let standbySpotifyPrewarmTimer = null;
 let pendingShortcutLaunch = null; // { appId, openMode, ts }
@@ -1721,11 +1722,110 @@ var BG_AUDIO_APP_NAMES = {
   messenger: 'Messenger'
 };
 
+function logAudioDiag(event, details = {}) {
+  try {
+    bgAudioDiagLog.push({
+      ts: Date.now(),
+      iso: new Date().toISOString(),
+      event: String(event || 'event'),
+      ...details
+    });
+    if (bgAudioDiagLog.length > 80) {
+      bgAudioDiagLog.splice(0, bgAudioDiagLog.length - 80);
+    }
+  } catch (_) {}
+}
+
+function summarizeSpInstanceDiag(sp) {
+  if (!sp) return null;
+  const v = sp.videoEl;
+  const bufRanges = [];
+  try {
+    if (sp.sb && sp.sb.buffered) {
+      for (let i = 0; i < sp.sb.buffered.length; i++) {
+        bufRanges.push([
+          Math.round(sp.sb.buffered.start(i) * 100) / 100,
+          Math.round(sp.sb.buffered.end(i) * 100) / 100
+        ]);
+      }
+    }
+  } catch (_) {}
+  return {
+    id: sp.id,
+    appId: sp.appId,
+    sourceType: sp.sourceType,
+    isStaging: Boolean(sp.isStaging),
+    isNextPreload: Boolean(sp.isNextPreload),
+    disposed: Boolean(sp.disposed),
+    hasLicense: Boolean(sp.hasLicense),
+    lastLicStatus: sp.lastLicStatus || 0,
+    lastGenErr: sp.lastGenErr || null,
+    remotePaused: Boolean(sp.remotePaused),
+    explicitUserPause: Boolean(sp.explicitUserPause),
+    autoPausedByTab: Boolean(sp.autoPausedByTab),
+    awaitingBgFrameHandoff: Boolean(sp.awaitingBgFrameHandoff),
+    handoffSource: sp.handoffSource || '',
+    targetTime: Math.round((Number(sp.targetTime) || 0) * 100) / 100,
+    currentTime: v ? Math.round((Number(v.currentTime) || 0) * 100) / 100 : 0,
+    paused: v ? Boolean(v.paused) : true,
+    muted: v ? Boolean(v.muted) : true,
+    readyState: v ? v.readyState : 0,
+    buffered: bufRanges,
+    trackTitle: sp.trackTitle || '',
+    trackDuration: Math.round(Number(sp.trackDuration) || 0),
+    msSinceAdvance: sp.lastTimeAdvanceAt ? Date.now() - sp.lastTimeAdvanceAt : 0
+  };
+}
+
+function buildAudioDiagnosticsSnapshot() {
+  const activePlayers = {};
+  bgSpEmePlayers.forEach((sp, id) => {
+    activePlayers[id] = summarizeSpInstanceDiag(sp);
+  });
+  const stagingPlayers = {};
+  bgStagingSpPlayers.forEach((sp, id) => {
+    stagingPlayers[id] = summarizeSpInstanceDiag(sp);
+  });
+  const nextPlayers = {};
+  bgNextSpPlayers.forEach((sp, id) => {
+    nextPlayers[id] = summarizeSpInstanceDiag(sp);
+  });
+  return {
+    version: '2.7.7',
+    generatedAt: new Date().toISOString(),
+    audibleAppId: getAudibleBgAudioAppId(),
+    sidebarPortCount,
+    popupPortCount,
+    bgAudioPoolIds: Array.from(bgAudioPool.keys()),
+    emeBridgePortKeys: Array.from(emeBridgePorts.keys()),
+    tabAudioBehavior: getTabAudioBehavior(),
+    isAutoPausedByTabAudio: Boolean(isAutoPausedByTabAudio),
+    manualOverrideWhileTabAudible: Boolean(manualOverrideWhileTabAudible),
+    knownActiveMediaTabIds: Array.from(knownActiveMediaTabIds),
+    audibleOverrideTabIds: Array.from(audibleOverrideTabIds),
+    persistenceMode: currentSettings.persistenceMode || 'selected',
+    keepAudioPlayingWhenClosed: currentSettings.keepAudioPlayingWhenClosed !== false,
+    persistentAppIds: Array.isArray(currentSettings.persistentAppIds) ? currentSettings.persistentAppIds : [],
+    bgAudioAppIds: Array.isArray(currentSettings.bgAudioAppIds) ? currentSettings.bgAudioAppIds : [],
+    activePlayers,
+    stagingPlayers,
+    nextPlayers,
+    recentEvents: bgAudioDiagLog.slice(-60)
+  };
+}
+
 function getAudibleBgAudioAppId() {
   try {
     for (const [appId, sp] of bgSpEmePlayers) {
       const v = sp && !sp.disposed ? sp.videoEl : null;
-      if (v && !v.paused && !v.ended && !v.muted && v.volume > 0 && v.readyState >= 2) return appId;
+      if (v && !v.paused && !v.ended && !v.muted && v.volume > 0 && v.readyState >= 2 && !sp.remotePaused) {
+        const bufEnd = getSpBufferedEnd(sp);
+        const ct = Number(v.currentTime) || 0;
+        if (bufEnd > 0 && bufEnd - ct <= 0.05 && sp.lastTimeAdvanceAt && Date.now() - sp.lastTimeAdvanceAt > 2800) {
+          continue;
+        }
+        return appId;
+      }
     }
     for (const [appId, p] of bgMsePlayers) {
       const a = p && p.audioEl;
@@ -1900,17 +2000,16 @@ try {
     }
     return null;
   };
+  window.__pmGetAudioDiagnostics = buildAudioDiagnosticsSnapshot;
   window.__pmGetSyncBootState = () => {
     const currentlyPausedByTab = isTabAutoPauseEnforced();
     const activeBgApps = [];
     bgAudioPool.forEach((val, id) => {
-      const sp = bgSpEmePlayers.get(id);
-      const actuallyPlaying = !currentlyPausedByTab && !(sp && sp.explicitUserPause);
       activeBgApps.push({
         appId: id,
         url: val.url,
         title: val.title,
-        bgMasterActive: Boolean(id === 'spotify' && actuallyPlaying)
+        bgMasterActive: false
       });
     });
     const pendingAppId =
@@ -2164,6 +2263,11 @@ function createSpPlayerInstance(appId, mime, msId = 0, isStaging = false, source
     remotePaused: false,
     explicitUserPause: false,
     lastPlayedAt: 0,
+    lastObservedCt: 0,
+    lastTimeAdvanceAt: now,
+    lastStarveNudgeAt: 0,
+    retireBgWhenBuffered: false,
+    retireBgTimer: null,
     lastSeekSentAt: 0,
     seekAttempts: 0,
     skipNextSentAt: 0
@@ -2193,6 +2297,7 @@ let pendingTabResumeTimer = null;
 let silentMediaRecheckTimer = null;
 const knownActiveMediaTabIds = new Set();
 const recentlyStoppedMediaTabMap = new Map(); // tabId -> stoppedAt
+const silentTabHoldSince = new Map(); // tabId -> firstSeenSilentAt
 const audibleOverrideTabIds = new Set();
 const tabAutoPausedSpAppIds = new Set();
 const tabAutoPausedMseAppIds = new Set();
@@ -2287,6 +2392,12 @@ function promoteNextSpPlayer(appId, initialTargetTime = 0) {
     clearTimeout(activeSp.retireBgTimer);
     disposeSpPlayerInstance(activeSp);
   }
+  logAudioDiag('promote-next-track', {
+    appId,
+    trackTitle: nextSp.trackTitle || '',
+    msId: nextSp.msId || 0,
+    initialTargetTime
+  });
   return true;
 }
 
@@ -2400,6 +2511,7 @@ function syncSpInstanceTimeAndPlay(sp, forceSeek = false) {
         sp.videoEl.playbackRate = 1.0;
       }
       if (sp.videoEl.paused) {
+        sp.lastTimeAdvanceAt = Date.now();
         sp.videoEl.play().catch(() => {});
       }
     }
@@ -2606,6 +2718,13 @@ function promoteStagingSpPlayer(appId, syncFromActive = true) {
     clearTimeout(activeSp.retireBgTimer);
     disposeSpPlayerInstance(activeSp);
   }
+  logAudioDiag('promote-staging', {
+    appId,
+    sourceType: stagingSp.sourceType,
+    liveCt: Math.round(liveCt * 100) / 100,
+    targetTime: Math.round((stagingSp.targetTime || 0) * 100) / 100,
+    isDifferentTrack
+  });
 }
 
 function checkAndPromoteStagingSpPlayer(appId) {
@@ -2801,6 +2920,11 @@ async function processSpInstanceGenReqs(sp) {
           sp.lastLicStatus = resp.status;
           if (!resp.ok) {
             // Cached auth token may be stale: re-queue so the next fresh LIC_AUTH from Spotify retries this key
+            logAudioDiag('eme-license-retry', {
+              appId: sp.appId,
+              status: resp.status,
+              sourceType: sp.sourceType
+            });
             sp.processedInitDataKeys.delete(keySig);
             sp.pendingGenReqs.push(req);
             sess.close().catch(() => {});
@@ -2831,11 +2955,21 @@ async function processSpInstanceGenReqs(sp) {
         } catch (err) {
           sp.lastGenErr = String(err);
           sp.processedInitDataKeys.delete(keySig);
+          logAudioDiag('eme-license-err', {
+            appId: sp.appId,
+            sourceType: sp.sourceType,
+            err: String(err)
+          });
         }
       });
       await sess.generateRequest(req.initDataType, req.initData);
     } catch (err) {
       sp.lastGenErr = String(err);
+      logAudioDiag('eme-gen-err', {
+        appId: sp.appId,
+        sourceType: sp.sourceType,
+        err: String(err)
+      });
     }
   }
 }
@@ -2892,9 +3026,13 @@ function attachFreshSpMediaSource(sp, effectiveMime) {
               drainSpInstanceQueue(sp);
               if (!sp.isStaging && sp.retireBgWhenBuffered && sp.videoEl) {
                 const rem = getSpBufferedEnd(sp) - (sp.videoEl.currentTime || 0);
-                if (rem >= 8.0) {
+                if (rem >= 5.5) {
                   sp.retireBgWhenBuffered = false;
                   clearTimeout(sp.retireBgTimer);
+                  logAudioDiag('retire-bg-after-buffer', {
+                    appId: sp.appId,
+                    rem: Math.round(rem * 100) / 100
+                  });
                   if (bgAudioPool.has(sp.appId)) {
                     removeBgAudioIframeOnly(sp.appId);
                   }
@@ -3146,6 +3284,12 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
     if (bgAudioPool.has(appId)) {
       removeBgAudioIframeOnly(appId);
     }
+    logAudioDiag('stop-playback', {
+      appId,
+      sourceType,
+      explicitStop: Boolean(data.explicitStop),
+      href: data.href || ''
+    });
     const stagingSp = bgStagingSpPlayers.get(appId);
     if (stagingSp) {
       disposeSpPlayerInstance(stagingSp);
@@ -3180,21 +3324,45 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
   }
 
   if (bt === 'USER_PLAY_INTENT') {
-    if (isAutoPausedByTabAudio) {
+    if (isAutoPausedByTabAudio || knownActiveMediaTabIds.size > 0) {
       manualOverrideWhileTabAudible = true;
       audibleOverrideTabIds.clear();
       knownActiveMediaTabIds.forEach((tid) => audibleOverrideTabIds.add(tid));
+      if (browser.tabs && typeof browser.tabs.query === 'function') {
+        browser.tabs
+          .query({ audible: true })
+          .then((tabs) => {
+            (tabs || []).forEach((t) => {
+              if (t && typeof t.id === 'number' && t.audible && isExternalBrowserTab(t)) {
+                audibleOverrideTabIds.add(t.id);
+              }
+            });
+          })
+          .catch(() => {});
+      }
+      if (isAutoPausedByTabAudio) {
+        setTabAudioPauseTrigger(false, false);
+        browser.runtime
+          .sendMessage({
+            type: 'PM_TAB_AUDIO_AUTO_PAUSE_STATE',
+            autoPaused: false
+          })
+          .catch(() => {});
+      }
+      logAudioDiag('tab-manual-override', {
+        appId,
+        sourceType,
+        overriddenTabs: Array.from(audibleOverrideTabIds)
+      });
     }
     tabAutoPausedSpAppIds.delete(appId);
     const curStaging = bgStagingSpPlayers.get(appId);
-    if (
-      curStaging &&
-      getSpBufferedEnd(curStaging) > 0 &&
-      !(appId === 'spotify' && bgAudioPool.has('spotify') && curStaging.sourceType === 'sidebar')
-    ) {
+    if (curStaging && getSpBufferedEnd(curStaging) > 0) {
       promoteStagingSpPlayer(appId, false);
     }
-    if (appId === 'spotify' && bgAudioPool.has('spotify')) {
+    if (sourceType === 'sidebar' && bgAudioPool.has(appId)) {
+      removeBgAudioIframeOnly(appId);
+    } else if (appId === 'spotify' && bgAudioPool.has('spotify')) {
       const bgPort = emeBridgePorts.get('bg:spotify');
       if (bgPort) {
         try {
@@ -3220,6 +3388,7 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       activeSp.lastPlayedAt = Date.now();
       syncSpInstanceTimeAndPlay(activeSp);
     }
+    logAudioDiag('user-play-intent', { appId, sourceType });
     refreshBgAudioIndicator();
     return;
   }
@@ -3232,19 +3401,14 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
     }
   }
 
-  // If the sidebar frame for this app is actively streaming MSE/EME or playing, transition takeover from bgAudioPool to sidebar!
-  // For Spotify, keep pm-bg-audio-spotify alive as Background Master (0ms reload, 0 skipped seconds) unless sidebar actually starts local audio playback!
+  // If the sidebar frame for this app is actively streaming MSE/EME or playing, transition takeover from bgAudioPool to sidebar
+  // so two open.spotify.com Harmony instances never compete on the same Spotify Connect account!
   const shouldTransitionBgToSidebar =
     sourceType === 'sidebar' &&
     bgAudioPool.has(appId) &&
-    (appId === 'spotify'
-      ? bt === 'SYNC_TIME' && !data.paused && Boolean(sidebarHasAppendedSpChunks.get('spotify'))
-      : bt === 'MSE_INIT' || bt === 'GEN_REQ' || bt === 'MSE_CHUNK' || (bt === 'SYNC_TIME' && !data.paused));
+    (bt === 'MSE_INIT' || bt === 'GEN_REQ' || bt === 'MSE_CHUNK' || (bt === 'SYNC_TIME' && !data.paused));
   if (shouldTransitionBgToSidebar) {
     const activeSp = bgSpEmePlayers.get(appId);
-    if (!(activeSp && activeSp.retireBgWhenBuffered)) {
-      removeBgAudioIframeOnly(appId);
-    }
     if (activeSp && !activeSp.disposed) {
       activeSp.awaitingBgFrameHandoff = true;
       activeSp.handoffStartedAt = Date.now();
@@ -3252,6 +3416,23 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       if (!isTabAutoPauseEnforced()) {
         activeSp.remotePaused = false;
       }
+      const remBuf = getSpBufferedEnd(activeSp) - (Number(activeSp.videoEl?.currentTime) || 0);
+      if (appId !== 'spotify' || remBuf >= 5.5) {
+        activeSp.retireBgWhenBuffered = false;
+        clearTimeout(activeSp.retireBgTimer);
+        removeBgAudioIframeOnly(appId);
+      } else if (!activeSp.retireBgWhenBuffered) {
+        activeSp.retireBgWhenBuffered = true;
+        clearTimeout(activeSp.retireBgTimer);
+        activeSp.retireBgTimer = setTimeout(() => {
+          activeSp.retireBgWhenBuffered = false;
+          if (bgAudioPool.has(appId)) {
+            removeBgAudioIframeOnly(appId);
+          }
+        }, 3800);
+      }
+    } else {
+      removeBgAudioIframeOnly(appId);
     }
   }
 
@@ -3304,21 +3485,7 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
 
   const routeActiveSp = bgSpEmePlayers.get(appId);
   const routeStagingSp = bgStagingSpPlayers.get(appId);
-  const isSpotifyPassiveSidebarWhileBgMaster =
-    appId === 'spotify' &&
-    sourceType === 'sidebar' &&
-    bgAudioPool.has('spotify') &&
-    !(routeActiveSp && routeActiveSp.awaitingBgFrameHandoff && routeActiveSp.handoffSource === 'sidebar');
-  if (isSpotifyPassiveSidebarWhileBgMaster) {
-    // Never disturb an in-progress sidebar->bg handoff, and ignore passive VOLUME / paused SYNC_TIME from sidebar
-    if (
-      (routeActiveSp && routeActiveSp.awaitingBgFrameHandoff && routeActiveSp.handoffSource === 'bg') ||
-      bt === 'VOLUME' ||
-      (bt === 'SYNC_TIME' && data.paused)
-    ) {
-      return;
-    }
-  } else if (
+  if (
     sourceType === 'sidebar' &&
     bgAudioPool.has(appId) &&
     !(routeActiveSp && routeActiveSp.awaitingBgFrameHandoff && routeActiveSp.handoffSource === 'sidebar')
@@ -3348,8 +3515,7 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
     (routeStagingSp && routeStagingSp.sourceType) ||
     'bg';
   const useStaging =
-    isSpotifyPassiveSidebarWhileBgMaster ||
-    (sourceType === handoffSrc && (shouldRouteBgToStaging(appId) || Boolean(routeStagingSp)));
+    sourceType === handoffSrc && (shouldRouteBgToStaging(appId) || Boolean(routeStagingSp));
 
   if (bt === 'MSE_INIT') {
     if (useStaging) {
@@ -3570,7 +3736,6 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
     }
     if (
       appId === 'spotify' &&
-      sourceType === 'bg' &&
       data.paused &&
       !data.explicitPause &&
       !data.autoPausedByTab &&
@@ -3579,11 +3744,28 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
       !sp.videoEl.paused &&
       getSpBufferedEnd(sp) - (sp.videoEl.currentTime || 0) > 0.4
     ) {
-      // Ignore transient Harmony rebuffer pause while background audio still has buffered runway
+      // Ignore transient Harmony rebuffer pause while audio mirror still has buffered runway
+      logAudioDiag('ignore-transient-harmony-pause', {
+        appId,
+        sourceType,
+        ct: Math.round((sp.videoEl.currentTime || 0) * 100) / 100,
+        bufEnd: Math.round(getSpBufferedEnd(sp) * 100) / 100
+      });
       return;
     }
+    const prevRemotePaused = sp.remotePaused;
     sp.targetTime = Number(data.currentTime) || 0;
     sp.remotePaused = Boolean(data.paused);
+    if (prevRemotePaused !== sp.remotePaused) {
+      logAudioDiag(sp.remotePaused ? 'sync-paused' : 'sync-playing', {
+        appId,
+        sourceType,
+        ct: Math.round(sp.targetTime * 100) / 100,
+        explicitPause: Boolean(data.explicitPause),
+        spUiStillPlaying: Boolean(data.spUiStillPlaying),
+        trackTitle: sp.trackTitle || ''
+      });
+    }
     if (data.autoPausedByTab) {
       sp.autoPausedByTab = true;
       sp.explicitUserPause = false;
@@ -3648,9 +3830,6 @@ function handleSpEmeBridgeMessage(appId, data, sourceType = 'bg') {
         }
       }
       sp.lastPlayedAt = Date.now();
-      if (appId === 'spotify' && sourceType === 'sidebar' && !bgAudioPool.has('spotify')) {
-        scheduleStandbyBgSpotifyPrewarm();
-      }
     } else if (data.explicitPause) {
       sp.autoPausedByTab = false;
       sp.explicitUserPause = true;
@@ -3768,37 +3947,8 @@ function disposeAllStandbyBgFrames() {
 }
 
 function scheduleStandbyBgSpotifyPrewarm() {
-  if (standbySpotifyPrewarmTimer || bgAudioPool.has('spotify') || bgStandbyPool.has('spotify')) return;
-  const mode = currentSettings.persistenceMode || 'selected';
-  if (mode === 'eco' || currentSettings.keepAudioPlayingWhenClosed === false || !isAppAllowedForBgAudio('spotify')) {
-    return;
-  }
-  standbySpotifyPrewarmTimer = setTimeout(() => {
-    standbySpotifyPrewarmTimer = null;
-    if (!document.body || bgAudioPool.has('spotify') || bgStandbyPool.has('spotify')) return;
-    if (!isAppAllowedForBgAudio('spotify') || currentSettings.keepAudioPlayingWhenClosed === false) return;
-    const sp = bgSpEmePlayers.get('spotify');
-    if (!sp || sp.disposed || sp.explicitUserPause) return;
-    const targetUrl =
-      liveMediaPlaybackState.get('spotify')?.resumeUrl ||
-      currentSettings.persistentSavedAppUrls?.spotify ||
-      'https://open.spotify.com/';
-    const iframe = document.createElement('iframe');
-    iframe.name = 'pm-bg-standby-spotify';
-    iframe.setAttribute(
-      'allow',
-      'autoplay *; encrypted-media *; clipboard-write *; picture-in-picture *; fullscreen *'
-    );
-    iframe.style.cssText =
-      'position:fixed;left:0;top:0;width:420px;height:680px;opacity:0.001;pointer-events:none;z-index:-1;border:none;';
-    iframe.src = targetUrl;
-    document.body.appendChild(iframe);
-    bgStandbyPool.set('spotify', {
-      frame: iframe,
-      url: targetUrl,
-      createdAt: Date.now()
-    });
-  }, 850);
+  // Never spawn a second open.spotify.com Harmony instance while the sidebar is open:
+  // activeSp.videoEl's 15-35s RAM SourceBuffer already bridges sidebar close with 0.0ms audio gap!
 }
 window.__pmGetStandbyPoolIds = () => Array.from(bgStandbyPool.keys());
 
@@ -3851,6 +4001,11 @@ function startBackgroundAudioKeepAlive(appId, targetUrl, title = '') {
     stopSingleBackgroundAudioFrame(appId);
     return;
   }
+  logAudioDiag('start-bg-keepalive', {
+    appId,
+    targetUrl,
+    alreadyInPool: bgAudioPool.has(appId)
+  });
 
   // Ensure only one background audio app plays at a time (never YouTube + Spotify simultaneously)
   Array.from(bgAudioPool.keys()).forEach((otherId) => {
@@ -4102,49 +4257,8 @@ if (browser.runtime && browser.runtime.onConnect) {
     if (!port) return;
     if (port.name === 'foxhub-eme-bridge') {
       let portKey = '';
-      const portBgTimers = new Map();
-      const clearPortTimer = (tid) => {
-        const entry = portBgTimers.get(tid);
-        if (!entry) return;
-        portBgTimers.delete(tid);
-        if (entry.isInterval) {
-          clearInterval(entry.handle);
-        } else {
-          clearTimeout(entry.handle);
-        }
-      };
       port.onMessage.addListener((msg) => {
-        if (!msg) return;
-        if (msg.type === 'PM_BG_TIMER_BRIDGE') {
-          const tid = Number(msg.timerId);
-          if (!(tid > 0)) return;
-          if (msg.op === 'SET') {
-            clearPortTimer(tid);
-            const delay = Math.max(16, Math.min(60000, Number(msg.delay) || 50));
-            if (msg.isInterval) {
-              const handle = setInterval(() => {
-                try {
-                  port.postMessage({ cmd: 'BG_TIMER_FIRE', timerId: tid, isInterval: true });
-                } catch (_) {
-                  clearPortTimer(tid);
-                }
-              }, delay);
-              portBgTimers.set(tid, { handle, isInterval: true });
-            } else {
-              const handle = setTimeout(() => {
-                portBgTimers.delete(tid);
-                try {
-                  port.postMessage({ cmd: 'BG_TIMER_FIRE', timerId: tid, isInterval: false });
-                } catch (_) {}
-              }, delay);
-              portBgTimers.set(tid, { handle, isInterval: false });
-            }
-          } else if (msg.op === 'CLEAR') {
-            clearPortTimer(tid);
-          }
-          return;
-        }
-        if (msg.type !== 'PM_SP_EME_BRIDGE') return;
+        if (!msg || msg.type !== 'PM_SP_EME_BRIDGE') return;
         const fn = typeof msg.flatFrameName === 'string' ? msg.flatFrameName : '';
         let appId = '';
         let sourceType = 'sidebar';
@@ -4184,14 +4298,6 @@ if (browser.runtime && browser.runtime.onConnect) {
         handleSpEmeBridgeMessage(appId, msg, sourceType);
       });
       port.onDisconnect.addListener(() => {
-        portBgTimers.forEach((entry) => {
-          if (entry.isInterval) {
-            clearInterval(entry.handle);
-          } else {
-            clearTimeout(entry.handle);
-          }
-        });
-        portBgTimers.clear();
         if (portKey && emeBridgePorts.get(portKey) === port) {
           emeBridgePorts.delete(portKey);
         }
@@ -4866,8 +4972,6 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     }
 
     case 'SIDEBAR_SP_TAKEOVER_BEGIN': {
-      // For Spotify: when pm-bg-audio-spotify is already alive in bgAudioPool (and not user-paused), keep it as Background Master
-      // so reopening FoxHub causes 0ms reload and 0 skipped seconds while pm-media-frame-spotify renders live Spotify Connect UI!
       const appId = msg.appId || 'spotify';
       const activeSp = bgSpEmePlayers.get(appId);
       if (isTabAutoPauseEnforced()) {
@@ -4884,34 +4988,20 @@ browser.runtime.onMessage.addListener((msg, sender) => {
             }
           }
         }
+        logAudioDiag('sidebar-takeover-autopaused', { appId });
         return Promise.resolve({ ok: true, resume: false, autoPausedByTab: true });
       }
       const mirrorPlaying = Boolean(
         activeSp && !activeSp.disposed && activeSp.videoEl && !activeSp.videoEl.paused && !activeSp.remotePaused
       );
+      const wasBgPlaying = Boolean(
+        (mirrorPlaying || (bgAudioPool.has(appId) && !(activeSp && activeSp.explicitUserPause))) &&
+          !isTabAutoPauseEnforced()
+      );
       if (!bgAudioPool.has(appId) && !mirrorPlaying) {
         return Promise.resolve({ ok: true, resume: false });
       }
-      if (appId === 'spotify' && bgAudioPool.has('spotify')) {
-        const bgEntry = bgAudioPool.get('spotify');
-        const bgStillActive = Boolean(
-          bgEntry &&
-            bgEntry.frame &&
-            bgEntry.frame.isConnected &&
-            !(activeSp && activeSp.explicitUserPause) &&
-            (mirrorPlaying ||
-              (activeSp && !activeSp.disposed && activeSp.awaitingBgFrameHandoff && activeSp.handoffSource === 'bg') ||
-              Date.now() - (bgEntry.startedAt || 0) < 12000)
-        );
-        if (bgStillActive) {
-          sidebarHasAppendedSpChunks.set('spotify', false);
-          if (activeSp && !activeSp.disposed && activeSp.videoEl) {
-            activeSp.videoEl.playbackRate = 1.0;
-          }
-          return Promise.resolve({ ok: true, resume: false, bgMasterActive: true });
-        }
-      }
-      if (mirrorPlaying) {
+      if (wasBgPlaying && activeSp && !activeSp.disposed) {
         activeSp.lastPlayedAt = Date.now();
         activeSp.awaitingBgFrameHandoff = true;
         activeSp.handoffStartedAt = Date.now();
@@ -4923,14 +5013,36 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         if (appId === 'spotify') {
           ensureStagingSpEmePlayer(appId, activeSp.mime || 'audio/mp4; codecs="mp4a.40.2"', 0, 'sidebar');
         }
+        const remBuf = getSpBufferedEnd(activeSp) - (Number(activeSp.videoEl?.currentTime) || 0);
+        logAudioDiag('sidebar-takeover-begin', {
+          appId,
+          remBuf: Math.round(remBuf * 100) / 100,
+          ct: Math.round((Number(activeSp.videoEl?.currentTime) || 0) * 100) / 100
+        });
+        if (appId !== 'spotify' || remBuf >= 5.5) {
+          activeSp.retireBgWhenBuffered = false;
+          clearTimeout(activeSp.retireBgTimer);
+          removeBgAudioIframeOnly(appId);
+        } else {
+          activeSp.retireBgWhenBuffered = true;
+          clearTimeout(activeSp.retireBgTimer);
+          activeSp.retireBgTimer = setTimeout(() => {
+            activeSp.retireBgWhenBuffered = false;
+            if (bgAudioPool.has(appId)) {
+              removeBgAudioIframeOnly(appId);
+            }
+          }, 3800);
+        }
+      } else {
+        removeBgAudioIframeOnly(appId);
       }
-      removeBgAudioIframeOnly(appId);
-      return Promise.resolve({ ok: true, resume: mirrorPlaying });
+      return Promise.resolve({ ok: true, resume: wasBgPlaying });
     }
 
     case 'PM_SP_SIDEBAR_PLAYPAUSE_CLICK': {
       const appId = msg.appId || 'spotify';
       const aria = String(msg.aria || '').toLowerCase();
+      logAudioDiag('sidebar-playpause-click', { appId, aria });
       if (aria.includes('pause')) {
         const sp = bgSpEmePlayers.get(appId);
         if (sp && sp.videoEl) {
@@ -4941,24 +5053,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
             sp.videoEl.pause();
           } catch (_) {}
         }
-        if (appId === 'spotify' && bgAudioPool.has('spotify')) {
-          // Keep pm-bg-audio-spotify warm while sidebar is open so clicking Play again resumes in 0ms without reloading!
-          const bgPort = emeBridgePorts.get('bg:spotify');
-          if (bgPort) {
-            try {
-              bgPort.postMessage({ cmd: 'PAUSE_BG_SP_MEDIA' });
-            } catch (_) {}
-          }
-          const bgEntry = bgAudioPool.get('spotify');
-          if (bgEntry && bgEntry.frame && bgEntry.frame.contentWindow) {
-            try {
-              bgEntry.frame.contentWindow.postMessage(
-                { target: 'pocketmail-media-frame', cmd: 'PAUSE_BG_SP_MEDIA' },
-                '*'
-              );
-            } catch (_) {}
-          }
-        } else if (bgAudioPool.has(appId)) {
+        if (bgAudioPool.has(appId)) {
           removeBgAudioIframeOnly(appId);
         }
         const st = liveMediaPlaybackState.get(appId);
@@ -5041,7 +5136,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
           url: resumeUrl,
           title: val.title,
           autoPausedByTab: currentlyPausedByTab,
-          bgMasterActive: Boolean(id === 'spotify' && actuallyPlaying)
+          bgMasterActive: false
         });
         liveMediaPlaybackState.set(id, {
           isPlaying: actuallyPlaying,
@@ -5093,20 +5188,37 @@ browser.runtime.onMessage.addListener((msg, sender) => {
       });
     }
 
+    case 'GET_AUDIO_DIAGNOSTICS': {
+      return Promise.resolve({
+        ok: true,
+        diagnostics: buildAudioDiagnosticsSnapshot()
+      });
+    }
+
     case 'EXTERNAL_TAB_MEDIA_PLAYING': {
       if (sender && sender.tab && isExternalBrowserTab(sender.tab)) {
         const tid = sender.tab.id;
-        if (typeof tid === 'number') {
-          knownActiveMediaTabIds.add(tid);
-          recentlyStoppedMediaTabMap.delete(tid);
+        // CRITICAL: Only treat an external tab as playing audio when Firefox's OS audio mixer confirms sender.tab.audible === true!
+        // Silent autoplaying <video> elements on Reddit/X/news sites that lack .muted=true have sender.tab.audible === false and must NEVER stop Spotify!
+        if (Boolean(sender.tab.audible)) {
+          if (typeof tid === 'number') {
+            knownActiveMediaTabIds.add(tid);
+            recentlyStoppedMediaTabMap.delete(tid);
+            silentTabHoldSince.delete(tid);
+          }
+          if (pendingTabResumeTimer) {
+            clearTimeout(pendingTabResumeTimer);
+            pendingTabResumeTimer = null;
+          }
+          if (!(typeof tid === 'number' && audibleOverrideTabIds.has(tid))) {
+            manualOverrideWhileTabAudible = false;
+            audibleOverrideTabIds.clear();
+          }
+          checkExternalTabAudioState();
+        } else {
+          // Recheck shortly in case Firefox updates sender.tab.audible=true a moment after <video>.play() starts
+          setTimeout(checkExternalTabAudioState, 240);
         }
-        if (pendingTabResumeTimer) {
-          clearTimeout(pendingTabResumeTimer);
-          pendingTabResumeTimer = null;
-        }
-        manualOverrideWhileTabAudible = false;
-        audibleOverrideTabIds.clear();
-        checkExternalTabAudioState();
       }
       return Promise.resolve({ ok: true });
     }
@@ -5116,6 +5228,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
         const tid = sender.tab.id;
         if (typeof tid === 'number') {
           knownActiveMediaTabIds.delete(tid);
+          silentTabHoldSince.delete(tid);
           recentlyStoppedMediaTabMap.set(tid, Date.now());
         }
         checkExternalTabAudioState();
@@ -5217,6 +5330,10 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 // Opera GX-style Auto-Pause & Auto-Resume when external browser tabs play audio
 function pauseAllForTabAudioAutoPause(stayStopped = false) {
   setTabAudioPauseTrigger(true, stayStopped);
+  logAudioDiag('tab-audio-auto-pause', {
+    stayStopped,
+    activeTabs: Array.from(knownActiveMediaTabIds)
+  });
   const pauseCmd = stayStopped ? 'PAUSE_LOCAL_MEDIA' : 'TAB_AUDIO_AUTO_PAUSE';
 
   bgSpEmePlayers.forEach((sp, appId) => {
@@ -5328,6 +5445,9 @@ function pauseAllForTabAudioAutoPause(stayStopped = false) {
 function resumeAllFromTabAudioAutoPause() {
   setTabAudioPauseTrigger(false, false);
   manualOverrideWhileTabAudible = false;
+  logAudioDiag('tab-audio-auto-resume', {
+    spApps: Array.from(tabAutoPausedSpAppIds)
+  });
 
   bgSpEmePlayers.forEach((sp, appId) => {
     if (!sp || sp.disposed) return;
@@ -5416,6 +5536,8 @@ async function checkExternalTabAudioState() {
     knownActiveMediaTabIds.clear();
     recentlyStoppedMediaTabMap.clear();
     audibleOverrideTabIds.clear();
+    silentTabHoldSince.clear();
+    manualOverrideWhileTabAudible = false;
     if (isAutoPausedByTabAudio) {
       resumeAllFromTabAudioAutoPause();
     }
@@ -5424,10 +5546,31 @@ async function checkExternalTabAudioState() {
   try {
     const audibleTabs = await browser.tabs.query({ audible: true });
     const rawExternalAudible = (audibleTabs || []).filter((t) => Boolean(t && t.audible && isExternalBrowserTab(t)));
+    const rawAudibleIdSet = new Set(
+      rawExternalAudible.map((t) => t.id).filter((id) => typeof id === 'number')
+    );
+
+    // Prune manual-override tab IDs that are no longer audible and no longer tracked
+    if (audibleOverrideTabIds.size > 0) {
+      Array.from(audibleOverrideTabIds).forEach((id) => {
+        if (!rawAudibleIdSet.has(id) && !knownActiveMediaTabIds.has(id)) {
+          audibleOverrideTabIds.delete(id);
+        }
+      });
+      if (audibleOverrideTabIds.size === 0) {
+        manualOverrideWhileTabAudible = false;
+      }
+    }
+
     const externalAudible = [];
     for (let i = 0; i < rawExternalAudible.length; i++) {
       const t = rawExternalAudible[i];
       const tid = t.id;
+      if (manualOverrideWhileTabAudible && typeof tid === 'number' && audibleOverrideTabIds.has(tid)) {
+        // User explicitly pressed Play in Spotify while this external tab was playing audio — honor user intent!
+        silentTabHoldSince.delete(tid);
+        continue;
+      }
       const stoppedAt = typeof tid === 'number' ? recentlyStoppedMediaTabMap.get(tid) || 0 : 0;
       if (stoppedAt && Date.now() - stoppedAt < 2400) {
         const mediaCheck = await Promise.race([
@@ -5436,6 +5579,7 @@ async function checkExternalTabAudioState() {
         ]);
         if (!(mediaCheck && mediaCheck.hasActiveMedia)) {
           knownActiveMediaTabIds.delete(tid);
+          silentTabHoldSince.delete(tid);
           continue;
         }
         recentlyStoppedMediaTabMap.delete(tid);
@@ -5447,18 +5591,37 @@ async function checkExternalTabAudioState() {
       if (typeof t.id === 'number') {
         knownActiveMediaTabIds.add(t.id);
         recentlyStoppedMediaTabMap.delete(t.id);
+        silentTabHoldSince.delete(t.id);
       }
     });
 
+    // Build effective non-overridden active media tab IDs
+    const getEffectiveKnownMediaIds = () =>
+      Array.from(knownActiveMediaTabIds).filter(
+        (tid) => !(manualOverrideWhileTabAudible && audibleOverrideTabIds.has(tid))
+      );
+
     // If Firefox temporarily dropped tab.audible=false (e.g. quiet music video intro/scene, seeking, or buffering),
-    // query previously active media tabs before falsely unpausing Spotify!
-    if (externalAudible.length === 0 && knownActiveMediaTabIds.size > 0) {
-      const candidateIds = Array.from(knownActiveMediaTabIds);
-      for (let i = 0; i < candidateIds.length; i++) {
-        const tid = candidateIds[i];
+    // query previously active media tabs before falsely unpausing Spotify — capped at 4.2s max silent hold so silent videos never lock Spotify!
+    const effectiveKnownBeforeCheck = getEffectiveKnownMediaIds();
+    if (externalAudible.length === 0 && effectiveKnownBeforeCheck.length > 0) {
+      const nowHold = Date.now();
+      for (let i = 0; i < effectiveKnownBeforeCheck.length; i++) {
+        const tid = effectiveKnownBeforeCheck[i];
+        const holdStart = silentTabHoldSince.get(tid) || 0;
+        if (!holdStart) {
+          silentTabHoldSince.set(tid, nowHold);
+        } else if (nowHold - holdStart > 4200) {
+          // Tab has reported audible=false for >4.2s continuously — release hold so Spotify is never stuck paused!
+          knownActiveMediaTabIds.delete(tid);
+          silentTabHoldSince.delete(tid);
+          audibleOverrideTabIds.delete(tid);
+          continue;
+        }
         const tabInfo = await browser.tabs.get(tid).catch(() => null);
         if (!isExternalBrowserTab(tabInfo)) {
           knownActiveMediaTabIds.delete(tid);
+          silentTabHoldSince.delete(tid);
           audibleOverrideTabIds.delete(tid);
           continue;
         }
@@ -5468,12 +5631,14 @@ async function checkExternalTabAudioState() {
         ]);
         if (!(mediaCheck && mediaCheck.hasActiveMedia)) {
           knownActiveMediaTabIds.delete(tid);
+          silentTabHoldSince.delete(tid);
           audibleOverrideTabIds.delete(tid);
         }
       }
     }
 
-    const hasActiveExternalMedia = externalAudible.length > 0 || knownActiveMediaTabIds.size > 0;
+    const effectiveKnownAfterCheck = getEffectiveKnownMediaIds();
+    const hasActiveExternalMedia = externalAudible.length > 0 || effectiveKnownAfterCheck.length > 0;
 
     if (hasActiveExternalMedia) {
       if (pendingTabResumeTimer) {
@@ -5490,12 +5655,14 @@ async function checkExternalTabAudioState() {
       if (!isAutoPausedByTabAudio || anyBgStillAudible || anySpUnmutedOrPlaying) {
         pauseAllForTabAudioAutoPause(behavior === 'pause-only');
       }
-      if (externalAudible.length === 0 && knownActiveMediaTabIds.size > 0) {
+      if (externalAudible.length === 0 && effectiveKnownAfterCheck.length > 0) {
         silentMediaRecheckTimer = setTimeout(checkExternalTabAudioState, 1200);
       }
     } else {
-      manualOverrideWhileTabAudible = false;
-      audibleOverrideTabIds.clear();
+      if (rawExternalAudible.length === 0 && knownActiveMediaTabIds.size === 0) {
+        manualOverrideWhileTabAudible = false;
+        audibleOverrideTabIds.clear();
+      }
       if (isAutoPausedByTabAudio) {
         if (behavior === 'pause-only') {
           if (pendingTabResumeTimer) {
@@ -5510,7 +5677,11 @@ async function checkExternalTabAudioState() {
           // Clean 340ms settle debounce prevents quarter-second blips during YouTube playlist track transitions
           pendingTabResumeTimer = setTimeout(() => {
             pendingTabResumeTimer = null;
-            if (isAutoPausedByTabAudio && knownActiveMediaTabIds.size === 0) {
+            const stillOverriddenOrEmpty =
+              Array.from(knownActiveMediaTabIds).filter(
+                (tid) => !(manualOverrideWhileTabAudible && audibleOverrideTabIds.has(tid))
+              ).length === 0;
+            if (isAutoPausedByTabAudio && stillOverriddenOrEmpty) {
               resumeAllFromTabAudioAutoPause();
             }
           }, 340);
@@ -5520,10 +5691,58 @@ async function checkExternalTabAudioState() {
   } catch (_) {}
 }
 
-// Continuous background watchdog: enforces the in-memory auto-pause trigger on all active/staging audio elements
-// and periodically polls tab audio state whenever background audio is active or auto-paused.
+// Continuous background watchdog: enforces the in-memory auto-pause trigger on all active/staging audio elements,
+// tracks live playback head progression to prevent stuck header banners, and polls external tab audio state.
 let lastWatchdogTabPollAt = 0;
 setInterval(() => {
+  const now = Date.now();
+  bgSpEmePlayers.forEach((sp) => {
+    if (!sp || sp.disposed || !sp.videoEl) return;
+    if (!sp.videoEl.paused) {
+      const ct = Number(sp.videoEl.currentTime) || 0;
+      if (Math.abs(ct - (sp.lastObservedCt || 0)) > 0.02) {
+        sp.lastObservedCt = ct;
+        sp.lastTimeAdvanceAt = now;
+      } else if (
+        sp.appId === 'spotify' &&
+        !sp.isStaging &&
+        !sp.remotePaused &&
+        !sp.explicitUserPause &&
+        !isTabAutoPauseEnforced()
+      ) {
+        const bufEnd = getSpBufferedEnd(sp);
+        if (bufEnd > 2 && bufEnd - ct <= 0.04 && sp.lastTimeAdvanceAt > 0 && now - sp.lastTimeAdvanceAt > 2800) {
+          refreshBgAudioIndicator();
+          if (!sp.lastStarveNudgeAt || now - sp.lastStarveNudgeAt > 12000) {
+            sp.lastStarveNudgeAt = now;
+            logAudioDiag('buffer-starved-nudge', {
+              ct: Math.round(ct * 100) / 100,
+              bufEnd: Math.round(bufEnd * 100) / 100,
+              sourceType: sp.sourceType,
+              bgPool: bgAudioPool.has('spotify')
+            });
+            if (bgAudioPool.has('spotify')) {
+              const bgPort = emeBridgePorts.get('bg:spotify');
+              if (bgPort) {
+                try {
+                  bgPort.postMessage({ cmd: 'RESUME_BG_SP_MEDIA' });
+                } catch (_) {}
+              }
+              const bgEntry = bgAudioPool.get('spotify');
+              if (bgEntry && bgEntry.frame && bgEntry.frame.contentWindow) {
+                try {
+                  bgEntry.frame.contentWindow.postMessage(
+                    { target: 'pocketmail-media-frame', cmd: 'RESUME_BG_SP_MEDIA' },
+                    '*'
+                  );
+                } catch (_) {}
+              }
+            }
+          }
+        }
+      }
+    }
+  });
   if (isTabAutoPauseEnforced()) {
     bgSpEmePlayers.forEach((sp) => {
       if (sp && !sp.disposed && sp.videoEl) {
@@ -5549,7 +5768,6 @@ setInterval(() => {
   const hasAnyBgAudioOrAutoPaused =
     isAutoPausedByTabAudio || bgAudioPool.size > 0 || bgSpEmePlayers.size > 0 || bgMsePlayers.size > 0;
   if (hasAnyBgAudioOrAutoPaused && getTabAudioBehavior() !== 'off') {
-    const now = Date.now();
     if (now - lastWatchdogTabPollAt >= 900) {
       lastWatchdogTabPollAt = now;
       checkExternalTabAudioState();

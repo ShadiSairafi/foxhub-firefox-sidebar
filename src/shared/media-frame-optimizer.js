@@ -289,13 +289,10 @@
     let mirrorWasPlaying = false;
     let mirrorAutoPausedByTab = false;
     let pendingYtSeekTarget = null; // { time: number, expiresAt: number }
-    let bgTimerSeq = 900000000;
-    const bridgedTimerCallbacks = new Map(); // timerId -> { cb, extraArgs, isInterval }
     let runMirrorSyncTick = () => {};
 
     const closeDealerSocketsForHandoff = () => {
       isFrameUnloading = true;
-      bridgedTimerCallbacks.clear();
       dealerSockets.forEach((ws) => {
         try {
           if (ws && ws.readyState <= 1) {
@@ -312,40 +309,6 @@
     window.addEventListener('pagehide', markUnloading, true);
     window.addEventListener('beforeunload', markUnloading, true);
     window.addEventListener('unload', markUnloading, true);
-
-    // Prevent Firefox compositor from freezing requestAnimationFrame to 0fps inside hidden background audio keep-alive frames!
-    if ((isBgAudioFrame || isStandbyBgFrame) && pageWin.requestAnimationFrame) {
-      try {
-        let rafSeq = 1;
-        const rafTimers = new Map();
-        exportFunction(
-          function (cb) {
-            const id = ++rafSeq;
-            const tid = window.setTimeout(() => {
-              rafTimers.delete(id);
-              try {
-                cb(window.performance && typeof window.performance.now === 'function' ? window.performance.now() : Date.now());
-              } catch (_) {}
-            }, 33);
-            rafTimers.set(id, tid);
-            return id;
-          },
-          pageWin,
-          { defineAs: 'requestAnimationFrame' }
-        );
-        exportFunction(
-          function (id) {
-            const tid = rafTimers.get(Number(id));
-            if (tid !== undefined) {
-              rafTimers.delete(Number(id));
-              window.clearTimeout(tid);
-            }
-          },
-          pageWin,
-          { defineAs: 'cancelAnimationFrame' }
-        );
-      } catch (_) {}
-    }
 
     const notifySidebarUserInteraction = (ev) => {
       if (isBgAudioFrame || isStandbyBgFrame || IS_YT) return;
@@ -422,22 +385,6 @@
           emeBridgePort = browser.runtime.connect({ name: 'foxhub-eme-bridge' });
           emeBridgePort.onMessage.addListener((msg) => {
             if (!msg || !msg.cmd) return;
-            if (msg.cmd === 'BG_TIMER_FIRE') {
-              const tid = Number(msg.timerId);
-              const entry = bridgedTimerCallbacks.get(tid);
-              if (!entry) return;
-              if (!entry.isInterval) {
-                bridgedTimerCallbacks.delete(tid);
-              }
-              try {
-                if (entry.extraArgs) {
-                  entry.cb.apply(pageWin, entry.extraArgs);
-                } else {
-                  entry.cb.call(pageWin);
-                }
-              } catch (_) {}
-              return;
-            }
             if (msg.cmd === 'BG_HEARTBEAT_TICK') {
               if (isBgAudioFrame && !isFrameUnloading) {
                 try {
@@ -544,111 +491,6 @@
       return emeBridgePort;
     };
     ensureBridgePort();
-
-    // Unthrottled timer bridge for hidden Spotify background frames: prevents Gecko's background tab budget
-    // from throttling Harmony segment fetches or dealer.spotify.com WebSocket heartbeats over long sessions!
-    if (!IS_YT && (isBgAudioFrame || isStandbyBgFrame) && pageWin.setTimeout && pageWin.setInterval) {
-      try {
-        const origSetTimeout = pageWin.setTimeout;
-        const origClearTimeout = pageWin.clearTimeout;
-        const origSetInterval = pageWin.setInterval;
-        const origClearInterval = pageWin.clearInterval;
-
-        exportFunction(
-          function (cb, delay) {
-            const ms = Number(delay) || 0;
-            if (typeof cb === 'function' && !isFrameUnloading && ms >= 45 && ms <= 45000) {
-              const port = ensureBridgePort();
-              if (port) {
-                const tid = ++bgTimerSeq;
-                const extraArgs = arguments.length > 2 ? Array.prototype.slice.call(arguments, 2) : null;
-                bridgedTimerCallbacks.set(tid, { cb, extraArgs, isInterval: false });
-                try {
-                  port.postMessage({
-                    type: 'PM_BG_TIMER_BRIDGE',
-                    op: 'SET',
-                    timerId: tid,
-                    delay: ms,
-                    isInterval: false
-                  });
-                  return tid;
-                } catch (_) {
-                  bridgedTimerCallbacks.delete(tid);
-                }
-              }
-            }
-            return origSetTimeout.apply(pageWin, arguments);
-          },
-          pageWin,
-          { defineAs: 'setTimeout' }
-        );
-
-        exportFunction(
-          function (id) {
-            const numId = Number(id);
-            if (numId > 900000000) {
-              bridgedTimerCallbacks.delete(numId);
-              if (emeBridgePort) {
-                try {
-                  emeBridgePort.postMessage({ type: 'PM_BG_TIMER_BRIDGE', op: 'CLEAR', timerId: numId });
-                } catch (_) {}
-              }
-              return;
-            }
-            return origClearTimeout.call(pageWin, id);
-          },
-          pageWin,
-          { defineAs: 'clearTimeout' }
-        );
-
-        exportFunction(
-          function (cb, delay) {
-            const ms = Number(delay) || 0;
-            if (typeof cb === 'function' && !isFrameUnloading && ms >= 45 && ms <= 45000) {
-              const port = ensureBridgePort();
-              if (port) {
-                const tid = ++bgTimerSeq;
-                const extraArgs = arguments.length > 2 ? Array.prototype.slice.call(arguments, 2) : null;
-                bridgedTimerCallbacks.set(tid, { cb, extraArgs, isInterval: true });
-                try {
-                  port.postMessage({
-                    type: 'PM_BG_TIMER_BRIDGE',
-                    op: 'SET',
-                    timerId: tid,
-                    delay: ms,
-                    isInterval: true
-                  });
-                  return tid;
-                } catch (_) {
-                  bridgedTimerCallbacks.delete(tid);
-                }
-              }
-            }
-            return origSetInterval.apply(pageWin, arguments);
-          },
-          pageWin,
-          { defineAs: 'setInterval' }
-        );
-
-        exportFunction(
-          function (id) {
-            const numId = Number(id);
-            if (numId > 900000000) {
-              bridgedTimerCallbacks.delete(numId);
-              if (emeBridgePort) {
-                try {
-                  emeBridgePort.postMessage({ type: 'PM_BG_TIMER_BRIDGE', op: 'CLEAR', timerId: numId });
-                } catch (_) {}
-              }
-              return;
-            }
-            return origClearInterval.call(pageWin, id);
-          },
-          pageWin,
-          { defineAs: 'clearInterval' }
-        );
-      } catch (_) {}
-    }
 
     const isMediaSource = (o) => {
       try {
@@ -1182,6 +1024,20 @@
       }
     }
 
+    const resolveLocalSpotifyDeviceId = () => {
+      try {
+        const rawStored = window.localStorage && window.localStorage.getItem('_spharmony_device_id');
+        if (rawStored) {
+          const cleaned = String(rawStored).replace(/^"+|"+$/g, '').trim();
+          if (cleaned) {
+            spConnectState.deviceId = cleaned;
+            return cleaned;
+          }
+        }
+      } catch (_) {}
+      return spConnectState.deviceId || '';
+    };
+
     if (!IS_YT && pageWin.fetch) {
       const origFetch = pageWin.fetch;
       const extractFetchHeaders = (input, init) => {
@@ -1205,6 +1061,7 @@
       };
       define(pageWin, 'fetch', function (input, init) {
         let url = '';
+        let hobsPrefix = '';
         try {
           url = typeof input === 'string' ? input : input && input.url ? String(input.url) : '';
           if (url.includes('widevine-license') && !url.includes('certificate')) {
@@ -1231,10 +1088,24 @@
             if (lowerHdrs['client-token']) {
               spConnectState.headers['client-token'] = lowerHdrs['client-token'];
             }
+            const originMatch = url.match(/^(https:\/\/[^/]*spclient\.spotify\.com)\//i);
+            if (originMatch) {
+              spConnectState.origin = originMatch[1];
+            }
+            const trackDevMatch = url.match(/\/track-playback\/v1\/devices\/([^/?#]+)/i);
+            if (trackDevMatch && trackDevMatch[1]) {
+              spConnectState.deviceId = decodeURIComponent(trackDevMatch[1]);
+            }
             const devMatch = url.match(/^(https:\/\/[^/]*spclient\.spotify\.com)\/connect-state\/v1\/devices\/hobs_([^/?#]+)/i);
             if (devMatch) {
               spConnectState.origin = devMatch[1];
-              spConnectState.deviceId = devMatch[2];
+              hobsPrefix = devMatch[2];
+              if (!spConnectState.deviceId) {
+                resolveLocalSpotifyDeviceId();
+              }
+              if (!spConnectState.deviceId) {
+                spConnectState.deviceId = hobsPrefix;
+              }
             }
           }
         } catch (_) {}
@@ -1249,8 +1120,17 @@
                 return null;
               })
               .then((json) => {
-                if (json && typeof json.active_device_id === 'string') {
+                if (!json || typeof json !== 'object') return;
+                if (typeof json.active_device_id === 'string') {
                   spConnectState.activeDeviceId = json.active_device_id;
+                }
+                if (hobsPrefix && json.devices && typeof json.devices === 'object') {
+                  const matchedFullId = Object.keys(json.devices).find(
+                    (k) => k === hobsPrefix || k.startsWith(hobsPrefix)
+                  );
+                  if (matchedFullId) {
+                    spConnectState.deviceId = matchedFullId;
+                  }
                 }
               })
               .catch(() => {});
@@ -1535,17 +1415,18 @@
         if (el && !el.paused && !el.ended && el.readyState >= 1) {
           return 'playing';
         }
+        const localDevId = resolveLocalSpotifyDeviceId();
         if (
           forceTransfer &&
-          spConnectState.deviceId &&
+          localDevId &&
           spConnectState.headers.authorization &&
-          Date.now() - spConnectState.lastTransferAt > 2600
+          Date.now() - spConnectState.lastTransferAt > 2400
         ) {
           spConnectState.lastTransferAt = Date.now();
-          const fromDev = spConnectState.activeDeviceId || spConnectState.deviceId;
+          const fromDev = spConnectState.activeDeviceId || localDevId;
           const transferUrl = `${spConnectState.origin}/connect-state/v1/connect/transfer/from/${encodeURIComponent(
             fromDev
-          )}/to/${encodeURIComponent(spConnectState.deviceId)}`;
+          )}/to/${encodeURIComponent(localDevId)}`;
           const reqHeaders = Object.assign({}, spConnectState.headers, {
             'content-type': 'application/json'
           });
@@ -1562,7 +1443,6 @@
             .catch(() => {});
           return 'transferred';
         }
-        // Fallback if Connect headers aren't captured yet or button needs toggle:
         if (!forceTransfer && typeof spMediaSessionHandlers.play === 'function') {
           spMediaSessionHandlers.play();
           return 'mediasession-play';
@@ -1570,23 +1450,10 @@
         const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
         if (spToggle && !spToggle.disabled) {
           const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
-          if (!aria.includes('pause')) {
+          // NEVER click spToggle when aria-label already says "Pause" (that pauses Spotify across all devices!)
+          if (!aria.includes('pause') && !aria.includes('stop')) {
             spToggle.click();
             return 'clicked-play';
-          }
-          if (forceTransfer) {
-            // Remote ghost device is still marked active: pause ghost, then play locally 240ms later
-            spToggle.click();
-            window.setTimeout(() => {
-              try {
-                const btn2 = document.querySelector('[data-testid="control-button-playpause"]');
-                if (btn2 && !btn2.disabled) {
-                  const aria2 = (btn2.getAttribute('aria-label') || '').toLowerCase();
-                  if (!aria2.includes('pause')) btn2.click();
-                }
-              } catch (_) {}
-            }, 240);
-            return 'toggled-ghost';
           }
         }
       } catch (_) {}
@@ -7803,6 +7670,9 @@
 
   function reportLivePlaybackState() {
     try {
+      if (isStandbyBgFrame) {
+        return;
+      }
       let isPlaying = false;
       let currentTime = 0;
       let resumeUrl = window.location.href;
@@ -8980,6 +8850,7 @@
         } catch (_) {}
         bgAudioAutoResumed = false;
         isTabAudioAutoPaused = false;
+        spHydratedWithoutLocalMediaSince = 0;
         try {
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmPromoteStandbyToBgFrame === 'function') {
             window.wrappedJSObject.__pmPromoteStandbyToBgFrame('pm-bg-audio-spotify');
@@ -9073,6 +8944,7 @@
         if (isBgAudioFrame) break;
         sidebarAutoResumeRequested = true;
         sidebarAutoResumeRequestedAt = Date.now();
+        spHydratedWithoutLocalMediaSince = 0;
         reportLivePlaybackState();
         {
           const fastSbResumeTimer = setInterval(() => {

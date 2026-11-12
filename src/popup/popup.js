@@ -3335,40 +3335,30 @@
   }
 
   function switchActiveMediaFrame(appId) {
-    const isMediaApp = ['spotify', 'youtube', 'tiktok', 'twitch'].includes(appId) || isAppAllowedForBgAudio(appId);
-    if (isMediaApp) {
-      pauseOtherSidebarMediaFrames(appId);
-    } else {
-      // Switching to a non-media app (e.g. Discord, WhatsApp): pause any background frame not allowed for bg audio, or any frame that wasn't already playing when we switched away
-      mediaFramePool.forEach((entry, id) => {
-        if (id === appId) {
-          entry.suppressedWhileInactive = false;
-          return;
-        }
-        const st = framePlaybackStates.get(id);
-        const wasAlreadyPlaying = Boolean(
-          (st && st.isPlaying) ||
-            pendingSidebarAudioTakeoverSet.has(id) ||
-            bgMasterAudioSet.has(id) ||
-            currentAudibleBgAppId === id
-        );
-        if (!isAppAllowedForBgAudio(id) || !wasAlreadyPlaying) {
-          entry.suppressedWhileInactive = true;
-          if (st && st.isPlaying) st.isPlaying = false;
-          try {
-            entry.frame.contentWindow?.postMessage(
-              { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
-              '*'
-            );
-          } catch (_) {}
-        }
-      });
-    }
+    // Switching rail tabs must NEVER preemptively kill apps allowed for Background Audio (such as Spotify)
+    // before another app actually starts playing audio! Only pause inactive apps where Bg Audio is OFF.
     mediaFramePool.forEach((entry, id) => {
       if (id === appId) {
         entry.suppressedWhileInactive = false;
+        entry.frame.classList.add('is-active');
+        return;
       }
-      entry.frame.classList.toggle('is-active', id === appId);
+      entry.frame.classList.remove('is-active');
+      if (!isAppAllowedForBgAudio(id)) {
+        entry.suppressedWhileInactive = true;
+        const st = framePlaybackStates.get(id);
+        if (st && st.isPlaying) st.isPlaying = false;
+        cleanupSidebarMsePlayer(id);
+        browser.runtime
+          .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: id, clearPlaybackState: true })
+          .catch(() => {});
+        try {
+          entry.frame.contentWindow?.postMessage(
+            { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+            '*'
+          );
+        } catch (_) {}
+      }
     });
   }
 
@@ -3403,18 +3393,16 @@
 
   function hideMediaWorkspaceKeepAlive() {
     if (!mediaWorkspace) return;
-    // Pause any frame in the pool that is not configured for background audio or wasn't already playing
+    // Pause any frame in the pool that is not configured for background audio; never kill Bg-Audio apps (e.g. Spotify) when switching to Mail!
     mediaFramePool.forEach((entry, id) => {
-      const st = framePlaybackStates.get(id);
-      const wasAlreadyPlaying = Boolean(
-        (st && st.isPlaying) ||
-          pendingSidebarAudioTakeoverSet.has(id) ||
-          bgMasterAudioSet.has(id) ||
-          currentAudibleBgAppId === id
-      );
-      if (!isAppAllowedForBgAudio(id) || !wasAlreadyPlaying) {
+      if (!isAppAllowedForBgAudio(id)) {
         entry.suppressedWhileInactive = true;
+        const st = framePlaybackStates.get(id);
         if (st && st.isPlaying) st.isPlaying = false;
+        cleanupSidebarMsePlayer(id);
+        browser.runtime
+          .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: id, clearPlaybackState: true })
+          .catch(() => {});
         try {
           entry.frame.contentWindow?.postMessage(
             { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
@@ -5196,6 +5184,59 @@
       );
     });
 
+    const copyAudioDiagnosticsToClipboard = async () => {
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'GET_AUDIO_DIAGNOSTICS' }).catch(() => null);
+        const uiFrames = {};
+        mediaFramePool.forEach((entry, id) => {
+          uiFrames[id] = {
+            currentUrl: entry.currentUrl || '',
+            loaded: Boolean(entry.loaded),
+            suppressedWhileInactive: Boolean(entry.suppressedWhileInactive),
+            playback: framePlaybackStates.get(id) || null
+          };
+        });
+        const payload = {
+          ...(res && res.diagnostics ? res.diagnostics : { error: 'Background diagnostics unavailable' }),
+          uiState: {
+            activeRailAppId,
+            isSidebarView: IS_SIDEBAR_VIEW,
+            isPopoutView: IS_POPOUT_VIEW,
+            currentAudibleBgAppId,
+            isAutoPausedByExternalTab,
+            pendingSidebarAudioTakeover: Array.from(pendingSidebarAudioTakeoverSet),
+            frames: uiFrames
+          }
+        };
+        const formatted = JSON.stringify(payload, null, 2);
+        let copied = false;
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+          try {
+            await navigator.clipboard.writeText(formatted);
+            copied = true;
+          } catch (_) {}
+        }
+        if (!copied) {
+          const ta = document.createElement('textarea');
+          ta.value = formatted;
+          ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            copied = document.execCommand('copy');
+          } catch (_) {}
+          ta.remove();
+        }
+        showToast('Copied live Spotify & Audio diagnostics to clipboard!');
+        return payload;
+      } catch (err) {
+        showToast('Could not copy diagnostics');
+        return null;
+      }
+    };
+    window.__pmCopyAudioDiagnostics = copyAudioDiagnosticsToClipboard;
+    document.getElementById('btn-copy-audio-diagnostics')?.addEventListener('click', copyAudioDiagnosticsToClipboard);
+
     document.querySelectorAll('[data-tab-audio-mode]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const nextMode = btn.getAttribute('data-tab-audio-mode') || 'pause-resume';
@@ -5718,6 +5759,18 @@
               (data.href || sourceEntry?.currentUrl) &&
               !isPlayableYouTubeUrl(data.href || sourceEntry?.currentUrl);
             if (!data.paused && !isNonPlayableYt) {
+              pauseOtherSidebarMediaFrames(appId);
+              if (pendingSidebarAudioTakeoverSet.size > 0 || bgMasterAudioSet.size > 0) {
+                Array.from(new Set([...pendingSidebarAudioTakeoverSet, ...bgMasterAudioSet])).forEach((otherId) => {
+                  if (otherId !== appId) {
+                    pendingSidebarAudioTakeoverSet.delete(otherId);
+                    bgMasterAudioSet.delete(otherId);
+                    browser.runtime
+                      .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: otherId, clearPlaybackState: true })
+                      .catch(() => {});
+                  }
+                });
+              }
               pendingSidebarAudioTakeoverSet.delete(appId);
               bgMasterAudioSet.delete(appId);
               const prevPb = framePlaybackStates.get(appId);
@@ -5822,6 +5875,7 @@
             pendingSidebarAudioTakeoverSet.delete(appId);
             browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
           }
+          pauseOtherSidebarMediaFrames(appId);
           let player = sidebarMsePlayers.get(appId);
           if (!player) {
             const ms = new MediaSource();
@@ -6917,11 +6971,6 @@
         currentAudibleBgAppId = msg.audibleAppId || null;
         if (!currentAudibleBgAppId) {
           bgMasterAudioSet.clear();
-        } else if (currentAudibleBgAppId === 'spotify') {
-          const spPb = framePlaybackStates.get('spotify');
-          if (!spPb || !spPb.isPlaying || bgMasterAudioSet.has('spotify')) {
-            bgMasterAudioSet.add('spotify');
-          }
         }
         renderOperaRail();
       } else if (msg.type === 'PM_SEEK_SIDEBAR_SP') {
