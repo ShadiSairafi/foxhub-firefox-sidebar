@@ -569,6 +569,13 @@
           });
           emeBridgePort.onDisconnect.addListener(() => {
             emeBridgePort = null;
+            if (!isFrameUnloading) {
+              setTimeout(() => {
+                if (!isFrameUnloading && !emeBridgePort) {
+                  ensureBridgePort();
+                }
+              }, 1000);
+            }
           });
           try {
             emeBridgePort.postMessage({
@@ -5180,8 +5187,32 @@
         topRow.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:8px;';
 
         const titleEl = document.createElement('div');
-        titleEl.style.cssText = 'font-weight:700;color:#1ed760;font-size:12.5px;';
-        titleEl.textContent = '🎵 Enable Firefox DRM to Play Music';
+        titleEl.style.cssText =
+          'font-weight:700;color:#1ed760;font-size:12.5px;display:inline-flex;align-items:center;gap:6px;';
+        const musicSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        musicSvg.setAttribute('width', '14');
+        musicSvg.setAttribute('height', '14');
+        musicSvg.setAttribute('viewBox', '0 0 24 24');
+        musicSvg.setAttribute('fill', 'none');
+        musicSvg.setAttribute('stroke', '#1ed760');
+        musicSvg.setAttribute('stroke-width', '2.2');
+        musicSvg.setAttribute('stroke-linecap', 'round');
+        musicSvg.setAttribute('stroke-linejoin', 'round');
+        const musicPath1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        musicPath1.setAttribute('d', 'M9 18V5l12-2v13');
+        const musicCircle1 = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        musicCircle1.setAttribute('cx', '6');
+        musicCircle1.setAttribute('cy', '18');
+        musicCircle1.setAttribute('r', '3');
+        const musicCircle2 = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        musicCircle2.setAttribute('cx', '18');
+        musicCircle2.setAttribute('cy', '16');
+        musicCircle2.setAttribute('r', '3');
+        musicSvg.appendChild(musicPath1);
+        musicSvg.appendChild(musicCircle1);
+        musicSvg.appendChild(musicCircle2);
+        titleEl.appendChild(musicSvg);
+        titleEl.appendChild(document.createTextNode('Enable Firefox DRM to Play Music'));
 
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
@@ -5210,11 +5241,12 @@
           'background:#222;border-radius:8px;padding:7px 9px;color:#eee;font-size:11px;display:flex;flex-direction:column;gap:4px;';
 
         const step1 = document.createElement('div');
-        step1.textContent = '1️⃣ Click "Open Tab to Enable DRM" below → click Firefox\'s yellow "Enable DRM" button at the top of the tab.';
+        step1.textContent =
+          '1. Click "Open Tab to Enable DRM" below → click Firefox\'s yellow "Enable DRM" button at the top of the tab.';
 
         const step2 = document.createElement('div');
         step2.textContent =
-          '2️⃣ Or in Firefox Settings → Tabs and browsing → Media → check "Play DRM-controlled content".';
+          '2. Or in Firefox Settings → Tabs and browsing → Media → check "Play DRM-controlled content".';
 
         const step3 = document.createElement('div');
         step3.style.cssText = 'color:#aaa;font-size:10.3px;';
@@ -5230,12 +5262,22 @@
 
         const openTabBtn = document.createElement('button');
         openTabBtn.type = 'button';
-        openTabBtn.textContent = '⚡ Open Tab to Enable DRM';
         openTabBtn.style.cssText =
-          'background:#1ed760;color:#000;font-weight:700;border:none;border-radius:999px;padding:6px 11px;font-size:11px;cursor:pointer;';
+          'background:#1ed760;color:#000;font-weight:700;border:none;border-radius:999px;padding:6px 11px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;';
+        const zapSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        zapSvg.setAttribute('width', '12');
+        zapSvg.setAttribute('height', '12');
+        zapSvg.setAttribute('viewBox', '0 0 24 24');
+        zapSvg.setAttribute('fill', 'currentColor');
+        zapSvg.setAttribute('stroke', 'none');
+        const zapPoly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        zapPoly.setAttribute('points', '13 2 3 14 12 14 11 22 21 10 12 10 13 2');
+        zapSvg.appendChild(zapPoly);
+        openTabBtn.appendChild(zapSvg);
+        openTabBtn.appendChild(document.createTextNode('Open Tab to Enable DRM'));
         openTabBtn.addEventListener('click', () => {
           notifyParent('PM_OPEN_SPOTIFY_DRM_TAB', { url: 'https://open.spotify.com/' });
-          openTabBtn.textContent = '✓ Opened Tab — Click "Enable DRM" at Top!';
+          openTabBtn.textContent = 'Opened Tab — Click "Enable DRM" at Top!';
         });
 
         const reloadBtn = document.createElement('button');
@@ -5270,7 +5312,7 @@
               drmVerifiedOk = true;
               clearInterval(drmPollTimer);
               drmPollTimer = null;
-              titleEl.textContent = '✓ Firefox DRM Activated! Starting Spotify…';
+              titleEl.textContent = 'Firefox DRM Activated! Starting Spotify…';
               setTimeout(() => window.location.reload(), 650);
             }
           }, 2500);
@@ -9244,14 +9286,19 @@
               spTabPauseVerifyTimer = setTimeout(() => {
                 if (isTabAudioAutoPaused) return;
                 try {
-                  if (!clickedSpotifyPlay) {
-                    clickSpotifyToggleOnce(true);
-                  }
-                  if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
-                    window.wrappedJSObject.__pmEnsureMirrorPlay();
+                  const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
+                  const aria = spToggle ? (spToggle.getAttribute('aria-label') || '').toLowerCase() : '';
+                  const isAlreadyPlaying = aria.includes('pause') || aria.includes('stop');
+                  if (!isAlreadyPlaying) {
+                    if (!clickedSpotifyPlay) {
+                      clickSpotifyToggleOnce(true);
+                    }
+                    if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
+                      window.wrappedJSObject.__pmEnsureMirrorPlay();
+                    }
                   }
                 } catch (_) {}
-              }, clickedSpotifyPlay ? 180 : 340);
+              }, clickedSpotifyPlay ? 450 : 360);
             } else if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmEnsureMirrorPlay === 'function') {
               window.wrappedJSObject.__pmEnsureMirrorPlay();
             }
@@ -9268,7 +9315,7 @@
             });
           }
         } catch (_) {}
-        setTimeout(() => reportLivePlaybackState(), 180);
+        setTimeout(() => reportLivePlaybackState(), 480);
         break;
       }
       case 'FREE_HEAVY_MEDIA':

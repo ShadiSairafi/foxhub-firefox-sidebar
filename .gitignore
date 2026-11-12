@@ -22,3 +22,7 @@ desktop.ini
 .idea/
 node_modules/
 __pycache__/
+
+# Teamwork agent metadata
+.agents/
+
