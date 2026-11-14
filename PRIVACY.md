@@ -1,6 +1,6 @@
 # Privacy Policy for FoxHub
 
-Last updated: October 2026
+Last updated: November 2026
 
 FoxHub is built to run completely locally inside your Firefox browser.
 
