@@ -1,0 +1,43 @@
+/* Apple Music Narrow Sidebar Optimization (340px–480px) */
+html, body, #scrollable-page, .app-container, main {
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  overflow-x: clip !important;
+}
+[data-testid="upsell-banner"],
+.upsell-banner {
+  display: none !important;
+}
+@media (max-width: 720px) {
+  .navigation,
+  nav.navigation,
+  .web-navigation {
+    max-width: min(260px, 82vw) !important;
+  }
+  .app-chrome,
+  .page-container,
+  .main-content,
+  main {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+    box-sizing: border-box !important;
+  }
+  amp-chrome-player,
+  .web-chrome-playback-controls,
+  .playback-controls {
+    width: 100% !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    box-sizing: border-box !important;
+  }
+  [class*="shelf-grid"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+}

@@ -1,0 +1,59 @@
+/* 10. Messenger Narrow Sidebar Optimization */
+html, body {
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  overflow-x: clip !important;
+}
+div[style*="--messenger-card-min-width"] {
+  --messenger-card-min-width: 0px !important;
+}
+
+/* Fix Messenger's 100px max-height bug (.x569fbc) on the Chats grid wrapper so the chat list fills 100% height! */
+div[role="navigation"][aria-label="Thread list"],
+div[role="navigation"][aria-label="Thread list"] div:has([role="grid"]),
+div[role="navigation"][aria-label="Thread list"] [role="grid"] {
+  flex: 1 1 auto !important;
+  height: 100% !important;
+  max-height: none !important;
+  min-height: 0 !important;
+}
+
+@media (max-width: 680px) {
+  /* Hide the redundant leftmost 44px Inbox Switcher rail since FoxHub's bottom bar already provides Chats / Requests / Archive */
+  div[role="navigation"][aria-label="Inbox switcher"] {
+    display: none !important;
+  }
+
+  /* Pure 0ms CSS :has() switching between Messenger Inbox and Active Conversation (never waits for JS timers!) */
+  body:not(:has(div[role="main"]:not(.xlshs6z) > div)) div[role="navigation"][aria-label="Thread list"] {
+    position: relative !important;
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    height: 100% !important;
+  }
+  body:not(:has(div[role="main"]:not(.xlshs6z) > div)) div[role="main"] {
+    display: none !important;
+  }
+
+  /* When an active Conversation IS mounted in div[role="main"], Messenger's mobile UI renders a native Back button (←) in the conversation header and unmounts the Thread list contents, so hide Thread list and give [role="main"] 100% width in 0ms! */
+  body:has(div[role="main"]:not(.xlshs6z) > div) div[role="navigation"][aria-label="Thread list"] {
+    display: none !important;
+  }
+  body:has(div[role="main"]:not(.xlshs6z) > div) div[role="main"] {
+    position: relative !important;
+    display: flex !important;
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 100% !important;
+    height: 100% !important;
+  }
+  body:has(div[role="main"]:not(.xlshs6z) > div) div[role="main"] > div {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: 100% !important;
+  }
+}

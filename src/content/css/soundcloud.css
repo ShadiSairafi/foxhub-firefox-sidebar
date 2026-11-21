@@ -1,0 +1,69 @@
+/* SoundCloud Narrow Sidebar Optimization (340px–480px) */
+html, body {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box !important;
+}
+#app,
+.l-container, .l-content, .l-fluid-fixed, .l-main {
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: clip !important;
+  box-sizing: border-box !important;
+}
+@media (max-width: 760px) {
+  .l-container.l-content,
+  .l-main {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    margin: 0 !important;
+  }
+  .l-sidebar-right,
+  .header__proUpsell,
+  .header__upload {
+    display: none !important;
+  }
+  .header,
+  .header__inner,
+  .header__left,
+  .header__middle {
+    min-width: 0 !important;
+    max-width: 100vw !important;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    box-sizing: border-box !important;
+  }
+  .header__search {
+    flex: 1 1 80px !important;
+    min-width: 60px !important;
+    max-width: 100% !important;
+  }
+  .sound__body,
+  .sound__waveform,
+  .playableTile {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+  .playControls,
+  .playControls__inner,
+  .playControls__wrapper {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    box-sizing: border-box !important;
+  }
+  .playControls__elements {
+    gap: 4px !important;
+    min-width: 0 !important;
+  }
+  .playControls__soundBadge {
+    min-width: 0 !important;
+    max-width: 36vw !important;
+    overflow: hidden !important;
+  }
+}

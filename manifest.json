@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "FoxHub: Gmail, Social & Media Sidebar",
   "short_name": "FoxHub",
-  "version": "2.7.9",
+  "version": "2.8.0",
   "description": "Fast local multi-account Gmail, social, and media sidebar for Firefox.",
   "author": "FoxHub",
   "icons": {
@@ -109,11 +109,16 @@
         "http://*/*"
       ],
       "js": [
-        "src/shared/media-frame-optimizer.js"
+        "src/content/tab-media-watcher.js"
       ],
       "run_at": "document_start",
       "all_frames": true
     }
+  ],
+  "web_accessible_resources": [
+    "src/content/core/*.js",
+    "src/content/css/*.css",
+    "src/content/optimizers/*.js"
   ],
   "permissions": [
     "<all_urls>",
@@ -127,7 +132,8 @@
     "tabs",
     "identity",
     "webRequest",
-    "webRequestBlocking"
+    "webRequestBlocking",
+    "contextMenus"
   ],
   "browser_specific_settings": {
     "gecko": {

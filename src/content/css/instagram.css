@@ -1,0 +1,290 @@
+/* 1. Compact Instagram Left Navigation Rail to 48px */
+:root, body {
+  --nav-narrow-width: 48px !important;
+  --nav-medium-width: 48px !important;
+  --nav-wide-width: 48px !important;
+}
+
+/* Eliminate double vertical scrollbars */
+html[data-pm-ig-view="reels"]:not(:has(main[role="main"] header)),
+html[data-pm-ig-view="reels"]:not(:has(main[role="main"] header)) body,
+html[data-pm-ig-view="dm-inbox"],
+html[data-pm-ig-view="dm-inbox"] body,
+html[data-pm-ig-view="dm-thread"],
+html[data-pm-ig-view="dm-thread"] body {
+  overflow-y: hidden !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+}
+
+html[data-pm-ig-view="feed"] body,
+html[data-pm-ig-view="explore"] body {
+  overflow-y: visible !important;
+}
+
+main[role="main"],
+section > main[role="main"] {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+html[data-pm-ig-view="reels"] main[role="main"]:not(:has(header)) > div {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  max-width: 100% !important;
+  scrollbar-width: none !important;
+}
+html[data-pm-ig-view="reels"] main[role="main"]:not(:has(header)) > div::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* Force each Instagram Reel slide to occupy the full viewport height (minus the 50px bottom nav bar) so two reels NEVER stack vertically when narrow! */
+html[data-pm-ig-view="reels"] main[role="main"]:not(:has(header)) > div > div {
+  min-height: calc(100vh - 50px) !important;
+  height: calc(100vh - 50px) !important;
+  max-height: calc(100vh - 50px) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  margin-bottom: 0 !important;
+}
+
+@media (max-width: 560px) {
+  html[data-pm-ig-view="reels"] main[role="main"]:not(:has(header)) div[style*="--x-width"]:has(video),
+  html[data-pm-ig-view="reels"] main[role="main"]:not(:has(header)) div[style*="--x-height"]:has(video):not([style*="--x-height: 100%"]) {
+    --x-width: calc(100vw - 52px) !important;
+    --x-height: calc(100vh - 84px) !important;
+  }
+  html[data-pm-ig-view="reels"] main[role="main"]:not(:has(header)) div[style*="--x-maxHeight"] a[href^="/"],
+  html[data-pm-ig-view="reels"] main[role="main"]:not(:has(header)) div[style*="--x-maxHeight"] > div > div:first-child span {
+    white-space: nowrap !important;
+  }
+  html[data-pm-ig-view="reels"] main[role="main"]:not(:has(header)) video {
+    object-fit: cover !important;
+  }
+}
+
+/* Prevent clicking a contact's avatar in the Instagram DM list from opening their Story instead of their DM chat!
+   Instagram's IGDStoryRingOffMsys.react listens to onPointerEnter on div:has(> canvas) inside each div[role="button"] DM row
+   and mounts a floating body > button[style*="position: fixed"][style*="border-radius: 50%"] portal over the avatar. */
+html[data-pm-ig-view="dm-inbox"] div[role="button"] div:has(> canvas),
+html[data-pm-ig-view="dm-inbox"] div[role="button"] div:has(> canvas) *,
+html[data-pm-ig-view="dm-inbox"] div[role="button"] canvas,
+html[data-pm-ig-view="dm-inbox"] [role="listitem"] div:has(> canvas),
+html[data-pm-ig-view="dm-inbox"] [role="listitem"] div:has(> canvas) *,
+html[data-pm-ig-view="dm-thread"] div[role="button"] div:has(> canvas),
+html[data-pm-ig-view="dm-thread"] div[role="button"] div:has(> canvas) *,
+html[data-pm-ig-view="dm-thread"] div[role="button"] canvas,
+html[data-pm-ig-view="dm-thread"] [role="listitem"] div:has(> canvas),
+html[data-pm-ig-view="dm-thread"] [role="listitem"] div:has(> canvas) * {
+  pointer-events: none !important;
+}
+html[data-pm-ig-view="dm-inbox"] body > button[style*="position: fixed"][style*="border-radius"],
+html[data-pm-ig-view="dm-thread"] body > button[style*="position: fixed"][style*="border-radius"] {
+  display: none !important;
+  pointer-events: none !important;
+}
+
+/* Clean responsive Instagram Profile Reel / Post Lightbox Modal (div[role="dialog"]) */
+div[role="dialog"]:has(article),
+div[role="dialog"]:has(video) {
+  background: rgba(10, 10, 14, 0.88) !important;
+  backdrop-filter: blur(10px) !important;
+}
+div[role="dialog"] div:has(> div > article),
+div[role="dialog"] div:has(> article) {
+  max-width: calc(100vw - 16px) !important;
+  width: auto !important;
+}
+div[role="dialog"] article {
+  width: clamp(290px, calc(100vw - 84px), 500px) !important;
+  max-width: clamp(290px, calc(100vw - 84px), 500px) !important;
+  max-height: calc(100vh - 52px) !important;
+  height: auto !important;
+  margin: 0 auto !important;
+  border-radius: 14px !important;
+  overflow-x: hidden !important;
+  overflow-y: hidden !important;
+  background: rgb(var(--ig-primary-background, 255, 255, 255)) !important;
+  color: rgb(var(--ig-primary-text, 0, 0, 0)) !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65) !important;
+  display: block !important;
+  scrollbar-width: thin !important;
+}
+div[role="dialog"] article[data-pm-comments-open="true"] {
+  overflow-y: auto !important;
+}
+div[role="dialog"] article > div,
+div[role="dialog"] article > div[style*="--x-maxWidth"] {
+  --x-maxWidth: 100% !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  height: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+div[role="dialog"] article ._aasi,
+div[role="dialog"] article ._aasi > div,
+div[role="dialog"] article ._aasi header,
+div[role="dialog"] article header {
+  background: rgb(var(--ig-primary-background, 255, 255, 255)) !important;
+  color: rgb(var(--ig-primary-text, 0, 0, 0)) !important;
+  z-index: 5 !important;
+}
+div[role="dialog"] article ._aasi {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  width: 100% !important;
+  flex-shrink: 0 !important;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.16) !important;
+}
+div[role="dialog"] article ._aasi header {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  flex: 1 1 auto !important;
+}
+/* Hide empty mobile top bar if Instagram mounted header inside .x1oa3qoh at >= 736px */
+div[role="dialog"] article ._aasi:not(:has(header)) {
+  display: none !important;
+}
+div[role="dialog"] article:has(._aasi header) .x1oa3qoh header {
+  display: none !important;
+}
+div[role="dialog"] article header {
+  padding: 8px 12px !important;
+}
+/* Default Full-Sized Post Mode (before clicking Comment icon) — matches both ._aatl (single) and ._aatn (carousel) */
+div[role="dialog"] article ._aatk {
+  position: relative !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-height: 0 !important;
+  max-height: calc(100vh - 215px) !important;
+  height: auto !important;
+  margin: 0 auto !important;
+  background: #000 !important;
+  overflow: hidden !important;
+  flex-shrink: 1 !important;
+}
+div[role="dialog"] article ._aatk > div,
+div[role="dialog"] article ._aatk div[data-instancekey],
+div[role="dialog"] article ._aatk div[data-instancekey] > div,
+div[role="dialog"] article ._aatk div[data-visualcompletion="ignore"] {
+  min-height: 0 !important;
+  max-height: calc(100vh - 215px) !important;
+}
+div[role="dialog"] article ._aatk:has(video) [style*="padding-bottom"],
+div[role="dialog"] article ._aatk:has(video) ._aagv {
+  padding-bottom: 0 !important;
+  height: calc(100vh - 215px) !important;
+  max-height: calc(100vh - 215px) !important;
+}
+div[role="dialog"] article ._aatk video,
+div[role="dialog"] article ._aatk img {
+  object-fit: contain !important;
+  max-height: calc(100vh - 215px) !important;
+}
+/* Comments-Open Mode (toggled when user clicks the Comment icon) */
+div[role="dialog"] article[data-pm-comments-open="true"] ._aatk,
+div[role="dialog"] article[data-pm-comments-open="true"] ._aatk > div,
+div[role="dialog"] article[data-pm-comments-open="true"] ._aatk div[data-instancekey],
+div[role="dialog"] article[data-pm-comments-open="true"] ._aatk div[data-instancekey] > div,
+div[role="dialog"] article[data-pm-comments-open="true"] ._aatk div[data-visualcompletion="ignore"],
+div[role="dialog"] article[data-pm-comments-open="true"] ._aatk video,
+div[role="dialog"] article[data-pm-comments-open="true"] ._aatk img {
+  max-height: 320px !important;
+  min-height: 0 !important;
+}
+div[role="dialog"] article[data-pm-comments-open="true"] ._aatk:has(video) [style*="padding-bottom"],
+div[role="dialog"] article[data-pm-comments-open="true"] ._aatk:has(video) ._aagv {
+  padding-bottom: 0 !important;
+  height: 320px !important;
+  max-height: 320px !important;
+}
+/* Hide Instagram's misaligned internal audio button inside post modals so our pinned modal mute button is always cleanly visible */
+div[role="dialog"] article ._aatk button[aria-label*="audio" i],
+div[role="dialog"] article ._aatk [role="button"][aria-label*="audio" i],
+div[role="dialog"] article ._aatk button:has(svg[aria-label*="audio" i]),
+div[role="dialog"] article ._aatk [role="button"]:has(svg[aria-label*="audio" i]) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+div[role="dialog"] article .x1oa3qoh {
+  flex-shrink: 0 !important;
+}
+div[role="dialog"] article .x1oa3qoh,
+div[role="dialog"] article .x5yr21d,
+div[role="dialog"] article .x1q2y9iw,
+div[role="dialog"] article section {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-height: 0 !important;
+  height: auto !important;
+  max-height: none !important;
+  box-sizing: border-box !important;
+}
+/* Hide comments list and comment input by default so the post is full-sized first */
+div[role="dialog"] article:not([data-pm-comments-open="true"]) .xw2csxc.x1odjw0f,
+div[role="dialog"] article:not([data-pm-comments-open="true"]) ul._a9z6,
+div[role="dialog"] article:not([data-pm-comments-open="true"]) .x1q2y9iw > div:first-child:not(:has(section)),
+div[role="dialog"] article:not([data-pm-comments-open="true"]) section:has(textarea),
+div[role="dialog"] article:not([data-pm-comments-open="true"]) section:has(form) {
+  display: none !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+/* Show comments list & input when user clicks the Comment button */
+div[role="dialog"] article[data-pm-comments-open="true"] .xw2csxc.x1odjw0f,
+div[role="dialog"] article[data-pm-comments-open="true"] ul._a9z6,
+div[role="dialog"] article[data-pm-comments-open="true"] .x1q2y9iw > div:first-child:not(:has(section)) {
+  position: relative !important;
+  min-height: 170px !important;
+  max-height: 250px !important;
+  height: auto !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.14) !important;
+}
+
+@media (max-width: 720px) {
+  html[data-pm-ig-view="dm-thread"] main[role="main"] > div > div > div:first-child,
+  html[data-pm-ig-view="dm-thread"] div[role="navigation"] > div > div:first-child {
+    width: 68px !important;
+    min-width: 68px !important;
+    max-width: 68px !important;
+    overflow-x: hidden !important;
+    transition: width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease !important;
+  }
+  html[data-pm-ig-view="dm-thread"] main[role="main"] > div > div > div:first-child:hover {
+    width: 220px !important;
+    min-width: 220px !important;
+    max-width: 220px !important;
+    z-index: 50 !important;
+    box-shadow: 6px 0 20px rgba(0, 0, 0, 0.18) !important;
+  }
+  /* On DM Inbox (when no thread is open yet), hide the empty "Your messages" placeholder column so the thread list gets 100% width */
+  html[data-pm-ig-view="dm-inbox"] main[role="main"] > div > div > div:nth-child(2):not(:has(textarea)):not(:has([role="textbox"])) {
+    display: none !important;
+  }
+  html[data-pm-ig-view="dm-inbox"] main[role="main"] > div > div > div:first-child {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+  }
+}

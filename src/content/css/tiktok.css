@@ -1,0 +1,428 @@
+/* 8. TikTok Cinema Full-Height Video Feed, Explore Grid, Profile & Messages Optimization */
+@media (max-width: 2400px) {
+  /* Keep TikTok's left nav mounted offscreen (0px visual width) so its React router links remain clickable via SPA_NAVIGATE,
+     while allowing DivSideNavContainer on Messages if it houses the inbox drawer */
+  [data-e2e="nav-side"],
+  div[class*="DivSideNavContainer"]:not(:has([data-e2e="inbox-list"])):not(:has(div[class*="DivConversationList"])),
+  html:not([data-pm-tiktok-view="messages"]) div[class*="DivSideNavContainer"],
+  html:not([data-pm-tiktok-view="messages"]) div[class*="DivFullSideNav"],
+  html:not([data-pm-tiktok-view="messages"]) div[class*="SideNavContainer"] {
+    position: fixed !important;
+    left: -9999px !important;
+    top: 0 !important;
+    width: 64px !important;
+    height: 400px !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    z-index: -1 !important;
+  }
+
+  div[class*="DivSideNavPlaceholder"],
+  div[class*="DivPromotionContainer"],
+  div[class*="DivBottomBanner"],
+  div[class*="DivAppBanner"] {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+  }
+
+  #app,
+  div[class*="DivBodyContainer"],
+  div[class*="DivMainContainer"],
+  div[class*="DivShareLayoutMain"],
+  div[class*="DivExploreContainer"],
+  main {
+    width: 100% !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Full-Width Cinema Stage for TikTok Feed ([data-e2e="recommend-list-item-container"]):
+     Preserve native scroll-snap item height & 0 margin so opening comments NEVER jumps to the reel above,
+     while overlaying the right-hand action buttons on top of the video on hover so the video fills 100% width! */
+  html[data-pm-tiktok-view="feed"] [data-e2e="recommend-list-item-container"],
+  html[data-pm-tiktok-view="feed"] article[class*="ArticleItemContainer"] {
+    position: relative !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 2px !important;
+    box-sizing: border-box !important;
+  }
+
+  html[data-pm-tiktok-view="feed"] div[class*="DivContentContainer"],
+  html[data-pm-tiktok-view="feed"] div[class*="DivMediaCardContainer"] {
+    position: relative !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0 !important;
+  }
+
+  html[data-pm-tiktok-view="feed"] div[class*="DivVideoWrapper"] {
+    position: relative !important;
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: calc(100vh - 54px) !important;
+    max-height: 860px !important;
+    min-height: 380px !important;
+    background: #0b0b0e !important;
+    border-radius: 14px !important;
+    overflow: hidden !important;
+  }
+
+  html[data-pm-tiktok-view="feed"] div[class*="DivCliponeContainer"],
+  html[data-pm-tiktok-view="feed"] div[class*="DivVideoCard"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100% !important;
+    background: #0b0b0e !important;
+  }
+
+  /* Keep the active video player filling 100% of the card from top to bottom (never stacked above the poster image!) */
+  html[data-pm-tiktok-view="feed"] div[class*="DivBasicPlayerWrapper"],
+  html[data-pm-tiktok-view="feed"] div[class*="xgplayer-container"],
+  html[data-pm-tiktok-view="feed"] div[class*="DivPlayerContainer"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    background: #0b0b0e !important;
+    z-index: 2 !important;
+  }
+
+  /* Hide the duplicate static poster image underneath once the video player is mounted */
+  html[data-pm-tiktok-view="feed"] div[class*="DivVideoWrapper"]:has(video) img[class*="ImgPoster"],
+  html[data-pm-tiktok-view="feed"] div[class*="DivVideoWrapper"]:has(video) > img,
+  html[data-pm-tiktok-view="feed"] div[class*="DivVideoCardPoster"] {
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
+  html[data-pm-tiktok-view="feed"] video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    background: #0b0b0e !important;
+  }
+
+  /* Overlay the right-hand TikTok action buttons (Avatar +, Like, Comment, Bookmark, Share, Sound) over the right side of the video — hidden until hover! */
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] {
+    position: absolute !important;
+    right: 8px !important;
+    bottom: 38px !important;
+    top: auto !important;
+    width: 56px !important;
+    min-width: 56px !important;
+    max-width: 56px !important;
+    height: max-content !important;
+    min-height: max-content !important;
+    max-height: none !important;
+    overflow: visible !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 6px !important;
+    z-index: 30 !important;
+    margin: 0 !important;
+    padding: 10px 4px !important;
+    box-sizing: border-box !important;
+    border-radius: 99px !important;
+    background: rgba(34, 36, 48, 0.56) !important;
+    border: 1px solid rgba(255, 255, 255, 0.24) !important;
+    backdrop-filter: blur(12px) saturate(140%) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32) !important;
+    color: #ffffff !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translateX(4px) scale(0.9) !important;
+    transform-origin: bottom right !important;
+    transition: opacity 0.18s ease, transform 0.18s ease !important;
+  }
+
+  /* Force crisp white icons & count text inside the TikTok action bar pill so it is never black-on-glass-gray in Light Mode! */
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] button,
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] button[class*="ButtonActionItem"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] div[class*="tux-icon-button"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] strong,
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] [data-e2e*="-count"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] span {
+    color: #ffffff !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.72) !important;
+  }
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] button[class*="ButtonActionItem"] span[class*="SpanIconWrapper"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] button[class*="ButtonActionItem"] > span:first-child,
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] div[class*="tux-icon-button"] {
+    background: rgba(255, 255, 255, 0.15) !important;
+    border-radius: 50% !important;
+    color: #ffffff !important;
+  }
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] svg {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)) !important;
+  }
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] svg path:not([fill="#FE2C55"]):not([fill="#fe2c55"]):not([fill*="254, 44, 85"]):not([fill="#FACE15"]):not([fill="#face15"]):not([fill*="250, 206, 21"]) {
+    fill: #ffffff !important;
+  }
+
+  /* Never let TikTok's responsive CSS hide or clip the creator profile picture above the + follow button on narrow sidebars, and center it 100% with the buttons! */
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] > * {
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] > div:first-child {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: relative !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    margin: 0 auto 10px auto !important;
+    padding: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    overflow: visible !important;
+    flex-shrink: 0 !important;
+  }
+
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] div[class*="DivActionItemContainer"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] div[class*="DivAvatarActionItem"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] button[class*="ButtonActionItem"] {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    overflow: visible !important;
+    flex-shrink: 0 !important;
+  }
+
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] [data-e2e="video-author-avatar"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] > div:first-child a[href^="/@"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] > div:first-child span[class*="SpanAvatarContainer"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] span[class*="SpanAvatarContainer"] {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    overflow: visible !important;
+    flex-shrink: 0 !important;
+    position: relative !important;
+  }
+
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] [data-e2e="video-author-avatar"] img,
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] > div:first-child a[href^="/@"] img,
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] > div:first-child img,
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"] img[class*="ImgAvatar"] {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    object-fit: cover !important;
+    border: 1.5px solid rgba(255, 255, 255, 0.85) !important;
+    box-sizing: border-box !important;
+  }
+
+  html[data-pm-tiktok-view="feed"] [data-e2e="recommend-list-item-container"]:hover section[class*="SectionActionBarContainer"],
+  html[data-pm-tiktok-view="feed"] article:hover section[class*="SectionActionBarContainer"],
+  html[data-pm-tiktok-view="feed"] div[class*="DivContentContainer"]:hover section[class*="SectionActionBarContainer"],
+  html[data-pm-tiktok-view="feed"] div[class*="DivVideoWrapper"]:hover section[class*="SectionActionBarContainer"],
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"]:hover,
+  html[data-pm-tiktok-view="feed"] section[class*="SectionActionBarContainer"]:focus-within {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: translateX(0) scale(0.92) !important;
+  }
+
+  /* TikTok Explore (/explore) & Profile (/@...) — Prevent double-nested grid (outer wrapper must be block 100%, only innermost list is 2-column grid) */
+  div:has(> [data-e2e="explore-item-list"]),
+  div:has(> div > [data-e2e="explore-item-list"]),
+  div:has(> [data-e2e="user-post-item-list"]),
+  div:has(> [data-e2e="user-liked-item-list"]),
+  div:has(> [data-e2e="user-repost-item-list"]),
+  div:has(> [data-e2e="favorites-item-list"]),
+  [data-e2e="explore-item-list"]:has(div[class*="DivThreeColumnContainer"]),
+  [data-e2e="explore-item-list"]:has(div[class*="DivVideoFeedV2"]),
+  div[class*="DivThreeColumnContainer"]:has([data-e2e="explore-item-list"]),
+  div[class*="DivThreeColumnContainer"]:has(div[class*="DivVideoFeedV2"]),
+  div[class*="DivThreeColumnContainer"]:has([data-e2e="user-post-item-list"]),
+  div[class*="DivThreeColumnContainer"]:has([data-e2e="user-liked-item-list"]) {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Keep the horizontal category bar on Explore full-width flex */
+  div[class*="DivCategoryListContainer"],
+  div[class*="DivCategoryList"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Keep the floating top-right coin/app/avatar pill compact on Explore & Profile so it doesn't cover category tabs */
+  html[data-pm-tiktok-view="explore"] div[class*="DivFixedTopContainer"],
+  html[data-pm-tiktok-view="explore"] div[class*="DivHeaderRightContainer"],
+  html[data-pm-tiktok-view="profile"] div[class*="DivFixedTopContainer"],
+  html[data-pm-tiktok-view="profile"] div[class*="DivHeaderRightContainer"] {
+    transform: scale(0.82) !important;
+    transform-origin: top right !important;
+  }
+
+  /* Only the innermost item list container is the 2-column CSS Grid (100% width across the sidebar) */
+  [data-e2e="explore-item-list"]:not(:has(div[class*="DivThreeColumnContainer"])):not(:has(div[class*="DivVideoFeedV2"])),
+  div[class*="DivThreeColumnContainer"]:not(:has([data-e2e="explore-item-list"])):not(:has([data-e2e="user-post-item-list"])):not(:has([data-e2e="user-liked-item-list"])),
+  div[class*="DivVideoFeedV2"]:not(:has([data-e2e="explore-item-list"])),
+  [data-e2e="user-post-item-list"],
+  [data-e2e="user-liked-item-list"],
+  [data-e2e="user-repost-item-list"],
+  [data-e2e="favorites-item-list"] {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 6px 8px !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Direct card containers fill their grid cell cleanly without overriding inner DivContainer/DivWrapper overlays */
+  html[data-pm-tiktok-view="explore"] [data-e2e="explore-item"],
+  html[data-pm-tiktok-view="explore"] div[class*="DivItemContainerV2"],
+  html[data-pm-tiktok-view="explore"] div[class*="DivItemContainer"]:not([class*="Conversation"]),
+  [data-e2e="user-post-item"],
+  [data-e2e="user-liked-item"],
+  [data-e2e="user-repost-item"],
+  [data-e2e="favorites-item"],
+  html[data-pm-tiktok-view="profile"] div[class*="DivItemContainerV2"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  @media (max-width: 360px) {
+    [data-e2e="explore-item-list"]:not(:has(div[class*="DivThreeColumnContainer"])),
+    div[class*="DivThreeColumnContainer"]:not(:has([data-e2e="explore-item-list"])) {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+  }
+
+  /* TikTok Messages (/messages) Responsive Layout — Align Left Conversation List 100% with Divider Line! */
+  html[data-pm-tiktok-view="messages"] [data-e2e="nav-side"],
+  html[data-pm-tiktok-view="messages"] div[class*="DivSideNavContainer"]:not(:has([data-e2e="inbox-list"])):not(:has(div[class*="DivConversationList"])),
+  html[data-pm-tiktok-view="messages"] div[class*="DivSideNavPlaceholder"] {
+    display: none !important;
+  }
+  html[data-pm-tiktok-view="messages"] div[class*="DivDrawerContainer"],
+  html[data-pm-tiktok-view="messages"] div:has(> div[class*="DivConversationListContainer"]) {
+    width: 168px !important;
+    min-width: 156px !important;
+    max-width: 176px !important;
+    flex: 0 0 168px !important;
+    box-sizing: border-box !important;
+  }
+  html[data-pm-tiktok-view="messages"] div[class*="DivConversationListContainer"],
+  html[data-pm-tiktok-view="messages"] [data-e2e="inbox-list"],
+  html[data-pm-tiktok-view="messages"] div[class*="DivConversationListContainer"] .simplebar-wrapper,
+  html[data-pm-tiktok-view="messages"] div[class*="DivConversationListContainer"] .simplebar-content-wrapper,
+  html[data-pm-tiktok-view="messages"] div[class*="DivConversationListContainer"] .simplebar-content,
+  html[data-pm-tiktok-view="messages"] div[class*="DivItemContainer"],
+  html[data-pm-tiktok-view="messages"] div[class*="DivItemWrapper"],
+  html[data-pm-tiktok-view="messages"] div[class*="DivInfoContainer"],
+  html[data-pm-tiktok-view="messages"] p[class*="PNickname"],
+  html[data-pm-tiktok-view="messages"] span[class*="SpanNickname"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+    box-sizing: border-box !important;
+  }
+  html[data-pm-tiktok-view="messages"] div[class*="DivChatBox"],
+  html[data-pm-tiktok-view="messages"] div[class*="DivChatMain"],
+  html[data-pm-tiktok-view="messages"] div[class*="DivMessageList"] {
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    box-sizing: border-box !important;
+  }
+  html[data-pm-tiktok-view="messages"] div[class*="DivChatItemWrapper"],
+  html[data-pm-tiktok-view="messages"] div[class*="DivMessageContainer"] {
+    max-width: 100% !important;
+    width: 100% !important;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+    box-sizing: border-box !important;
+  }
+  html[data-pm-tiktok-view="messages"] div[class*="DivChatMain"] div[class*="DivTextContainer"],
+  html[data-pm-tiktok-view="messages"] div[class*="DivChatMain"] p[class*="PText"] {
+    max-width: 230px !important;
+    min-width: 110px !important;
+    width: auto !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+  }
+
+  div[class*="DivHeaderWrapper"] {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    padding: 0 8px !important;
+    box-sizing: border-box !important;
+  }
+}

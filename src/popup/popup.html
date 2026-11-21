@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FoxHub</title>
+  <link rel="icon" type="image/png" href="../../icons/icon-32.png">
   <!-- Zero-RAM DNS Prefetch Hints (Full TLS Preconnect fires on-demand when hovering a sidebar icon!) -->
   <link rel="dns-prefetch" href="https://www.instagram.com">
   <link rel="dns-prefetch" href="https://web.whatsapp.com">
@@ -15,6 +16,7 @@
   <link rel="dns-prefetch" href="https://x.com">
   <link rel="dns-prefetch" href="https://www.reddit.com">
   <link rel="dns-prefetch" href="https://gemini.google.com">
+  <link rel="stylesheet" href="../shared/settings-ui.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -53,7 +55,8 @@
       </button>
     </aside>
 
-    <div class="pm-app">
+    <div class="pm-app" id="pm-app-root">
+      <div class="pm-app-stage">
       <!-- Top Header -->
       <header class="pm-header">
         <div class="pm-brand">
@@ -71,33 +74,23 @@
         </div>
 
         <div class="pm-header-actions">
-          <button id="btn-open-sidebar" class="pm-icon-btn pm-icon-btn-accent" title="Open Opera-Style Left Sidebar in Firefox">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-          </button>
           <button id="btn-compose" class="pm-icon-btn" title="Compose Email">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
           </button>
-          <button id="btn-backgrounds" class="pm-icon-btn pm-icon-btn-accent" title="Customize Themes, Backgrounds, Glassmorphism & Cards">
+          <button id="btn-backgrounds" class="pm-icon-btn pm-icon-btn-accent pm-header-secondary-btn" title="Customize Themes, Backgrounds, Glassmorphism &amp; Cards">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
           </button>
-          <button id="btn-toggle-wide" class="pm-icon-btn" title="Resize Width (Toggle Standard / Wide / Extra-Wide)">
+          <button id="btn-toggle-wide" class="pm-icon-btn pm-header-secondary-btn" title="Resize Width (Toggle Standard / Wide / Extra-Wide)">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
           </button>
-          <button id="btn-popout-window" class="pm-icon-btn" title="Pop Out into Freely Resizable Desktop Window (Alt+Shift+W)">
+          <button id="btn-popout-window" class="pm-icon-btn pm-header-secondary-btn" title="Pop Out into Freely Resizable Desktop Window (Alt+Shift+W)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M14 9l3 3-3 3"/></svg>
           </button>
-          <button id="btn-night-mode" class="pm-icon-btn" title="Toggle True Night Mode (OLED Pitch-Black)">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-          </button>
-          <button id="btn-dnd" class="pm-icon-btn" title="Mute Notifications (All, Email, or Sites)" aria-haspopup="dialog" aria-expanded="false">
-            <svg class="pm-mute-icon-on" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            <svg class="pm-mute-icon-off" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-          </button>
-          <button id="btn-refresh" class="pm-icon-btn" title="Sync All Accounts Now">
+          <button id="btn-refresh" class="pm-icon-btn pm-header-secondary-btn" title="Sync All Accounts Now">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
-          <button id="btn-settings" class="pm-icon-btn" title="Open Full Settings & Customizer">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <button type="button" id="btn-header-more" class="pm-icon-btn pm-header-more-btn" title="More Actions" aria-label="More Actions" aria-haspopup="menu" aria-expanded="false" aria-controls="pm-header-more-menu">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
           </button>
         </div>
       </header>
@@ -188,7 +181,7 @@
     <!-- ===================================================================== -->
     <section id="pm-reader-drawer" class="pm-drawer hidden" aria-hidden="true">
       <div class="pm-drawer-header">
-        <div style="display:flex;align-items:center;gap:4px;">
+        <div class="pm-reader-nav-group" style="display:flex;align-items:center;gap:4px;">
           <button id="btn-reader-back" class="pm-back-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
             Back
@@ -325,7 +318,7 @@
           Done
         </button>
         <h2 class="pm-drawer-title">Visual Customizer Studio</h2>
-        <div style="display:flex;align-items:center;gap:4px;">
+        <div class="pm-drawer-header-actions" style="display:flex;align-items:center;gap:4px;">
           <button id="btn-studio-peek" class="pm-text-btn" title="Hold or click to peek at your full inbox underneath">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             <span>Peek</span>
@@ -412,7 +405,6 @@
             <button class="pm-opt-pill" data-card-style="warm-paper">Artisanal Paper</button>
             <button class="pm-opt-pill" data-card-style="floating-minimal">Borderless Floating</button>
             <button class="pm-opt-pill" data-card-style="outlined-editorial">Editorial Outlined</button>
-            <button class="pm-opt-pill" data-card-style="soft-neumorphic">Soft Cushion</button>
           </div>
 
           <div class="pm-control-card" style="margin-top:10px;">
@@ -545,7 +537,7 @@
           Back
         </button>
         <h2 class="pm-drawer-title">Manage &amp; Add Accounts</h2>
-        <div style="width:48px"></div>
+        <div class="pm-drawer-header-spacer" style="width:48px"></div>
       </div>
 
       <div class="pm-drawer-content">
@@ -554,7 +546,7 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
           </div>
           <h3>Sign in to another Google Account</h3>
-          <p>Log into any personal, work, or school Gmail account. PocketMail will automatically detect and monitor all your signed-in accounts locally.</p>
+          <p>Log into any personal, work, or school Gmail account. FoxHub will automatically detect and monitor all your signed-in accounts locally.</p>
           <button id="btn-google-login-popup" class="pm-btn pm-btn-primary pm-btn-full">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
             <span>Sign in with Google Account</span>
@@ -657,7 +649,7 @@
         </div>
       </div>
 
-      <!-- MODE B: Embedded Live Gmail Composer Frame right inside PocketMail Drawer -->
+      <!-- MODE B: Embedded Live Gmail Composer Frame right inside FoxHub Drawer -->
       <div id="pm-compose-embed-pane" class="pm-compose-embed-pane hidden">
         <iframe id="pm-compose-gmail-frame" class="pm-compose-gmail-frame" title="Embedded Gmail Composer"></iframe>
       </div>
@@ -676,6 +668,7 @@
           <div class="pm-media-header-left">
             <span id="media-active-icon" class="pm-media-active-icon"></span>
             <strong id="media-active-title" class="pm-media-active-title">Instagram</strong>
+            <span id="media-ua-badge" class="pm-media-ua-badge hidden" title="Custom User-Agent Override Active"></span>
             <button id="btn-media-back" class="pm-media-mini-btn" title="Back">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
@@ -684,9 +677,7 @@
             </button>
           </div>
 
-          <div id="media-subview-pills" class="pm-media-subpills">
-            <!-- Dynamically populated (e.g. DMs | Reels | Feed | Explore) -->
-          </div>
+          <div id="media-subview-pills" class="pm-media-subpills"></div>
 
           <div class="pm-media-header-right">
             <button id="btn-media-autohide-top" class="pm-media-mini-btn" title="Pin Top Bar Always Visible / Auto-Hide on Hover">
@@ -758,7 +749,7 @@
       </section>
 
       <!-- ===================================================================== -->
-      <!-- SLIDE-OVER 6: ADD & CUSTOMIZE OPERA SIDEBAR MEDIA APPS                -->
+      <!-- SLIDE-OVER 6: UNIFIED SETTINGS & APPS HUB                             -->
       <!-- ===================================================================== -->
       <section id="pm-media-apps-drawer" class="pm-drawer hidden" aria-hidden="true">
         <div class="pm-drawer-header">
@@ -766,8 +757,8 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
             Done
           </button>
-          <h2 class="pm-drawer-title">Sidebar Media &amp; Social Hub</h2>
-          <div style="display:inline-flex;align-items:center;gap:8px;">
+          <h2 class="pm-drawer-title">Settings &amp; Apps Hub</h2>
+          <div class="pm-drawer-header-actions" style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
             <button id="btn-open-full-settings-drawer" class="pm-text-btn" title="Open Full FoxHub Settings (Accounts, Polling, Sounds &amp; Wallpapers)" style="display:inline-flex;align-items:center;gap:4px;">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               <span>All Settings</span>
@@ -777,207 +768,31 @@
         </div>
 
         <div class="pm-drawer-content">
-          <div class="pm-control-card">
-            <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--text-primary);">When I Click a Sidebar Media Icon:</div>
-            <div class="pm-option-grid" id="opt-sidebar-mode-grid">
-              <button class="pm-opt-pill" data-sidebar-mode="auto">Smart Auto (Recommended)</button>
-              <button class="pm-opt-pill" data-sidebar-mode="sidebar">Open in Firefox Left Sidebar</button>
-              <button class="pm-opt-pill" data-sidebar-mode="embedded">Split View Inside Popup</button>
-              <button class="pm-opt-pill" data-sidebar-mode="window">Floating Side Window</button>
-            </div>
-          </div>
-
-          <div class="pm-control-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
-              <span style="font-size:12px;font-weight:700;color:var(--text-primary);">Persistent App Memory &amp; Background Audio:</span>
-              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Keep Spotify &amp; YouTube audio playing even after closing the sidebar for full screen space">
-                <input type="checkbox" id="chk-keep-audio-closed" checked>
-                <span>Play Audio When Closed</span>
-              </label>
-            </div>
-            <div style="margin-bottom:10px;padding:8px 9px;border-radius:9px;background:rgba(128,128,128,0.08);">
-              <div class="pm-bgaudio-section-title" style="margin-bottom:5px;">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
-                <span>When a Browser Tab Plays Audio / Video:</span>
-              </div>
-              <div class="pm-option-grid" id="opt-tab-audio-behavior-grid" style="grid-template-columns:repeat(3,1fr);">
-                <button class="pm-opt-pill" data-tab-audio-mode="pause-resume" title="Default (Opera GX style): automatically pause FoxHub music when any browser tab plays audio, and auto-resume when the tab stops">Pause &amp; Resume</button>
-                <button class="pm-opt-pill" data-tab-audio-mode="pause-only" title="Automatically pause FoxHub music when a browser tab plays audio, and stay paused until you press Play">Pause Only</button>
-                <button class="pm-opt-pill" data-tab-audio-mode="off" title="Never auto-pause FoxHub music when browser tabs play audio (play both together)">Play Together (Off)</button>
-              </div>
-            </div>
-            <div class="pm-option-grid" id="opt-persistence-mode-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:8px;">
-              <button class="pm-opt-pill" data-persistence-mode="eco" title="Frees all app RAM when closing the sidebar and resets to Mail Inbox">Eco (RAM Saver)</button>
-              <button class="pm-opt-pill" data-persistence-mode="selected" title="Keep only your chosen apps (e.g. Spotify, YouTube, Discord) persistent across close/reopen">Selected Apps</button>
-              <button class="pm-opt-pill" data-persistence-mode="all" title="Keep all opened apps persistent and restore exact state on reopen">All Apps</button>
-            </div>
-            <div id="pm-persistence-resource-note" style="font-size:10.8px;line-height:1.4;color:var(--text-secondary);background:rgba(128,128,128,0.09);border-radius:8px;padding:7px 9px;margin-bottom:6px;display:flex;align-items:flex-start;gap:6px;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              <div><strong>Resource Impact (Eco Mode):</strong> Uses <strong>0 MB extra RAM</strong> and zero CPU/GPU when closed. Closing the sidebar unloads apps and resets to Mail.</div>
-            </div>
-            <div id="pm-persistent-apps-picker-wrap" class="hidden" style="margin-top:8px;">
-              <div class="pm-bgaudio-section-title">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-                <span>Choose Apps to Keep in Persistent Memory (Save Page, Scroll &amp; State):</span>
-              </div>
-              <div id="pm-persistent-apps-picker" class="pm-bgaudio-cards-grid"></div>
-            </div>
-            <div id="pm-bgaudio-apps-picker-wrap" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color);">
-              <div class="pm-bgaudio-section-title">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
-                <span>Choose Which Apps Keep Playing Audio When Closed:</span>
-              </div>
-              <div style="font-size:10.3px;color:var(--text-muted);margin-bottom:7px;">Off by default for X/Twitter, TikTok, Instagram, Reddit &amp; social apps so they never waste resources in the background.</div>
-              <div id="pm-bgaudio-apps-picker" class="pm-bgaudio-cards-grid"></div>
-            </div>
-            <div id="pm-spotify-bg-autoplay-tip" class="hidden" style="font-size:10.7px;line-height:1.42;color:var(--text-secondary);background:rgba(29,185,84,0.1);border:1px solid rgba(29,185,84,0.32);border-radius:8px;padding:7px 9px;margin-top:8px;display:flex;align-items:flex-start;gap:7px;">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
-              <div><strong style="color:#1DB954;">Background Audio Note:</strong> <strong>YouTube</strong> &amp; video apps keep playing automatically when you close FoxHub! Because <strong>Spotify</strong> uses Widevine DRM, Firefox mutes hidden DRM frames unless Autoplay is allowed: in Firefox click <strong>Menu → Settings → search "Autoplay" → Settings… → set Default for all websites to "Allow Audio and Video"</strong>.</div>
-            </div>
-            <div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--border-color);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-              <span style="font-size:10.5px;color:var(--text-muted);">Live MSE / Widevine &amp; Tab-Audio Event Log</span>
-              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                <button type="button" id="btn-toggle-audio-log" class="pm-btn-xs pm-btn-secondary" title="Open live real-time Spotify, MSE/Widevine &amp; tab-audio event viewer" style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-size:10.8px;">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                  <span id="lbl-toggle-audio-log">View Live Log</span>
-                </button>
-                <button type="button" id="btn-clear-audio-log" class="pm-btn-xs pm-btn-secondary hidden" title="Clear recorded audio diagnostic events" style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;font-size:10.8px;">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                  <span>Clear</span>
-                </button>
-                <button type="button" id="btn-copy-audio-diagnostics" class="pm-btn-xs pm-btn-secondary" title="Copy live Spotify, MSE/Widevine buffer &amp; tab-audio diagnostics JSON to clipboard" style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-size:10.8px;">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                  <span>Copy Audio Diagnostics</span>
-                </button>
-              </div>
-            </div>
-            <div id="pm-live-audio-log-panel" class="hidden" style="margin-top:8px;max-height:215px;overflow-y:auto;background:rgba(10,12,18,0.94);border:1px solid var(--border-color);border-radius:8px;padding:7px 9px;font-family:Consolas,ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.2px;line-height:1.45;color:#d6deeb;"></div>
-          </div>
-
-          <div class="pm-control-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
-              <span style="font-size:12px;font-weight:700;color:var(--text-primary);">Top Shortcuts &amp; Controls Bar Mode:</span>
-              <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;">
-                <input type="checkbox" id="chk-social-notify-sounds" checked>
-                <span>Message Chime Sounds</span>
-              </label>
-            </div>
-            <div class="pm-option-grid" id="opt-topbar-mode-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px;">
-              <button class="pm-opt-pill" data-topbar-mode="hover" title="Hide top bar and slide down smoothly when hovering the top edge">Show on Hover</button>
-              <button class="pm-opt-pill" data-topbar-mode="pinned" title="Keep top bar always visible">Always Pinned</button>
-              <button class="pm-opt-pill" data-topbar-mode="disabled" title="Completely remove the top bar and hover zone">Completely Off</button>
-            </div>
-            <div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:6px;">Social Media App Color Theme:</div>
-            <div class="pm-option-grid" id="opt-social-theme-grid">
-              <button class="pm-opt-pill" data-social-theme="native">Native Default</button>
-              <button class="pm-opt-pill" data-social-theme="true-night">True Night OLED</button>
-              <button class="pm-opt-pill" data-social-theme="match-theme">Match My Palette</button>
-              <button class="pm-opt-pill" data-social-theme="warm-glass">Cozy Warm Eye-Care</button>
-              <button class="pm-opt-pill" data-social-theme="midnight-oled">Midnight Indigo</button>
-              <button class="pm-opt-pill" data-social-theme="rose-twilight">Rose Twilight</button>
-            </div>
-            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color);">
-              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
-                <span style="font-size:12px;font-weight:700;color:var(--text-primary);display:inline-flex;align-items:center;gap:5px;">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="20" y2="12"/><circle cx="14" cy="12" r="3" fill="var(--accent)"/></svg>
-                  <span>Custom Video Loadbar (TikTok, Reels &amp; Shorts):</span>
-                </span>
-                <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);cursor:pointer;" title="Show our interactive bottom video progress &amp; seek bar on TikTok, Instagram Reels, and YouTube Shorts (On by default)">
-                  <input type="checkbox" id="chk-custom-video-loadbar" checked>
-                  <span>Enabled (On by Default)</span>
-                </label>
-              </div>
-              <div id="pm-loadbar-customizer-wrap">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:5px;">
-                  <span style="font-size:10.8px;font-weight:600;color:var(--text-secondary);">Loadbar Color Style:</span>
-                  <label style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--text-secondary);cursor:pointer;" title="Pick a custom hex color for the video loadbar">
-                    <span>Custom Hex:</span>
-                    <input type="color" id="input-loadbar-custom-color" value="#FF3366" style="width:24px;height:20px;border:none;background:none;cursor:pointer;padding:0;">
-                  </label>
-                </div>
-                <div class="pm-option-grid" id="opt-loadbar-style-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:7px;">
-                  <button class="pm-opt-pill" data-loadbar-style="sunset" title="Default Sunset Glow (#ff3366 → #ff6b3d → #a29bfe)">Sunset Glow</button>
-                  <button class="pm-opt-pill" data-loadbar-style="accent" title="Matches your active FoxHub theme accent color">Match Theme</button>
-                  <button class="pm-opt-pill" data-loadbar-style="cyber" title="Neon Cyber (#00f2fe → #4facfe → #f093fb)">Neon Cyber</button>
-                  <button class="pm-opt-pill" data-loadbar-style="emerald" title="Emerald Mint (#1DB954 → #00d2d3)">Emerald Mint</button>
-                  <button class="pm-opt-pill" data-loadbar-style="minimal-white" title="Minimalist Crisp White">Minimal White</button>
-                  <button class="pm-opt-pill" data-loadbar-style="custom" title="Uses your Custom Hex color picker above">Custom Color</button>
-                </div>
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                  <span style="font-size:10.8px;font-weight:600;color:var(--text-secondary);">Bar Thickness:</span>
-                  <div class="pm-option-grid" id="opt-loadbar-size-grid" style="grid-template-columns:repeat(3,1fr);flex:1;max-width:250px;">
-                    <button class="pm-opt-pill" data-loadbar-size="slim">Slim (3px)</button>
-                    <button class="pm-opt-pill" data-loadbar-size="normal">Normal (4px)</button>
-                    <button class="pm-opt-pill" data-loadbar-size="bold">Bold (6px)</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="pm-shortcuts-studio-box">
-              <div class="pm-shortcuts-studio-head">
-                <span class="pm-shortcuts-studio-title">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg>
-                  <span>Keyboard Shortcuts &amp; App Hotkeys:</span>
-                </span>
-                <button type="button" id="btn-reset-shortcuts-drawer" class="pm-text-btn" title="Restore default global shortcuts and clear custom app hotkeys">Reset Defaults</button>
-              </div>
-              <div class="pm-shortcuts-studio-sub">Click any shortcut pill below and press a key combo (e.g. <code>Alt+Shift+S</code>). Press <code>Backspace</code> while recording to clear.</div>
-              <div class="pm-shortcuts-rows">
-                <div class="pm-shortcut-row">
-                  <span class="pm-shortcut-label">Floating Dropdown Popup</span>
-                  <button type="button" id="btn-sc-global-popup" class="pm-shortcut-recorder-btn" data-sc-kind="global" data-sc-key="popup">Alt+Shift+F</button>
-                </div>
-                <div class="pm-shortcut-row">
-                  <span class="pm-shortcut-label">Firefox Left Sidebar</span>
-                  <button type="button" id="btn-sc-global-sidebar" class="pm-shortcut-recorder-btn" data-sc-kind="global" data-sc-key="sidebar">Alt+Shift+M</button>
-                </div>
-                <div class="pm-shortcut-row">
-                  <span class="pm-shortcut-label">Desktop Popout Window</span>
-                  <button type="button" id="btn-sc-global-popout" class="pm-shortcut-recorder-btn" data-sc-kind="global" data-sc-key="popout">Alt+Shift+W</button>
-                </div>
-                <div class="pm-shortcut-row pm-shortcut-row-mail">
-                  <span class="pm-shortcut-label">Open Mail Inbox Directly</span>
-                  <div class="pm-shortcut-btn-group">
-                    <button type="button" id="btn-sc-app-pocketmail" class="pm-shortcut-recorder-btn" data-sc-kind="app" data-sc-app="pocketmail">Set Shortcut</button>
-                    <button type="button" id="btn-sc-clear-pocketmail" class="pm-shortcut-clear-btn hidden" title="Clear Mail shortcut" aria-label="Clear Mail shortcut">
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div class="pm-shortcut-openmode-wrap">
-                <span class="pm-shortcut-openmode-lbl">App Shortcut Opens In:</span>
-                <div class="pm-option-grid" id="opt-app-shortcut-mode-grid" style="grid-template-columns:repeat(3,1fr);flex:1;max-width:270px;">
-                  <button type="button" class="pm-opt-pill" data-app-shortcut-mode="sidebar">Left Sidebar</button>
-                  <button type="button" class="pm-opt-pill" data-app-shortcut-mode="popup">Floating Popup</button>
-                  <button type="button" class="pm-opt-pill" data-app-shortcut-mode="popout">Popout Window</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div id="pm-pinned-apps-heading" style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;">
-            <h3 class="pm-section-heading">Pinned Apps, Shortcuts &amp; Sounds</h3>
-            <span style="font-size:10.5px;color:var(--text-muted);">Drag to reorder &bull; Assign per-app hotkeys</span>
-          </div>
-          <div id="pm-media-apps-toggle-grid" class="pm-media-apps-toggle-grid">
-            <!-- Dynamically populated -->
-          </div>
-
-          <h3 class="pm-section-heading">Add Any Custom Website / Media App</h3>
-          <div class="pm-control-card">
-            <div style="display:flex;gap:6px;margin-bottom:8px;">
-              <input type="text" id="input-custom-app-name" class="pm-input" placeholder="App Name (e.g. SoundCloud, Threads)" style="flex:1;">
-              <input type="color" id="input-custom-app-color" value="#D96B43" style="width:38px;height:34px;border:none;background:none;cursor:pointer;">
-            </div>
-            <div style="display:flex;gap:6px;">
-              <input type="url" id="input-custom-app-url" class="pm-input" placeholder="https://…" style="flex:1;">
-              <button id="btn-add-custom-app" class="pm-btn pm-btn-primary">Add to Sidebar</button>
-            </div>
-            <div id="pm-custom-apps-list" style="margin-top:8px;display:flex;flex-direction:column;gap:5px;"></div>
-          </div>
+          <div id="pm-settings-mount"></div>
         </div>
       </section>
+      </div><!-- /.pm-app-stage -->
+
+      <!-- Mini "Now Playing" Bar (Opera GX / Arc Style) -->
+      <aside id="pm-mini-now-playing" class="pm-mini-np hidden" data-now-playing="1" aria-label="Now Playing">
+        <div id="pm-np-progress-track" class="pm-np-progress-track">
+          <div id="pm-np-progress-fill" class="pm-np-progress-fill"></div>
+        </div>
+        <div class="pm-np-body">
+          <button type="button" id="pm-np-jump" class="pm-np-jump-btn" title="Switch to player">
+            <span id="pm-np-art" class="pm-np-art"></span>
+            <span class="pm-np-meta">
+              <span id="pm-np-title" class="pm-np-title"></span>
+              <span id="pm-np-artist" class="pm-np-artist"></span>
+            </span>
+          </button>
+          <div class="pm-np-controls">
+            <button type="button" id="pm-np-prev" class="pm-np-ctrl-btn" title="Previous Track" aria-label="Previous Track"></button>
+            <button type="button" id="pm-np-playpause" class="pm-np-ctrl-btn pm-np-play-btn" title="Play / Pause" aria-label="Play / Pause"></button>
+            <button type="button" id="pm-np-next" class="pm-np-ctrl-btn" title="Next Track" aria-label="Next Track"></button>
+          </div>
+        </div>
+      </aside>
 
       <!-- Drag-to-Resize Corner Grips -->
       <div id="pm-resize-left" class="pm-resize-grip pm-resize-grip-left" title="Drag corner to resize popup width/height"></div>
@@ -1073,16 +888,59 @@
         </div>
       </div>
 
+      <!-- Narrow-Mode Header More Menu -->
+      <div id="pm-header-more-menu" class="pm-header-more-menu hidden" role="menu" aria-label="More Actions">
+        <button type="button" id="btn-more-themes" class="pm-header-more-item" role="menuitem" tabindex="-1">Themes &amp; Studio</button>
+        <button type="button" id="btn-more-popout" class="pm-header-more-item" role="menuitem" tabindex="-1">Popout Window</button>
+        <button type="button" id="btn-more-quick-switcher" class="pm-header-more-item" role="menuitem" tabindex="-1">Quick Switcher (Ctrl+K)</button>
+        <button type="button" id="btn-more-accounts" class="pm-header-more-item" role="menuitem" tabindex="-1">Manage Accounts</button>
+        <button type="button" id="btn-more-settings" class="pm-header-more-item" role="menuitem" tabindex="-1">Full Settings</button>
+        <button type="button" id="btn-more-sync" class="pm-header-more-item" role="menuitem" tabindex="-1">Sync Accounts Now</button>
+      </div>
+
+      <!-- Quick Switcher Spotlight Modal (Ctrl+K) -->
+      <div id="pm-quick-switcher" class="pm-qs-overlay hidden" role="dialog" aria-modal="true" aria-label="Quick Switcher">
+        <div class="pm-qs-backdrop" id="pm-qs-backdrop"></div>
+        <div class="pm-qs-dialog">
+          <div class="pm-qs-input-row">
+            <span class="pm-qs-search-icon" id="pm-qs-search-icon"></span>
+            <input type="text" id="pm-qs-input" class="pm-qs-input" placeholder="Jump to app, open https:// URL, or run command…" autocomplete="off" spellcheck="false">
+            <kbd class="pm-qs-kbd">ESC</kbd>
+          </div>
+          <div id="pm-qs-results" class="pm-qs-results" role="listbox"></div>
+          <div class="pm-qs-footer">
+            <span>↑↓ Navigate</span>
+            <span>↵ Open / Run</span>
+            <span>Esc Close</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Toast Notification Pill -->
       <div id="pm-toast" class="pm-toast hidden"></div>
     </div>
   </div>
 
-  <script src="../shared/themes.js"></script>
-  <script src="../shared/sender-icons.js"></script>
+  <!-- Shared FoxHub Core Libraries -->
   <script src="../shared/media-apps.js"></script>
+  <script src="../shared/settings-schema.js"></script>
+  <script src="../shared/themes.js"></script>
   <script src="../shared/sound-engine.js"></script>
   <script src="../shared/gmail-client.js"></script>
-  <script src="popup.js"></script>
+  <script src="../shared/sender-icons.js"></script>
+  <script src="../shared/settings-ui.js"></script>
+
+  <!-- Modular FoxHub Popup Controllers (window.FoxHubPopup namespace) -->
+  <script src="popup-utils.js"></script>
+  <script src="mail-view.js"></script>
+  <script src="email-reader.js"></script>
+  <script src="compose-drawer.js"></script>
+  <script src="theme-studio.js"></script>
+  <script src="audio-controller.js"></script>
+  <script src="media-workspace.js"></script>
+  <script src="left-rail.js"></script>
+  <script src="now-playing-bar.js"></script>
+  <script src="quick-switcher.js"></script>
+  <script src="popup-main.js"></script>
 </body>
 </html>

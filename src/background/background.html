@@ -2,13 +2,21 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>PocketMail Background Worker</title>
+  <title>FoxHub Background Worker</title>
 </head>
 <body>
-  <!-- Web Audio keepalive context and unthrottled wake pulse initialized in background.js -->
+  <!-- Web Audio keepalive context and unthrottled wake pulse initialized in bg-audio-engine.js -->
+  <script src="../shared/media-apps.js"></script>
+  <script src="../shared/settings-schema.js"></script>
   <script src="../shared/themes.js"></script>
   <script src="../shared/sound-engine.js"></script>
   <script src="../shared/gmail-client.js"></script>
-  <script src="background.js"></script>
+  <script src="bg-state.js"></script>
+  <script src="bg-gmail-sync.js"></script>
+  <script src="bg-webrequest-cookies.js"></script>
+  <script src="bg-audio-engine.js"></script>
+  <script src="bg-tab-audio-watcher.js"></script>
+  <script src="bg-shortcuts-context.js"></script>
+  <script src="bg-router.js"></script>
 </body>
 </html>

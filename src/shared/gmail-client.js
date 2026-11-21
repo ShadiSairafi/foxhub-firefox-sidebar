@@ -1,10 +1,11 @@
 /**
- * PocketMail — 100% Local Multi-Account Gmail Engine
+ * FoxHub — 100% Local Multi-Account Gmail Engine
  * Supports:
  * 1. Multi-Session Auto-Discovery (u/0 .. u/5) via Gmail Atom Feed + Local Session Tokens
  * 2. Interactive Google Account Sign-In ("Add Account" popup flow via accounts.google.com/AddSession)
  * 3. Optional Local OAuth 2.0 Flow (browser.identity.launchWebAuthFlow with user's Client ID)
  * 4. Instant Actions: Mark Read/Unread, Trash/Delete, Archive, Star, Spam, Full Thread Reader, Quick Reply
+ * 5. Pure-DOM-tree sanitizer & renderer (100% AMO compliant)
  */
 
 (function (global) {
@@ -27,11 +28,43 @@
     'updates': '^smartlabel_notification'
   };
 
+  const UNSAFE_EMAIL_TAGS = new Set([
+    'script',
+    'meta',
+    'iframe',
+    'object',
+    'embed',
+    'link',
+    'base',
+    'applet',
+    'frame',
+    'frameset',
+    'foreignobject',
+    'noscript',
+    'animate',
+    'animatecolor',
+    'animatemotion',
+    'animatetransform',
+    'set',
+    'discard'
+  ]);
+
+  const URL_ATTRS = new Set([
+    'href',
+    'src',
+    'action',
+    'formaction',
+    'xlink:href',
+    'poster',
+    'background'
+  ]);
+
+  const HTML5_VOID_TAGS = new Set([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'
+  ]);
+
   /**
    * Smart 1-Click OTP / 2FA & Activation Key Extractor
-   * Detects 4–8 digit codes, G-XXXXXX, alphanumeric 2FA codes (e.g. Battle.net / Steam BV9W6D),
-   * and multi-segment hyphenated activation/launch/gift keys (e.g. D96P-5HT9-QM3NJ-VS89-CT8B)
-   * while ignoring gamer tags / BattleTags / Discord discriminators like BigSnow#21284.
    */
   function extractVerificationCode(subject = '', snippet = '') {
     const rawCombined = `${subject} ${snippet}`;
@@ -41,8 +74,6 @@
       );
     if (!hasKeyword) return null;
 
-    // Strip URLs, email addresses, BattleTag/Discord handle discriminators (e.g. BigSnow#21284),
-    // #12345 ticket IDs, and tokens truncated by Gmail Atom feed ellipsis at the end of a snippet (e.g. "BV9W6...")
     const cleaned = rawCombined
       .replace(/[A-Za-z0-9-]+(?:\.{2,}|…)\s*$/g, ' ')
       .replace(/https?:\/\/\S+/gi, ' ')
@@ -50,17 +81,14 @@
       .replace(/[A-Za-z0-9_.-]+#\d{2,10}\b/g, ' ')
       .replace(/(?:^|\s)#\d{2,10}\b/g, ' ');
 
-    // 1. Match Google style G-123456
     const gMatch = cleaned.match(/\b(G-\d{5,8})\b/i);
     if (gMatch) return gMatch[1];
 
-    // 2. Match multi-segment hyphenated activation / launch / gift / game keys (e.g. D96P-5HT9-QM3NJ-VS89-CT8B, Steam XXXXX-XXXXX-XXXXX)
     const hyphenKeyMatch = cleaned.match(
       /(?<![A-Za-z0-9-])(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])(?:[A-Z0-9]{3,6}-){2,5}[A-Z0-9]{3,6}(?![A-Za-z0-9-])/
     );
     if (hyphenKeyMatch) return hyphenKeyMatch[0];
 
-    // 3. Match explicitly labeled single-token code (e.g. "security code: BV9W6D", "verification code is 849204", "code: 4829")
     const labeledRegex =
       /\b(?:security\s+code|verification\s+code|login\s+code|sign-?in\s+code|access\s+code|confirmation\s+code|auth(?:entication)?\s+code|one-?time\s+code|otp(?:\s+code)?|passcode|steam\s+guard\s+code|launch\s+code|shareable\s+code|your\s+code|code)(?:\s+is|\s*[:=-])\s*([A-Z0-9]{4,8})(?![A-Za-z0-9-])/gi;
     let labeledMatch;
@@ -69,19 +97,16 @@
       if (/^\d{4,8}$/.test(candidate)) {
         return candidate;
       }
-      // Accept 5-8 char uppercase+digit alphanumeric code (e.g. Battle.net BV9W6D)
       if (/^(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,8}$/.test(candidate)) {
         return candidate;
       }
     }
 
-    // 4. Match 5-8 digit standalone verification code (never slicing inside a hyphenated token)
     const numMatches = cleaned.match(/(?<![A-Za-z0-9-])(\d{5,8})(?![A-Za-z0-9-])/g);
     if (numMatches && numMatches.length > 0) {
       return numMatches[0];
     }
 
-    // 5. Match standalone 5-7 char uppercase alphanumeric code (must contain both uppercase letters and digits within the token itself)
     const alphaNumMatches = cleaned.match(
       /(?<![A-Za-z0-9-])(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,7}(?![A-Za-z0-9-])/g
     );
@@ -89,12 +114,12 @@
       return alphaNumMatches[0];
     }
 
-    // 6. Match 4-digit code if explicitly near "code", "pin", or "otp"
     const fourDigit = cleaned.match(/\b(?:code|pin|otp)(?:\s+is|\s*[:=-])?\s*(\d{4})(?![A-Za-z0-9-])/i);
     if (fourDigit) return fourDigit[1];
 
     return null;
   }
+
   function decToHexId(decStr) {
     try {
       if (!decStr) return '';
@@ -104,9 +129,6 @@
     }
   }
 
-  /**
-   * Extract hex message/thread ID from Atom <link href="..."> or <id>
-   */
   function extractHexId(linkHref, tagId) {
     if (linkHref) {
       const match = linkHref.match(/[?&]message_id=([0-9a-fA-F]+)/);
@@ -123,9 +145,6 @@
     return 'msg_' + Math.random().toString(36).slice(2, 10);
   }
 
-  /**
-   * Parse Gmail Atom XML Feed into structured account & messages data
-   */
   function parseAtomFeed(xmlText, slotIndex, accountConfig = {}) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(xmlText, 'application/xml');
@@ -146,7 +165,6 @@
     const messages = entries.map((entry) => {
       const subject = (entry.querySelector('title')?.textContent || '(No subject)').trim();
       const summary = (entry.querySelector('summary')?.textContent || '').trim();
-      // Prefer <modified> over <issued> so multi-message threads (e.g. repeated 2FA codes) reflect the newest message arrival time
       const issued =
         entry.querySelector('modified')?.textContent ||
         entry.querySelector('issued')?.textContent ||
@@ -185,9 +203,6 @@
     };
   }
 
-  /**
-   * Fetch Atom feed for a specific Google session slot (/u/0, /u/1, etc.)
-   */
   async function fetchSessionSlotFeed(slotIndex = 0, labelKey = 'inbox') {
     const feedSuffix = LABEL_FEEDS[labelKey] !== undefined ? LABEL_FEEDS[labelKey] : labelKey;
     const encodedLabel = feedSuffix ? `/${encodeURIComponent(feedSuffix)}` : '';
@@ -214,9 +229,6 @@
     return parseAtomFeed(text, slotIndex);
   }
 
-  /**
-   * Discover all signed-in Gmail session accounts across slots u/0 .. u/5
-   */
   async function discoverSessionAccounts(maxSlots = 5, accountSettingsMap = {}) {
     const discovered = [];
     const seenEmails = new Set();
@@ -226,7 +238,6 @@
       slotPromises.push(
         (async () => {
           try {
-            // Check if user configured a specific label for this slot/account
             const prelim = await fetchSessionSlotFeed(slot, 'inbox');
             const customSetting = accountSettingsMap[prelim.email] || {};
             if (customSetting.disabled) return null;
@@ -258,10 +269,7 @@
     return discovered;
   }
 
-  /**
-   * Retrieve GMAIL_AT action token and ik user key for a session slot
-   */
-  const tokenCache = {}; // email -> { at, ik, expiresAt }
+  const tokenCache = {};
 
   async function getSessionTokens(slotIndex, accountEmail) {
     const cached = tokenCache[accountEmail];
@@ -272,7 +280,6 @@
     let atToken = null;
     let ikToken = cached?.ik || null;
 
-    // 1. Check browser cookies for GMAIL_AT
     if (typeof browser !== 'undefined' && browser.cookies) {
       try {
         const cookies = await browser.cookies.getAll({ domain: 'mail.google.com', name: 'GMAIL_AT' });
@@ -286,7 +293,6 @@
       }
     }
 
-    // 2. If ikToken or atToken is missing, fetch the Gmail bootstrap page to extract GLOBALS / ik / GMAIL_AT
     if (!atToken || !ikToken) {
       try {
         const resp = await fetch(`https://mail.google.com/mail/u/${slotIndex}/?ui=2`, {
@@ -295,7 +301,6 @@
         });
         if (resp.ok) {
           const html = await resp.text();
-          // Extract ik: in GLOBALS array, ik is a 10-char hex/alphanumeric string right before the email address
           if (accountEmail) {
             const escapedEmail = accountEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const ikRegex = new RegExp(`"([a-f0-9]{8,14})"\\s*,\\s*"${escapedEmail}"`, 'i');
@@ -317,7 +322,6 @@
           }
         }
 
-        // Re-check cookies after visiting /mail/u/{slotIndex}/
         if (!atToken && typeof browser !== 'undefined' && browser.cookies) {
           const cookiesAfter = await browser.cookies.getAll({ domain: 'mail.google.com', name: 'GMAIL_AT' });
           const slotPath = `/mail/u/${slotIndex}`;
@@ -342,17 +346,6 @@
     return result;
   }
 
-  /**
-   * Perform an instant email action on a Gmail session account
-   * Actions:
-   * - markRead: 'rd'
-   * - markUnread: 'ur'
-   * - deleteTrash: 'tr'
-   * - archive: 'rc_^i' (or 'arch')
-   * - star: 'st'
-   * - unstar: 'xst'
-   * - spam: 'sp'
-   */
   async function executeSessionAction(slotIndex, accountEmail, threadHexId, actionType) {
     const actionMap = {
       markRead: 'rd',
@@ -397,27 +390,407 @@
     }
   }
 
-  /**
-   * Fetch full email HTML/text content for the in-popup Reader View
-   */
-  async function fetchFullEmailContent(message) {
-    if (message.isDemo) {
+  function isUnsafeEmailUrl(rawVal, attrName = '') {
+    const compact = String(rawVal || '')
+      .replace(/[\u0000-\u001F\u007F\s]+/g, '')
+      .toLowerCase();
+    if (!compact) return false;
+    if (compact.startsWith('data:image/svg+xml')) {
+      return true;
+    }
+    const schemeMatch = compact.match(/^([a-z][a-z0-9+.-]*):/);
+    if (!schemeMatch) {
+      return false;
+    }
+    const scheme = schemeMatch[1];
+    const attr = String(attrName || '').toLowerCase();
+    if (attr === 'src' || attr === 'srcset' || attr === 'poster' || attr === 'background') {
+      if (scheme === 'http' || scheme === 'https' || scheme === 'cid') {
+        return false;
+      }
+      if (scheme === 'data') {
+        return !/^data:image\/(png|jpeg|jpg|gif|webp|bmp|x-icon|vnd\.microsoft\.icon)(;|,)/.test(compact);
+      }
+      return true;
+    }
+    if (scheme === 'http' || scheme === 'https' || scheme === 'mailto' || scheme === 'tel') {
+      return false;
+    }
+    return true;
+  }
+
+  function sanitizeSrcset(rawVal) {
+    const input = String(rawVal || '').trim();
+    if (!input) return '';
+    const safeCandidates = [];
+    let i = 0;
+    const len = input.length;
+    while (i < len) {
+      while (i < len && (input[i] === ',' || /\s/.test(input[i]))) i++;
+      if (i >= len) break;
+      const urlStart = i;
+      const restLower = input.slice(i, i + 16).toLowerCase();
+      if (restLower.startsWith('data:')) {
+        while (i < len && !/\s/.test(input[i])) i++;
+      } else {
+        while (i < len && input[i] !== ',' && !/\s/.test(input[i])) i++;
+      }
+      const url = input.slice(urlStart, i);
+      while (i < len && /\s/.test(input[i])) i++;
+      const descStart = i;
+      while (i < len && input[i] !== ',') i++;
+      const descriptor = input.slice(descStart, i).trim();
+      if (i < len && input[i] === ',') i++;
+
+      if (!url || /[<>"']/.test(url) || isUnsafeEmailUrl(url, 'srcset')) {
+        continue;
+      }
+      if (descriptor && !/^\d+(\.\d+)?[wx](\s+\d+(\.\d+)?[wx])*$/i.test(descriptor)) {
+        continue;
+      }
+      safeCandidates.push(descriptor ? `${url} ${descriptor}` : url);
+    }
+    return safeCandidates.join(', ');
+  }
+
+  function sanitizeCssText(cssText) {
+    return String(cssText || '')
+      .replace(/(-webkit-|-moz-|-ms-)?user-select\s*:\s*none\s*(!important)?\s*;?/gi, '')
+      .replace(/@import\b[^;]*;?/gi, '')
+      .replace(/expression\s*\(/gi, 'invalid(')
+      .replace(/javascript\s*:/gi, 'invalid:')
+      .replace(/<\s*\/?\s*style\b/gi, '\\3c /style')
+      .replace(/</g, '\\3c ');
+  }
+
+  function sanitizeDomNodeToTree(node, inForeignContent = false) {
+    if (!node) return null;
+    if (node.nodeType === 3) {
+      const val = node.nodeValue || '';
+      return val ? { t: 'text', v: val } : null;
+    }
+    if (node.nodeType !== 1) return null;
+    const tag = String(node.tagName || '').toLowerCase();
+    if (!tag || UNSAFE_EMAIL_TAGS.has(tag)) return null;
+
+    const isForeign =
+      inForeignContent ||
+      tag === 'svg' ||
+      tag === 'math' ||
+      Boolean(node.namespaceURI && node.namespaceURI !== 'http://www.w3.org/1999/xhtml');
+
+    if (tag === 'style') {
+      if (isForeign) return null;
+      const cleanedCss = sanitizeCssText(node.textContent || '');
       return {
-        html: message.demoHtml || `<p>${message.snippet}</p>`,
-        plainText: message.fullText || message.snippet
+        t: 'el',
+        tag: 'style',
+        attrs: {},
+        c: cleanedCss ? [{ t: 'text', v: cleanedCss }] : []
       };
     }
 
-    // If OAuth account
-    if (message.accountType === 'oauth' && message.oauthAccessToken) {
+    const attrs = {};
+    if (node.attributes) {
+      for (let i = 0; i < node.attributes.length; i++) {
+        const attr = node.attributes[i];
+        const attrName = String(attr.name || '').toLowerCase();
+        if (!attrName || attrName.startsWith('on') || attrName === 'srcdoc') continue;
+
+        let attrVal = String(attr.value || '');
+        if (URL_ATTRS.has(attrName)) {
+          if (isUnsafeEmailUrl(attrVal, attrName)) continue;
+        }
+        if (attrName === 'srcset') {
+          attrVal = sanitizeSrcset(attrVal);
+          if (!attrVal) continue;
+        }
+        if (attrName === 'style') {
+          attrVal = sanitizeCssText(attrVal);
+        }
+        attrs[attr.name] = attrVal;
+      }
+    }
+
+    const children = [];
+    const childNodes = node.childNodes || [];
+    for (let i = 0; i < childNodes.length; i++) {
+      const childTree = sanitizeDomNodeToTree(childNodes[i], isForeign);
+      if (childTree) children.push(childTree);
+    }
+
+    return { t: 'el', tag, attrs, c: children };
+  }
+
+  function sanitizeEmailRootToTree(rootEl) {
+    if (!rootEl) {
+      return { t: 'fragment', c: [] };
+    }
+    const children = [];
+    const childNodes = rootEl.childNodes || [];
+    for (let i = 0; i < childNodes.length; i++) {
+      const childTree = sanitizeDomNodeToTree(childNodes[i]);
+      if (childTree) children.push(childTree);
+    }
+    return { t: 'fragment', c: children };
+  }
+
+  function escapeHtmlAttr(val) {
+    return String(val)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function escapeHtmlText(val) {
+    return String(val)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function serializeDomTreeToHtml(node, inRawTextTag = false, inForeign = false) {
+    if (!node) return '';
+    if (Array.isArray(node)) {
+      return node.map((n) => serializeDomTreeToHtml(n, inRawTextTag, inForeign)).join('');
+    }
+    if (node.t === 'text') {
+      return inRawTextTag ? String(node.v || '').replace(/</g, '\\3c ') : escapeHtmlText(node.v || '');
+    }
+    if (node.t === 'fragment') {
+      return (node.c || []).map((n) => serializeDomTreeToHtml(n, false, inForeign)).join('');
+    }
+    if (node.t === 'el') {
+      const tag = String(node.tag || '').toLowerCase();
+      if (!tag || !/^[a-z][a-z0-9:-]*$/.test(tag) || UNSAFE_EMAIL_TAGS.has(tag)) return '';
+      const isForeign = inForeign || tag === 'svg' || tag === 'math';
+      if (isForeign && tag === 'style') return '';
+      let attrStr = '';
+      if (node.attrs && typeof node.attrs === 'object') {
+        for (const [k, v] of Object.entries(node.attrs)) {
+          if (!/^[a-z_:][a-z0-9_.:-]*$/i.test(k)) continue;
+          const lowerK = k.toLowerCase();
+          if (lowerK.startsWith('on') || lowerK === 'srcdoc') continue;
+          if (URL_ATTRS.has(lowerK) && isUnsafeEmailUrl(v, lowerK)) continue;
+          if (lowerK === 'srcset') {
+            const cleanSrcset = sanitizeSrcset(v);
+            if (!cleanSrcset) continue;
+            attrStr += ` ${k}="${escapeHtmlAttr(cleanSrcset)}"`;
+            continue;
+          }
+          attrStr += ` ${k}="${escapeHtmlAttr(v)}"`;
+        }
+      }
+      const lt = String.fromCharCode(60);
+      const gt = String.fromCharCode(62);
+      const open = lt + tag + attrStr + gt;
+      if (HTML5_VOID_TAGS.has(tag)) {
+        return open;
+      }
+      const rawChildren = tag === 'style';
+      const inner = (node.c || []).map((n) => serializeDomTreeToHtml(n, rawChildren, isForeign)).join('');
+      return open + inner + lt + '/' + tag + gt;
+    }
+    return '';
+  }
+
+  function buildDomFromTree(doc, node, inSvg = false, inForeign = false) {
+    const targetDoc = doc || global.document;
+    if (!node) return targetDoc.createDocumentFragment();
+    if (Array.isArray(node)) {
+      const frag = targetDoc.createDocumentFragment();
+      for (let i = 0; i < node.length; i++) {
+        frag.appendChild(buildDomFromTree(targetDoc, node[i], inSvg, inForeign));
+      }
+      return frag;
+    }
+    if (node.t === 'fragment') {
+      const frag = targetDoc.createDocumentFragment();
+      const list = node.c || [];
+      for (let i = 0; i < list.length; i++) {
+        frag.appendChild(buildDomFromTree(targetDoc, list[i], inSvg, inForeign));
+      }
+      return frag;
+    }
+    if (node.t === 'text') {
+      return targetDoc.createTextNode(String(node.v || ''));
+    }
+    if (node.t === 'el') {
+      const tag = String(node.tag || '').toLowerCase();
+      if (!tag || UNSAFE_EMAIL_TAGS.has(tag)) {
+        return targetDoc.createDocumentFragment();
+      }
+      const isForeign = inForeign || inSvg || tag === 'svg' || tag === 'math';
+      if (isForeign && tag === 'style') {
+        return targetDoc.createDocumentFragment();
+      }
+      const nextSvg = inSvg || tag === 'svg';
+      const el = nextSvg
+        ? targetDoc.createElementNS('http://www.w3.org/2000/svg', tag)
+        : targetDoc.createElement(tag);
+      if (node.attrs && typeof node.attrs === 'object') {
+        for (const [k, v] of Object.entries(node.attrs)) {
+          const lowerK = k.toLowerCase();
+          if (lowerK.startsWith('on') || lowerK === 'srcdoc') continue;
+          if (URL_ATTRS.has(lowerK) && isUnsafeEmailUrl(v, lowerK)) continue;
+          if (lowerK === 'srcset') {
+            const cleanSrcset = sanitizeSrcset(v);
+            if (!cleanSrcset) continue;
+            el.setAttribute(k, cleanSrcset);
+            continue;
+          }
+          el.setAttribute(k, String(v));
+        }
+      }
+      const list = node.c || [];
+      for (let i = 0; i < list.length; i++) {
+        el.appendChild(buildDomFromTree(targetDoc, list[i], nextSvg, isForeign));
+      }
+      return el;
+    }
+    return targetDoc.createDocumentFragment();
+  }
+
+  function blocksToDomTree(blocks = [], wrapperAttrs = { style: 'line-height:1.65;' }) {
+    const children = [];
+    for (let i = 0; i < blocks.length; i++) {
+      const blk = blocks[i];
+      if (!blk) continue;
+      if (blk.tag === 'ul' && Array.isArray(blk.items)) {
+        const liNodes = blk.items.map((itemText) => ({
+          t: 'el',
+          tag: 'li',
+          attrs: {},
+          c: [{ t: 'text', v: String(itemText || '') }]
+        }));
+        children.push({ t: 'el', tag: 'ul', attrs: {}, c: liNodes });
+        continue;
+      }
+      const tag = blk.tag === 'div' ? 'div' : 'p';
+      const inlineChildren = [];
+      if (Array.isArray(blk.runs)) {
+        for (let r = 0; r < blk.runs.length; r++) {
+          const run = blk.runs[r];
+          if (!run) continue;
+          if (run.br) {
+            inlineChildren.push({ t: 'el', tag: 'br', attrs: {}, c: [] });
+          } else if (run.tag) {
+            inlineChildren.push({
+              t: 'el',
+              tag: run.tag,
+              attrs: run.attrs || {},
+              c: [{ t: 'text', v: String(run.text || '') }]
+            });
+          } else if (run.text !== undefined) {
+            inlineChildren.push({ t: 'text', v: String(run.text) });
+          }
+        }
+      } else if (blk.text !== undefined) {
+        inlineChildren.push({ t: 'text', v: String(blk.text) });
+      }
+      children.push({ t: 'el', tag, attrs: blk.attrs || {}, c: inlineChildren });
+    }
+    return {
+      t: 'el',
+      tag: 'div',
+      attrs: wrapperAttrs || {},
+      c: children
+    };
+  }
+
+  function renderEmailContent(containerEl, contentObj = {}) {
+    if (!containerEl) return;
+    const doc = containerEl.ownerDocument || global.document;
+    if (contentObj && contentObj.domTree) {
+      containerEl.replaceChildren(buildDomFromTree(doc, contentObj.domTree));
+      return;
+    }
+    const fallbackTree = blocksToDomTree(
+      [{ tag: 'p', text: (contentObj && contentObj.plainText) || 'No preview available.' }],
+      { class: 'pm-reader-fallback-body' }
+    );
+    containerEl.replaceChildren(buildDomFromTree(doc, fallbackTree));
+  }
+
+  function sanitizeRawHtmlFragmentToTree(rawHtml) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(String(rawHtml || ''), 'text/html');
+    doc.querySelectorAll('script, meta, iframe, object, embed, link, base, applet, frame, frameset, foreignobject, noscript, animate, animateMotion, animatemotion, animateTransform, animatetransform, set, discard, svg style, math style').forEach((el) => el.remove());
+
+    if (!doc.body) {
+      return {
+        domTree: { t: 'fragment', c: [] },
+        html: '',
+        plainText: ''
+      };
+    }
+
+    doc.body.querySelectorAll('a').forEach((a) => {
+      let href = a.getAttribute('href') || '';
+      if (isUnsafeEmailUrl(href, 'href')) {
+        a.removeAttribute('href');
+        return;
+      }
+      if (href.startsWith('//')) {
+        href = 'https:' + href;
+        a.setAttribute('href', href);
+      } else if (href.startsWith('/')) {
+        href = 'https://mail.google.com' + href;
+        a.setAttribute('href', href);
+      }
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener noreferrer');
+    });
+
+    doc.body.querySelectorAll('img').forEach((img) => {
+      const src = img.getAttribute('src') || '';
+      if (isUnsafeEmailUrl(src, 'src')) {
+        img.removeAttribute('src');
+        return;
+      }
+      if (src.startsWith('//')) {
+        img.setAttribute('src', 'https:' + src);
+      } else if (src.startsWith('/')) {
+        img.setAttribute('src', 'https://mail.google.com' + src);
+      }
+    });
+
+    doc.body.querySelectorAll('[srcset]').forEach((el) => {
+      const cleaned = sanitizeSrcset(el.getAttribute('srcset') || '');
+      if (cleaned) el.setAttribute('srcset', cleaned);
+      else el.removeAttribute('srcset');
+    });
+
+    const domTree = sanitizeEmailRootToTree(doc.body);
+    const plainText = (doc.body.innerText || doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+    return {
+      domTree,
+      html: serializeDomTreeToHtml(domTree),
+      plainText
+    };
+  }
+
+  async function fetchFullEmailContent(message) {
+    if (message && message.isDemo) {
+      const domTree = Array.isArray(message.demoBlocks)
+        ? blocksToDomTree(message.demoBlocks, { style: 'line-height:1.65;' })
+        : blocksToDomTree([{ tag: 'p', text: message.fullText || message.snippet || '' }], { style: 'line-height:1.65;' });
+      return {
+        domTree,
+        html: serializeDomTreeToHtml(domTree),
+        plainText: message.fullText || message.snippet || ''
+      };
+    }
+
+    if (message && message.accountType === 'oauth' && message.oauthAccessToken) {
       return fetchOAuthMessageBody(message.threadId, message.oauthAccessToken);
     }
 
-    // Session account: Try Gmail Print View (?ui=2&ik=...&view=pt&search=all&th=...)
-    const slot = message.accountSlot || 0;
-    const { ik } = await getSessionTokens(slot, message.accountEmail);
+    const slot = (message && message.accountSlot) || 0;
+    const { ik } = await getSessionTokens(slot, message && message.accountEmail);
 
-    if (ik) {
+    if (ik && message) {
       try {
         const ptUrl = `https://mail.google.com/mail/u/${slot}/?ui=2&ik=${encodeURIComponent(ik)}&view=pt&search=all&th=${encodeURIComponent(message.threadId)}&_=${Date.now()}`;
         const resp = await fetch(ptUrl, { credentials: 'include', cache: 'no-store' });
@@ -433,40 +806,34 @@
       }
     }
 
-    // Fallback to clean formatted snippet view
-    const escapedSnippet = (message.snippet || 'No preview available.')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-
+    const fallbackText = (message && message.snippet) || 'No preview available.';
+    const fallbackTree = blocksToDomTree(
+      [{ tag: 'p', text: fallbackText }],
+      { class: 'pm-reader-fallback-body' }
+    );
     return {
-      html: `<div class="pm-reader-fallback-body"><p>${escapedSnippet}</p></div>`,
-      plainText: message.snippet || ''
+      domTree: fallbackTree,
+      html: serializeDomTreeToHtml(fallbackTree),
+      plainText: (message && message.snippet) || ''
     };
   }
 
   /**
-   * Clean and sanitize Gmail's Print View HTML so it renders safely & beautifully inside the popup
-   * Strips the redundant Gmail print-view logo header and duplicate subject/sender rows,
-   * fixes relative URLs, and detects Unsubscribe links + OTP codes.
+   * Clean and sanitize Gmail's Print View HTML safely using pure DOM nodes.
    */
   function sanitizeGmailPrintHtml(rawHtml, subject = '') {
     const parser = new DOMParser();
     const doc = parser.parseFromString(rawHtml, 'text/html');
 
-    // Remove unsafe tags
-    doc.querySelectorAll('script, meta, iframe, object, embed, link').forEach((el) => el.remove());
+    doc.querySelectorAll('script, meta, iframe, object, embed, link, base, applet, frame, frameset, foreignobject, noscript, animate, animateMotion, animatemotion, animateTransform, animatetransform, set, discard, svg style, math style').forEach((el) => el.remove());
 
-    // Find the actual email message body inside Gmail's print view structure
     let bodyContainer = doc.querySelector('.bodycontainer') || doc.body;
     if (!bodyContainer) return null;
 
-    // Strip the top Gmail print-view logo table and duplicate subject table if present
     let latestMessageText = '';
     let threadOtpCode = null;
     const mainContent = bodyContainer.querySelector('.maincontent');
     if (mainContent) {
-      // Remove top <hr> and duplicate subject table before table.message
       Array.from(mainContent.children).forEach((child) => {
         if (child.tagName === 'HR') {
           child.remove();
@@ -475,21 +842,16 @@
         }
       });
 
-      // Inside each table.message, the first rows contain the duplicate sender/recipient/date header
-      // while the last row contains the actual email content
       const msgTables = Array.from(mainContent.querySelectorAll('table.message'));
       msgTables.forEach((msgTable) => {
         const rows = Array.from(msgTable.querySelectorAll(':scope > tbody > tr, :scope > tr'));
         if (rows.length >= 2) {
-          // Keep only rows that contain the actual message body (skip sender & To:/Reply-To: rows)
           for (let i = 0; i < rows.length - 1; i++) {
             rows[i].remove();
           }
         }
       });
 
-      // Gmail Print View lists messages in a thread oldest-first (msgTables[0]) to newest-last (msgTables[msgTables.length - 1]).
-      // Always extract the verification code & snippet from the NEWEST message first, and place the newest message at the top of Reader View!
       if (msgTables.length > 0) {
         for (let i = msgTables.length - 1; i >= 0; i--) {
           const tblText = (msgTables[i].innerText || msgTables[i].textContent || '')
@@ -512,11 +874,13 @@
       bodyContainer = mainContent;
     }
 
-    // Detect 1-Click Unsubscribe link inside the email
     let unsubscribeUrl = null;
-    // Fix relative URLs and make all links open safely
     bodyContainer.querySelectorAll('a').forEach((a) => {
       let href = a.getAttribute('href') || '';
+      if (isUnsafeEmailUrl(href, 'href')) {
+        a.removeAttribute('href');
+        return;
+      }
       if (href.startsWith('//')) {
         href = 'https:' + href;
         a.setAttribute('href', href);
@@ -542,9 +906,12 @@
       }
     });
 
-    // Fix protocol-relative or root-relative images
     bodyContainer.querySelectorAll('img').forEach((img) => {
       const src = img.getAttribute('src') || '';
+      if (isUnsafeEmailUrl(src, 'src')) {
+        img.removeAttribute('src');
+        return;
+      }
       if (src.startsWith('//')) {
         img.setAttribute('src', 'https:' + src);
       } else if (src.startsWith('/')) {
@@ -552,14 +919,19 @@
       }
     });
 
-    // Ensure no email element or <style> tag disables text selection
+    bodyContainer.querySelectorAll('[srcset]').forEach((el) => {
+      const cleaned = sanitizeSrcset(el.getAttribute('srcset') || '');
+      if (cleaned) el.setAttribute('srcset', cleaned);
+      else el.removeAttribute('srcset');
+    });
+
     bodyContainer.querySelectorAll('[style*="user-select"]').forEach((el) => {
       const st = el.getAttribute('style') || '';
-      el.setAttribute('style', st.replace(/(-webkit-|-moz-|-ms-)?user-select\s*:\s*none\s*;?/gi, ''));
+      el.setAttribute('style', sanitizeCssText(st));
     });
     bodyContainer.querySelectorAll('style').forEach((styleEl) => {
       if (styleEl.textContent) {
-        styleEl.textContent = styleEl.textContent.replace(/(-webkit-|-moz-|-ms-)?user-select\s*:\s*none\s*(!important)?\s*;?/gi, '');
+        styleEl.textContent = sanitizeCssText(styleEl.textContent);
       }
     });
 
@@ -570,9 +942,11 @@
     const latestSnippet = plainText.slice(0, 220);
 
     const otpCode = threadOtpCode || extractVerificationCode(subject || '', plainText);
+    const domTree = sanitizeEmailRootToTree(bodyContainer);
 
     return {
-      html: bodyContainer.innerHTML,
+      domTree,
+      html: serializeDomTreeToHtml(domTree),
       plainText,
       latestSnippet,
       unsubscribeUrl,
@@ -580,10 +954,6 @@
     };
   }
 
-  /**
-   * Optional Local OAuth 2.0 Flow (100% local via browser.identity.launchWebAuthFlow)
-   * Lets users connect any Google account using their own local OAuth Client ID
-   */
   async function launchLocalGoogleOAuth(clientId) {
     if (!clientId) {
       throw new Error('Please provide a Google OAuth Client ID or use the Instant Google Account Sign-In button.');
@@ -619,7 +989,6 @@
       throw new Error('No access_token returned from Google OAuth flow.');
     }
 
-    // Fetch user profile email
     const profileResp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
       headers: { Authorization: `Bearer ${accessToken}` }
     });
@@ -638,9 +1007,6 @@
     };
   }
 
-  /**
-   * Fetch unread messages for an OAuth-connected account
-   */
   async function fetchOAuthAccountFeed(oauthAccount) {
     const headers = { Authorization: `Bearer ${oauthAccount.accessToken}` };
     const listResp = await fetch(
@@ -741,11 +1107,22 @@
 
     const htmlData = findPart(data.payload, 'text/html');
     const textData = findPart(data.payload, 'text/plain');
-    const html = htmlData ? decodeBase64Url(htmlData) : `<p>${decodeBase64Url(textData || '') || data.snippet}</p>`;
-    const plainText = textData ? decodeBase64Url(textData) : (data.snippet || '');
-    const otpCode = extractVerificationCode('', plainText);
+    const decodedText = textData ? decodeBase64Url(textData) : '';
+    const plainText = decodedText || data.snippet || '';
 
-    return { html, plainText, otpCode };
+    let domTree;
+    let html;
+    if (htmlData) {
+      const sanitized = sanitizeRawHtmlFragmentToTree(decodeBase64Url(htmlData));
+      domTree = sanitized.domTree;
+      html = sanitized.html;
+    } else {
+      domTree = blocksToDomTree([{ tag: 'p', text: plainText || 'No preview available.' }], { class: 'pm-reader-fallback-body' });
+      html = serializeDomTreeToHtml(domTree);
+    }
+
+    const otpCode = extractVerificationCode('', plainText);
+    return { domTree, html, plainText, otpCode };
   }
 
   async function executeOAuthAction(oauthAccount, messageId, actionType) {
@@ -781,9 +1158,6 @@
     return { ok: r.ok };
   }
 
-  /**
-   * Encode string to UTF-8 safe base64url for RFC 2822 email sending
-   */
   function encodeBase64UrlUtf8(str) {
     const utf8Bytes = new TextEncoder().encode(str);
     let binary = '';
@@ -793,14 +1167,8 @@
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
 
-  /**
-   * 100% Local Direct Email Send (Compose & Quick Reply)
-   * Sends directly from the user's Firefox browser to their signed-in Gmail account
-   * with zero external servers.
-   */
   async function sendEmailDirect(payload = {}, oauthAccount = null) {
     const {
-      slotIndex = 0,
       accountEmail = '',
       to = '',
       cc = '',
@@ -819,7 +1187,6 @@
       return { ok: true, method: 'demo' };
     }
 
-    // 1. If OAuth 2.0 account is connected with gmail.modify / gmail.send scope
     if (oauthAccount && oauthAccount.accessToken) {
       try {
         const mimeLines = [
@@ -855,8 +1222,6 @@
       }
     }
 
-    // 2. For session accounts, delegate immediately (0ms) to the first-party Gmail Compose engine (?view=cm&fs=1&tf=1)
-    // without touching deprecated ?ui=2&act=sm (which mutates COMPASS cookies and delays sending)
     return {
       ok: false,
       reason: 'use_first_party_composer',
@@ -864,9 +1229,6 @@
     };
   }
 
-  /**
-   * Sample / Sandbox Accounts for testing themes, TTS voice reading, & multi-account switcher
-   */
   function getSampleAccountsData() {
     const now = Date.now();
     return [
@@ -888,7 +1250,35 @@
             subject: ' Ceramic glaze samples & linen swatches for Friday',
             snippet: 'Hi! I left the new warm terracotta and sage linen samples on the studio table. Let me know which background texture feels coziest to you!',
             fullText: 'Hi! I left the new warm terracotta and sage linen samples on the studio table. We tested eight different natural paper palettes and made sure none of them look cold or sci-fi. Let me know which background texture feels coziest to you!',
-            demoHtml: `<div style="line-height:1.65;"><p>Hi there,</p><p>I left the new <strong>warm terracotta</strong> and <strong>botanical sage linen</strong> samples on the studio table this morning.</p><p>We tested all eight natural paper palettes and illustrated backgrounds so you can switch between them anytime with a single click. Everything stays 100% locally in your browser with zero external servers.</p><p>Warmly,<br/><strong>Clara Vance</strong><br/>Material &amp; Tactile Design Lead</p></div>`,
+            demoBlocks: [
+              { tag: 'p', runs: [{ text: 'Hi there,' }] },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'I left the new ' },
+                  { tag: 'strong', text: 'warm terracotta' },
+                  { text: ' and ' },
+                  { tag: 'strong', text: 'botanical sage linen' },
+                  { text: ' samples on the studio table this morning.' }
+                ]
+              },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'We tested all eight natural paper palettes and illustrated backgrounds so you can switch between them anytime with a single click. Everything stays 100% locally in your browser with zero external servers.' }
+                ]
+              },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'Warmly,' },
+                  { br: true },
+                  { tag: 'strong', text: 'Clara Vance' },
+                  { br: true },
+                  { text: 'Material & Tactile Design Lead' }
+                ]
+              }
+            ],
             senderName: 'Clara Vance',
             senderEmail: 'clara@warmcraft.design',
             timestamp: now - 8 * 60 * 1000,
@@ -906,7 +1296,33 @@
             subject: 'Your artisan roast order #4082 has shipped',
             snippet: 'Good news! Your bag of single-origin Ethiopian Yirgacheffe whole bean coffee has been roasted this morning and is on its way.',
             fullText: 'Good news! Your bag of single-origin Ethiopian Yirgacheffe whole bean coffee was roasted this morning and is on its way. Expected delivery: Tomorrow by 2:00 PM.',
-            demoHtml: `<div style="line-height:1.65;"><p>Good morning!</p><p>Your bag of single-origin <strong>Ethiopian Yirgacheffe</strong> whole bean coffee was roasted two hours ago and is on its way to you.</p><ul><li>Roast Level: Medium-Light Honey Process</li><li>Tasting Notes: Bergamot, Peach, Warm Jasmine</li><li>Expected Arrival: Tomorrow afternoon</li></ul><p>Enjoy your brew,<br/><strong>Hearthside Roasters</strong></p></div>`,
+            demoBlocks: [
+              { tag: 'p', runs: [{ text: 'Good morning!' }] },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'Your bag of single-origin ' },
+                  { tag: 'strong', text: 'Ethiopian Yirgacheffe' },
+                  { text: ' whole bean coffee was roasted two hours ago and is on its way to you.' }
+                ]
+              },
+              {
+                tag: 'ul',
+                items: [
+                  'Roast Level: Medium-Light Honey Process',
+                  'Tasting Notes: Bergamot, Peach, Warm Jasmine',
+                  'Expected Arrival: Tomorrow afternoon'
+                ]
+              },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'Enjoy your brew,' },
+                  { br: true },
+                  { tag: 'strong', text: 'Hearthside Roasters' }
+                ]
+              }
+            ],
             senderName: 'Hearthside Coffee',
             senderEmail: 'orders@hearthside.coffee',
             timestamp: now - 42 * 60 * 1000,
@@ -924,7 +1340,23 @@
             subject: 'Weekend botanical garden passes attached',
             snippet: 'Here are two passes for the Saturday morning conservatory walk. Don’t forget to bring your sketchbook!',
             fullText: 'Here are two passes for the Saturday morning conservatory walk at 10:00 AM. The Japanese maple courtyard is in full autumn color right now. Don’t forget to bring your sketchbook!',
-            demoHtml: `<div style="line-height:1.65;"><p>Hey!</p><p>Here are our two passes for the Saturday morning conservatory walk at 10:00 AM. The Japanese maple courtyard and glasshouse ferns look incredible right now.</p><p>See you by the fountain!<br/><strong>Liam</strong></p></div>`,
+            demoBlocks: [
+              { tag: 'p', runs: [{ text: 'Hey!' }] },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'Here are our two passes for the Saturday morning conservatory walk at 10:00 AM. The Japanese maple courtyard and glasshouse ferns look incredible right now.' }
+                ]
+              },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'See you by the fountain!' },
+                  { br: true },
+                  { tag: 'strong', text: 'Liam' }
+                ]
+              }
+            ],
             senderName: 'Liam Mercer',
             senderEmail: 'liam.mercer@botanical.org',
             timestamp: now - 3 * 3600 * 1000,
@@ -952,7 +1384,27 @@
             subject: 'Flight itinerary to Florence & Siena',
             snippet: 'Booking confirmed! Departure Oct 28 at 09:40 AM. Window seat 14A reserved on both legs.',
             fullText: 'Booking confirmed! Your autumn trip to Florence and Siena is all set. Departure October 28 at 09:40 AM, window seat 14A reserved.',
-            demoHtml: `<div style="line-height:1.65;"><p>Buongiorno!</p><p>Your reservation to <strong>Florence (FLR)</strong> is confirmed.</p><p><strong>Seat:</strong> 14A (Window)<br/><strong>Villa Check-in:</strong> 3:00 PM in San Gimignano</p></div>`,
+            demoBlocks: [
+              { tag: 'p', runs: [{ text: 'Buongiorno!' }] },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'Your reservation to ' },
+                  { tag: 'strong', text: 'Florence (FLR)' },
+                  { text: ' is confirmed.' }
+                ]
+              },
+              {
+                tag: 'p',
+                runs: [
+                  { tag: 'strong', text: 'Seat:' },
+                  { text: ' 14A (Window)' },
+                  { br: true },
+                  { tag: 'strong', text: 'Villa Check-in:' },
+                  { text: ' 3:00 PM in San Gimignano' }
+                ]
+              }
+            ],
             senderName: 'Viajero Travel',
             senderEmail: 'concierge@viajero.travel',
             timestamp: now - 6 * 3600 * 1000,
@@ -970,7 +1422,25 @@
             subject: 'Book club notes: The Wind-Up Bird Chronicle',
             snippet: 'We are meeting at the corner bakery this Thursday at 6:30 PM. Cinnamon rolls are on me!',
             fullText: 'We are meeting at the corner bakery this Thursday at 6:30 PM to talk about chapters 12 through 18. Cinnamon rolls are on me!',
-            demoHtml: `<div style="line-height:1.65;"><p>Hi everyone,</p><p>Just a cozy reminder that we’re meeting at <strong>Tartine &amp; Tea</strong> this Thursday at 6:30 PM. Fresh cardamom and cinnamon knots are on me!</p><p>Best,<br/><strong>Nora</strong></p></div>`,
+            demoBlocks: [
+              { tag: 'p', runs: [{ text: 'Hi everyone,' }] },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'Just a cozy reminder that we’re meeting at ' },
+                  { tag: 'strong', text: 'Tartine & Tea' },
+                  { text: ' this Thursday at 6:30 PM. Fresh cardamom and cinnamon knots are on me!' }
+                ]
+              },
+              {
+                tag: 'p',
+                runs: [
+                  { text: 'Best,' },
+                  { br: true },
+                  { tag: 'strong', text: 'Nora' }
+                ]
+              }
+            ],
             senderName: 'Nora Lindqvist',
             senderEmail: 'nora@bookclub.local',
             timestamp: now - 19 * 3600 * 1000,
@@ -983,7 +1453,7 @@
     ];
   }
 
-  global.PocketMailGmailClient = {
+  const gmailClientApi = {
     ACCOUNT_COLORS,
     LABEL_FEEDS,
     extractVerificationCode,
@@ -992,10 +1462,19 @@
     getSessionTokens,
     executeSessionAction,
     fetchFullEmailContent,
+    sanitizeGmailPrintHtml,
+    sanitizeRawHtmlFragmentToTree,
+    renderEmailContent,
+    buildDomFromTree,
+    blocksToDomTree,
+    serializeDomTreeToHtml,
     launchLocalGoogleOAuth,
     fetchOAuthAccountFeed,
     executeOAuthAction,
     sendEmailDirect,
     getSampleAccountsData
   };
+
+  global.PocketMailGmailClient = gmailClientApi;
+  global.FoxHubGmailClient = gmailClientApi;
 })(typeof window !== 'undefined' ? window : this);

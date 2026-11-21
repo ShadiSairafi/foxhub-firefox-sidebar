@@ -1,18 +1,22 @@
 /**
- * PocketMail — Opera-Style Sidebar Media & Social Apps Catalog
- * Provides built-in presets for Instagram, WhatsApp, Discord, Telegram, Spotify,
- * YouTube, TikTok, X, Messenger, Reddit, Twitch, and ChatGPT, plus custom user apps.
- * Uses 100% DOM createElementNS for SVG icons (zero innerHTML, 100% CSP-safe).
+ * FoxHub — Opera-Style Sidebar Media, AI, Productivity & Social Apps Catalog
+ * Provides built-in presets for 21 apps (13 core + 8 expanded presets) plus custom user apps.
+ * Uses 100% DOM createElementNS for SVG icons (pure DOM APIs, 100% CSP-safe).
  */
 
 const BUILTIN_MEDIA_APPS = [
   {
     id: 'instagram',
     name: 'Instagram',
+    category: 'social',
     color: '#E1306C',
     gradient: 'linear-gradient(135deg, #833ab4 0%, #fd1d1d 50%, #fcb045 100%)',
     defaultUrl: 'https://www.instagram.com/direct/inbox/',
     preferFullSession: true,
+    hostSuffixes: ['instagram.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://www.instagram.com', 'https://static.cdninstagram.com'],
     subViews: [
       { label: 'DMs', url: 'https://www.instagram.com/direct/inbox/', icon: 'messages' },
       { label: 'Reels', url: 'https://www.instagram.com/reels/', icon: 'reels' },
@@ -24,10 +28,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'whatsapp',
     name: 'WhatsApp',
+    category: 'messaging',
     color: '#25D366',
     gradient: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)',
     defaultUrl: 'https://web.whatsapp.com/',
     preferFullSession: true,
+    hostSuffixes: ['whatsapp.com', 'whatsapp.net'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://web.whatsapp.com', 'https://static.whatsapp.net'],
     subViews: [
       { label: 'Chats', url: 'https://web.whatsapp.com/', icon: 'messages' }
     ]
@@ -35,10 +44,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'discord',
     name: 'Discord',
+    category: 'messaging',
     color: '#5865F2',
     gradient: 'linear-gradient(135deg, #5865F2 0%, #4752C4 100%)',
     defaultUrl: 'https://discord.com/channels/@me',
     preferFullSession: true,
+    hostSuffixes: ['discord.com', 'discordapp.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://discord.com', 'https://cdn.discordapp.com'],
     subViews: [
       { label: 'DMs', url: 'https://discord.com/channels/@me', icon: 'messages' },
       { label: 'Friends', url: 'https://discord.com/channels/@me', icon: 'users' },
@@ -48,10 +62,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'telegram',
     name: 'Telegram',
+    category: 'messaging',
     color: '#26A5E4',
     gradient: 'linear-gradient(135deg, #37AEE2 0%, #1E96C8 100%)',
     defaultUrl: 'https://web.telegram.org/k/',
     preferFullSession: true,
+    hostSuffixes: ['telegram.org'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://web.telegram.org'],
     subViews: [
       { label: 'Telegram K', url: 'https://web.telegram.org/k/', icon: 'messages' },
       { label: 'Telegram A', url: 'https://web.telegram.org/a/', icon: 'home' }
@@ -60,10 +79,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'spotify',
     name: 'Spotify',
+    category: 'music',
     color: '#1DB954',
     gradient: 'linear-gradient(135deg, #1DB954 0%, #15883e 100%)',
     defaultUrl: 'https://open.spotify.com/',
     preferFullSession: true,
+    hostSuffixes: ['spotify.com'],
+    mirrorAudio: true,
+    bgAudioSupported: true,
+    preconnectOrigins: ['https://open.spotify.com', 'https://accounts.spotify.com', 'https://open.spotifycdn.com'],
     subViews: [
       { label: 'Player', url: 'https://open.spotify.com/', icon: 'home' },
       { label: 'Search', url: 'https://open.spotify.com/search', icon: 'search' },
@@ -74,10 +98,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'youtube',
     name: 'YouTube',
+    category: 'video',
     color: '#FF0000',
     gradient: 'linear-gradient(135deg, #FF0000 0%, #CC0000 100%)',
     defaultUrl: 'https://www.youtube.com/',
     preferFullSession: false,
+    hostSuffixes: ['youtube.com', 'youtu.be'],
+    mirrorAudio: true,
+    bgAudioSupported: true,
+    preconnectOrigins: ['https://www.youtube.com', 'https://music.youtube.com', 'https://i.ytimg.com'],
     subViews: [
       { label: 'Home', url: 'https://www.youtube.com/', icon: 'home' },
       { label: 'Shorts', url: 'https://www.youtube.com/shorts', icon: 'reels' },
@@ -89,10 +118,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'tiktok',
     name: 'TikTok',
+    category: 'video',
     color: '#FE2C55',
     gradient: 'linear-gradient(135deg, #25F4EE 0%, #000000 48%, #FE2C55 100%)',
     defaultUrl: 'https://www.tiktok.com/foryou',
     preferFullSession: true,
+    hostSuffixes: ['tiktok.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://www.tiktok.com', 'https://sf16-website-login.neutral.ttwstatic.com'],
     subViews: [
       { label: 'For You', url: 'https://www.tiktok.com/foryou', icon: 'home' },
       { label: 'Explore', url: 'https://www.tiktok.com/explore', icon: 'explore' },
@@ -104,10 +138,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'x',
     name: 'X (Twitter)',
+    category: 'social',
     color: '#1D9BF0',
     gradient: 'linear-gradient(135deg, #14171A 0%, #1D9BF0 100%)',
     defaultUrl: 'https://x.com/home',
     preferFullSession: true,
+    hostSuffixes: ['x.com', 'twitter.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://x.com', 'https://abs.twimg.com'],
     subViews: [
       { label: 'Home', url: 'https://x.com/home', icon: 'home' },
       { label: 'Explore', url: 'https://x.com/explore', icon: 'search' },
@@ -119,10 +158,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'messenger',
     name: 'Messenger',
+    category: 'messaging',
     color: '#0084FF',
     gradient: 'linear-gradient(135deg, #00B2FF 0%, #006AFF 50%, #9b37ff 100%)',
     defaultUrl: 'https://www.messenger.com/',
     preferFullSession: true,
+    hostSuffixes: ['messenger.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://www.messenger.com', 'https://www.facebook.com'],
     subViews: [
       { label: 'Chats', url: 'https://www.messenger.com/', icon: 'messages' },
       { label: 'Requests', url: 'https://www.messenger.com/requests', icon: 'alerts' },
@@ -132,10 +176,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'reddit',
     name: 'Reddit',
+    category: 'social',
     color: '#FF4500',
     gradient: 'linear-gradient(135deg, #FF5700 0%, #FF4500 100%)',
     defaultUrl: 'https://www.reddit.com/',
     preferFullSession: false,
+    hostSuffixes: ['reddit.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://www.reddit.com', 'https://chat.reddit.com', 'https://www.redditstatic.com'],
     subViews: [
       { label: 'Home', url: 'https://www.reddit.com/', icon: 'home' },
       { label: 'Popular', url: 'https://www.reddit.com/r/popular/', icon: 'explore' },
@@ -145,10 +194,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'twitch',
     name: 'Twitch',
+    category: 'video',
     color: '#9146FF',
     gradient: 'linear-gradient(135deg, #9146FF 0%, #6441a5 100%)',
     defaultUrl: 'https://www.twitch.tv/',
     preferFullSession: false,
+    hostSuffixes: ['twitch.tv'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://www.twitch.tv', 'https://static.twitchcdn.net'],
     subViews: [
       { label: 'Live', url: 'https://www.twitch.tv/', icon: 'home' },
       { label: 'Following', url: 'https://www.twitch.tv/directory/following', icon: 'users' },
@@ -158,10 +212,15 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'chatgpt',
     name: 'ChatGPT',
+    category: 'ai',
     color: '#10A37F',
     gradient: 'linear-gradient(135deg, #10A37F 0%, #0E8A6C 100%)',
     defaultUrl: 'https://chatgpt.com/',
     preferFullSession: true,
+    hostSuffixes: ['chatgpt.com', 'openai.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://chatgpt.com', 'https://cdn.oaistatic.com'],
     subViews: [
       { label: 'New Chat', url: 'https://chatgpt.com/', icon: 'messages' }
     ]
@@ -169,22 +228,188 @@ const BUILTIN_MEDIA_APPS = [
   {
     id: 'gemini',
     name: 'Google Gemini',
+    category: 'ai',
     color: '#4E82EE',
     gradient: 'linear-gradient(135deg, #4E82EE 0%, #9B72CB 52%, #D96570 100%)',
     defaultUrl: 'https://gemini.google.com/app',
     preferFullSession: true,
+    hostSuffixes: ['gemini.google.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://gemini.google.com', 'https://www.gstatic.com'],
     subViews: [
       { label: 'Chat', url: 'https://gemini.google.com/app', icon: 'messages' },
       { label: 'Gems', url: 'https://gemini.google.com/gems/view', icon: 'explore' }
+    ]
+  },
+  {
+    id: 'claude',
+    name: 'Claude',
+    category: 'ai',
+    color: '#D97757',
+    gradient: 'linear-gradient(135deg, #D97757 0%, #B85A3A 100%)',
+    defaultUrl: 'https://claude.ai/',
+    preferFullSession: true,
+    hostSuffixes: ['claude.ai', 'anthropic.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://claude.ai'],
+    subViews: [
+      { label: 'New Chat', url: 'https://claude.ai/', icon: 'messages' },
+      { label: 'Projects', url: 'https://claude.ai/projects', icon: 'library' }
+    ]
+  },
+  {
+    id: 'perplexity',
+    name: 'Perplexity',
+    category: 'ai',
+    color: '#20808D',
+    gradient: 'linear-gradient(135deg, #20808D 0%, #155B65 100%)',
+    defaultUrl: 'https://www.perplexity.ai/',
+    preferFullSession: true,
+    hostSuffixes: ['perplexity.ai'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://www.perplexity.ai'],
+    subViews: [
+      { label: 'Search', url: 'https://www.perplexity.ai/', icon: 'search' },
+      { label: 'Discover', url: 'https://www.perplexity.ai/discover', icon: 'explore' },
+      { label: 'Library', url: 'https://www.perplexity.ai/library', icon: 'library' }
+    ]
+  },
+  {
+    id: 'soundcloud',
+    name: 'SoundCloud',
+    category: 'music',
+    color: '#FF5500',
+    gradient: 'linear-gradient(135deg, #FF7700 0%, #FF3300 100%)',
+    defaultUrl: 'https://soundcloud.com/',
+    preferFullSession: true,
+    hostSuffixes: ['soundcloud.com', 'sndcdn.com'],
+    mirrorAudio: false,
+    bgAudioSupported: true,
+    preconnectOrigins: ['https://soundcloud.com', 'https://a-v2.sndcdn.com'],
+    subViews: [
+      { label: 'Home', url: 'https://soundcloud.com/discover', icon: 'home' },
+      { label: 'Feed', url: 'https://soundcloud.com/feed', icon: 'explore' },
+      { label: 'Search', url: 'https://soundcloud.com/search', icon: 'search' },
+      { label: 'Library', url: 'https://soundcloud.com/you/library', icon: 'library' }
+    ]
+  },
+  {
+    id: 'apple-music',
+    name: 'Apple Music',
+    category: 'music',
+    color: '#FA243C',
+    gradient: 'linear-gradient(135deg, #FA243C 0%, #D1193E 100%)',
+    defaultUrl: 'https://music.apple.com/',
+    preferFullSession: true,
+    hostSuffixes: ['music.apple.com'],
+    mirrorAudio: false,
+    bgAudioSupported: true,
+    preconnectOrigins: ['https://music.apple.com'],
+    subViews: [
+      { label: 'Listen Now', url: 'https://music.apple.com/', icon: 'home' },
+      { label: 'Browse', url: 'https://music.apple.com/browse', icon: 'explore' },
+      { label: 'Search', url: 'https://music.apple.com/search', icon: 'search' },
+      { label: 'Library', url: 'https://music.apple.com/library/recently-added', icon: 'library' }
+    ]
+  },
+  {
+    id: 'bluesky',
+    name: 'Bluesky',
+    category: 'social',
+    color: '#0085FF',
+    gradient: 'linear-gradient(135deg, #0085FF 0%, #0060DF 100%)',
+    defaultUrl: 'https://bsky.app/',
+    preferFullSession: true,
+    hostSuffixes: ['bsky.app', 'bsky.social'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://bsky.app', 'https://bsky.social'],
+    subViews: [
+      { label: 'Home', url: 'https://bsky.app/', icon: 'home' },
+      { label: 'Search', url: 'https://bsky.app/search', icon: 'search' },
+      { label: 'Alerts', url: 'https://bsky.app/notifications', icon: 'alerts' },
+      { label: 'Messages', url: 'https://bsky.app/messages', icon: 'messages' }
+    ]
+  },
+  {
+    id: 'notion',
+    name: 'Notion',
+    category: 'productivity',
+    color: '#2F3437',
+    gradient: 'linear-gradient(135deg, #373C40 0%, #1F2326 100%)',
+    defaultUrl: 'https://www.notion.so/',
+    preferFullSession: true,
+    hostSuffixes: ['notion.so', 'notion.site'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://www.notion.so'],
+    subViews: [
+      { label: 'Workspace', url: 'https://www.notion.so/', icon: 'home' }
+    ]
+  },
+  {
+    id: 'google-calendar',
+    name: 'Google Calendar',
+    category: 'productivity',
+    color: '#1A73E8',
+    gradient: 'linear-gradient(135deg, #1A73E8 0%, #1557B0 100%)',
+    defaultUrl: 'https://calendar.google.com/',
+    preferFullSession: true,
+    hostSuffixes: ['calendar.google.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://calendar.google.com', 'https://www.gstatic.com'],
+    subViews: [
+      { label: 'Agenda', url: 'https://calendar.google.com/calendar/r/agenda', icon: 'home' },
+      { label: 'Week', url: 'https://calendar.google.com/calendar/r/week', icon: 'explore' }
+    ]
+  },
+  {
+    id: 'google-keep',
+    name: 'Google Keep',
+    category: 'productivity',
+    color: '#F4B400',
+    gradient: 'linear-gradient(135deg, #F4B400 0%, #E09900 100%)',
+    defaultUrl: 'https://keep.google.com/',
+    preferFullSession: true,
+    hostSuffixes: ['keep.google.com'],
+    mirrorAudio: false,
+    bgAudioSupported: false,
+    preconnectOrigins: ['https://keep.google.com', 'https://www.gstatic.com'],
+    subViews: [
+      { label: 'Notes', url: 'https://keep.google.com/', icon: 'home' },
+      { label: 'Reminders', url: 'https://keep.google.com/#reminders', icon: 'alerts' }
     ]
   }
 ];
 
 let lastKnownCustomApps = [];
 
+const MAX_ICON_DATA_URL_LEN = 8 * 1024 * 1024;
+const MAX_ICON_WEB_URL_LEN = 2048;
+
+function isSafeIconUrl(urlStr) {
+  if (typeof urlStr !== 'string') return false;
+  const trimmed = urlStr.trim();
+  if (!trimmed || trimmed.length > MAX_ICON_DATA_URL_LEN) return false;
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(trimmed)) return true;
+  if (/^data:image\/svg\+xml[;,]/i.test(trimmed)) return true;
+  if (trimmed.length > MAX_ICON_WEB_URL_LEN) return false;
+  try {
+    const u = new URL(trimmed);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
 function getFallbackFaviconUrl(pageUrl) {
   try {
     const u = new URL(pageUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
     return `https://www.google.com/s2/favicons?sz=64&domain_url=${encodeURIComponent(u.origin)}`;
   } catch (_) {
     return '';
@@ -238,8 +463,11 @@ async function fetchWebsiteIconFromHtml(pageUrl) {
 
       if (score > bestScore) {
         try {
-          bestHref = new URL(rawHref, baseUrl).href;
-          bestScore = score;
+          const resolved = new URL(rawHref, baseUrl).href;
+          if (isSafeIconUrl(resolved)) {
+            bestHref = resolved;
+            bestScore = score;
+          }
         } catch (_) {}
       }
     }
@@ -274,7 +502,7 @@ function createSvgElement(tag, attrs = {}) {
 /**
  * Creates a crisp, CSP-safe vector SVG icon for any built-in or custom media app
  */
-function createAppSvgIcon(appId, size = 18) {
+function createAppSvgIcon(appId, size = 18, customApps = null) {
   const svg = createSvgElement('svg', {
     width: size,
     height: size,
@@ -283,6 +511,7 @@ function createAppSvgIcon(appId, size = 18) {
   });
 
   switch (appId) {
+    case 'foxhub':
     case 'pocketmail': {
       svg.setAttribute('stroke', 'currentColor');
       svg.setAttribute('stroke-width', '2.1');
@@ -388,12 +617,102 @@ function createAppSvgIcon(appId, size = 18) {
       }));
       break;
     }
+    case 'claude': {
+      // Warm Anthropic starburst rays
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '2.2');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.appendChild(createSvgElement('line', { x1: 12, y1: 2.5, x2: 12, y2: 21.5 }));
+      svg.appendChild(createSvgElement('line', { x1: 2.5, y1: 12, x2: 21.5, y2: 12 }));
+      svg.appendChild(createSvgElement('line', { x1: 5.2, y1: 5.2, x2: 18.8, y2: 18.8 }));
+      svg.appendChild(createSvgElement('line', { x1: 18.8, y1: 5.2, x2: 5.2, y2: 18.8 }));
+      svg.appendChild(createSvgElement('circle', { cx: 12, cy: 12, r: 2.4, fill: 'currentColor', stroke: 'none' }));
+      break;
+    }
+    case 'perplexity': {
+      // Geometric Perplexity prism/compass
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '1.9');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(createSvgElement('path', { d: 'M12 2.5v19' }));
+      svg.appendChild(createSvgElement('path', { d: 'M5.5 7.5L12 3l6.5 4.5v9L12 21l-6.5-4.5v-9z' }));
+      svg.appendChild(createSvgElement('path', { d: 'M5.5 7.5L12 12l6.5-4.5' }));
+      svg.appendChild(createSvgElement('path', { d: 'M5.5 16.5L12 12l6.5 4.5' }));
+      break;
+    }
+    case 'soundcloud': {
+      // SoundCloud waveform bars + cloud body
+      svg.appendChild(createSvgElement('rect', { x: 2, y: 12.5, width: 1.6, height: 4.5, rx: 0.8, fill: 'currentColor' }));
+      svg.appendChild(createSvgElement('rect', { x: 4.6, y: 10.5, width: 1.6, height: 6.5, rx: 0.8, fill: 'currentColor' }));
+      svg.appendChild(createSvgElement('rect', { x: 7.2, y: 8.5, width: 1.6, height: 8.5, rx: 0.8, fill: 'currentColor' }));
+      svg.appendChild(createSvgElement('rect', { x: 9.8, y: 9.5, width: 1.6, height: 7.5, rx: 0.8, fill: 'currentColor' }));
+      svg.appendChild(createSvgElement('path', {
+        fill: 'currentColor',
+        d: 'M13.2 7.2a4.4 4.4 0 0 1 4.2 3.1 3.1 3.1 0 0 1 4.6 2.7c0 2.2-1.8 4-4 4h-5.2V7.3c.13-.06.27-.1.4-.1z'
+      }));
+      break;
+    }
+    case 'apple-music': {
+      // Beamed double music note
+      svg.appendChild(createSvgElement('path', {
+        fill: 'currentColor',
+        d: 'M18.5 3.2L9.2 5.3a1 1 0 0 0-.8.98v9.56a3.1 3.1 0 1 0 1.8 2.81V9.9l7.1-1.6v5.94a3.1 3.1 0 1 0 1.8 2.81V4.18a1 1 0 0 0-.6-.98z'
+      }));
+      break;
+    }
+    case 'bluesky': {
+      // Symmetric butterfly wings
+      svg.appendChild(createSvgElement('path', {
+        fill: 'currentColor',
+        d: 'M12 11.4C10.5 8.1 6.7 3.6 3.9 2.7 2 2.1 2 4.8 2.2 6c.4 2.4 1.8 6.4 4.5 7.4 1.9.7 3.6.3 4.5-.1-1.5.5-4.3 1.4-4.9 4.2-.6 2.8 1.9 4.4 3.6 3.2 1.2-.9 1.8-2.6 2.1-4.1.3 1.5.9 3.2 2.1 4.1 1.7 1.2 4.2-.4 3.6-3.2-.6-2.8-3.4-3.7-4.9-4.2.9.4 2.6.8 4.5.1 2.7-1 4.1-5 4.5-7.4.2-1.2.2-3.9-1.7-3.3-2.8.9-6.6 5.4-8.1 8.7z'
+      }));
+      break;
+    }
+    case 'notion': {
+      // Rounded document square with geometric N
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(createSvgElement('rect', { x: 3.5, y: 3.5, width: 17, height: 17, rx: 3 }));
+      svg.appendChild(createSvgElement('path', { d: 'M8.5 16.5v-9l7 9v-9' }));
+      break;
+    }
+    case 'google-calendar': {
+      // Calendar frame with binding rings and date mark
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(createSvgElement('rect', { x: 3, y: 4.5, width: 18, height: 16.5, rx: 3 }));
+      svg.appendChild(createSvgElement('line', { x1: 3, y1: 9.5, x2: 21, y2: 9.5 }));
+      svg.appendChild(createSvgElement('line', { x1: 8, y1: 2.5, x2: 8, y2: 6 }));
+      svg.appendChild(createSvgElement('line', { x1: 16, y1: 2.5, x2: 16, y2: 6 }));
+      svg.appendChild(createSvgElement('rect', { x: 7.5, y: 12.5, width: 3, height: 3, rx: 0.6, fill: 'currentColor', stroke: 'none' }));
+      svg.appendChild(createSvgElement('rect', { x: 13.5, y: 12.5, width: 3, height: 3, rx: 0.6, fill: 'currentColor', stroke: 'none' }));
+      break;
+    }
+    case 'google-keep': {
+      // Note card / lightbulb icon
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(createSvgElement('path', { d: 'M9 18h6' }));
+      svg.appendChild(createSvgElement('path', { d: 'M10 21h4' }));
+      svg.appendChild(createSvgElement('path', { d: 'M12 3a6 6 0 0 0-3.8 10.64c.62.52 1.05 1.24 1.18 2.04l.12.82h5l.12-.82c.13-.8.56-1.52 1.18-2.04A6 6 0 0 0 12 3z' }));
+      break;
+    }
     default: {
       // Check if this is a user-added Custom Website / Media App with a real favicon or HTML <link rel="icon">
-      const customApp = lastKnownCustomApps.find((a) => a.id === appId);
-      if (customApp && customApp.defaultUrl) {
-        const lowerUrl = (customApp.defaultUrl || '').toLowerCase();
-        const primaryIconUrl = customApp.iconUrl || getFallbackFaviconUrl(customApp.defaultUrl);
+      const customPool = Array.isArray(customApps) ? customApps : lastKnownCustomApps;
+      const customApp = customPool.find((a) => a && a.id === appId);
+      if (customApp && (customApp.defaultUrl || customApp.url)) {
+        const appUrl = customApp.defaultUrl || customApp.url;
+        const primaryIconUrl = isSafeIconUrl(customApp.iconUrl)
+          ? customApp.iconUrl.trim()
+          : getFallbackFaviconUrl(appUrl);
         if (primaryIconUrl) {
           const wrap = document.createElement('span');
           wrap.style.cssText = `display:inline-flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;`;
@@ -405,13 +724,14 @@ function createAppSvgIcon(appId, size = 18) {
           img.style.cssText = `width:${size}px;height:${size}px;border-radius:4px;object-fit:contain;display:block;`;
           let triedFallback = false;
           img.addEventListener('error', () => {
-            const s2Url = getFallbackFaviconUrl(customApp.defaultUrl);
+            const s2Url = getFallbackFaviconUrl(appUrl);
             if (!triedFallback && s2Url && img.src !== s2Url) {
               triedFallback = true;
               img.src = s2Url;
               return;
             }
-            const fallbackId = lowerUrl.includes('gemini.google.com') ? 'gemini' : '__fallback_globe__';
+            const detected = detectAppByUrl(appUrl);
+            const fallbackId = detected ? detected.id : '__fallback_globe__';
             wrap.replaceChildren(createAppSvgIcon(fallbackId, size));
           });
           wrap.appendChild(img);
@@ -547,22 +867,56 @@ function createSubViewIcon(iconKey = 'home', size = 15) {
   return svg;
 }
 
+function normalizeUserAgentMode(mode) {
+  return mode === 'mobile' || mode === 'desktop' ? mode : 'default';
+}
+
+function isValidCustomWebUrl(urlStr) {
+  if (typeof urlStr !== 'string') return false;
+  const trimmed = urlStr.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return false;
+  try {
+    const u = new URL(trimmed);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
+function isStrictHexColor(colorStr) {
+  return typeof colorStr === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colorStr.trim());
+}
+
 function mapCustomApps(settings = {}) {
-  const customApps = Array.isArray(settings.customMediaApps)
-    ? settings.customMediaApps.map((c, idx) => ({
-        id: c.id || `custom-${idx}`,
-        name: c.name || 'Custom App',
-        color: c.color || '#C85A32',
-        gradient: `linear-gradient(135deg, ${c.color || '#C85A32'}, #7B52AB)`,
-        defaultUrl: c.url || 'https://',
-        iconUrl: c.iconUrl || '',
-        preferFullSession: true,
-        isCustom: true,
-        enabled: c.enabled !== false,
-        subViews: [{ label: 'Home', url: c.url || 'https://', icon: 'home' }]
-      }))
+  const hasExplicitList = Boolean(settings && Array.isArray(settings.customMediaApps));
+  const customApps = hasExplicitList
+    ? settings.customMediaApps
+        .filter((c) => c && typeof c === 'object')
+        .map((c, idx) => {
+          const rawUrl = typeof c.url === 'string' ? c.url.trim() : '';
+          if (!isValidCustomWebUrl(rawUrl)) return null;
+          const color = isStrictHexColor(c.color) ? c.color.trim() : '#6C63FF';
+          const iconUrl = isSafeIconUrl(c.iconUrl) ? c.iconUrl.trim() : '';
+          return {
+            id: c.id || `custom-${idx}`,
+            name: c.name || 'Custom App',
+            category: 'custom',
+            color,
+            gradient: `linear-gradient(135deg, ${color}, #7B52AB)`,
+            defaultUrl: rawUrl,
+            iconUrl,
+            userAgentMode: normalizeUserAgentMode(c.userAgentMode),
+            preferFullSession: true,
+            isCustom: true,
+            enabled: c.enabled !== false,
+            subViews: [{ label: 'Home', url: rawUrl, icon: 'home' }]
+          };
+        })
+        .filter(Boolean)
     : [];
-  lastKnownCustomApps = customApps;
+  if (hasExplicitList) {
+    lastKnownCustomApps = customApps;
+  }
   return customApps;
 }
 
@@ -602,42 +956,100 @@ function getAppById(appId, settings = {}) {
   return all.find((a) => a.id === appId) || BUILTIN_MEDIA_APPS[0];
 }
 
-function detectAppByUrl(urlStr = '', settings = {}) {
-  const lower = (urlStr || '').toLowerCase();
-  if (lower.includes('instagram.com')) return getAppById('instagram', settings);
-  if (lower.includes('whatsapp.com')) return getAppById('whatsapp', settings);
-  if (lower.includes('discord.com')) return getAppById('discord', settings);
-  if (lower.includes('telegram.org')) return getAppById('telegram', settings);
-  if (lower.includes('spotify.com')) return getAppById('spotify', settings);
-  if (lower.includes('youtube.com')) return getAppById('youtube', settings);
-  if (lower.includes('tiktok.com')) return getAppById('tiktok', settings);
-  if (lower.includes('x.com') || lower.includes('twitter.com')) return getAppById('x', settings);
-  if (lower.includes('messenger.com')) return getAppById('messenger', settings);
-  if (lower.includes('reddit.com')) return getAppById('reddit', settings);
-  if (lower.includes('twitch.tv')) return getAppById('twitch', settings);
-  if (lower.includes('chatgpt.com') || lower.includes('openai.com')) return getAppById('chatgpt', settings);
+function hostMatchesSuffix(hostname, suffix) {
+  if (!hostname || !suffix) return false;
+  return hostname === suffix || hostname.endsWith(`.${suffix}`);
+}
 
-  const customs = Array.isArray(settings.customMediaApps) ? settings.customMediaApps : [];
+function detectAppByHostname(hostname = '', settings = {}) {
+  const host = String(hostname || '').trim().toLowerCase().replace(/\.+$/, '');
+  if (!host) return null;
+
+  for (let i = 0; i < BUILTIN_MEDIA_APPS.length; i++) {
+    const app = BUILTIN_MEDIA_APPS[i];
+    if (Array.isArray(app.hostSuffixes) && app.hostSuffixes.some((s) => hostMatchesSuffix(host, s))) {
+      return getAppById(app.id, settings);
+    }
+  }
+
+  const customs = mapCustomApps(settings);
   for (let i = 0; i < customs.length; i++) {
     try {
-      const host = new URL(customs[i].url).hostname.replace(/^www\./, '');
-      if (host && lower.includes(host)) {
-        return getAppById(customs[i].id || `custom-${i}`, settings);
+      const customHost = new URL(customs[i].defaultUrl).hostname.toLowerCase().replace(/^www\./, '');
+      const cleanHost = host.replace(/^www\./, '');
+      if (customHost && (cleanHost === customHost || cleanHost.endsWith(`.${customHost}`))) {
+        return customs[i];
       }
     } catch (_) {}
   }
+
   return null;
 }
 
-window.PocketMailMediaApps = {
+function resolveAppIdForHostname(hostname = '', settings = {}) {
+  const matched = detectAppByHostname(hostname, settings);
+  return matched ? matched.id : '';
+}
+
+function detectAppByUrl(urlStr = '', settings = {}) {
+  const raw = String(urlStr || '').trim();
+  if (!raw) return null;
+  let parsed = null;
+  try {
+    parsed = new URL(raw);
+  } catch (_) {
+    if (!raw.includes('://') && /^[a-z0-9.-]+\.[a-z]{2,}/i.test(raw)) {
+      try {
+        parsed = new URL(`https://${raw}`);
+      } catch (__) {}
+    }
+  }
+  if (!parsed || !parsed.hostname) return null;
+  if (parsed.protocol && parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return null;
+  }
+  return detectAppByHostname(parsed.hostname, settings);
+}
+
+function getPreconnectOrigins(appId, settings = {}) {
+  const app = getAppById(appId, settings);
+  if (!app || app.id !== appId) {
+    // Fallback if getAppById returned BUILTIN_MEDIA_APPS[0] for unknown appId
+    const custom = mapCustomApps(settings).find((c) => c.id === appId);
+    if (!custom) return [];
+    try {
+      return [new URL(custom.defaultUrl).origin];
+    } catch (_) {
+      return [];
+    }
+  }
+  if (Array.isArray(app.preconnectOrigins) && app.preconnectOrigins.length > 0) {
+    return [...app.preconnectOrigins];
+  }
+  try {
+    return [new URL(app.defaultUrl).origin];
+  } catch (_) {
+    return [];
+  }
+}
+
+const mediaAppsApi = {
   BUILTIN_MEDIA_APPS,
   DEFAULT_ENABLED_APP_IDS,
   createAppSvgIcon,
   createSubViewIcon,
+  isSafeIconUrl,
   fetchWebsiteIconFromHtml,
   getFallbackFaviconUrl,
+  mapCustomApps,
   getOrderedBuiltInApps,
   getActiveMediaApps,
   getAppById,
-  detectAppByUrl
+  detectAppByHostname,
+  resolveAppIdForHostname,
+  detectAppByUrl,
+  getPreconnectOrigins
 };
+
+window.PocketMailMediaApps = mediaAppsApi;
+window.FoxHubMediaApps = mediaAppsApi;

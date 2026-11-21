@@ -1,0 +1,161 @@
+/* 2. Remove WhatsApp Web hardcoded 748px min-width while keeping QR Login page clean */
+html, body, #app, .app-wrapper-web, .two, ._aigs {
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  overflow-x: hidden !important;
+}
+
+body:has(#side) #app > div,
+body:has(#side) #app > div > div,
+body:has(#side) .two {
+  min-width: 0 !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  max-width: 100vw !important;
+  overflow-x: hidden !important;
+}
+
+@media (max-width: 680px) {
+  /* Hide ONLY WhatsApp's empty 2-column border overlay (.two > div.x10l6tqk.x8qhkwt) that draws vertical lines at 64px and 45%.
+     NEVER hide .two > div.x10l6tqk.x1o0tod (which is the Drawer Container for New Chat, Profile/Settings, Status, and Channels)! */
+  body:has(#side) .two > div.x10l6tqk.x8qhkwt,
+  body:has(#side) .two > div.x10l6tqk.x8qhkwt > div {
+    display: none !important;
+    border: none !important;
+  }
+
+  /* Compact the leftmost icon rail (.two > header) to 46px; when a chat (#main) is open, auto-reveal it whenever hovering the left rail or when a drawer is open! */
+  body:has(#side) .two > header {
+    width: 46px !important;
+    min-width: 46px !important;
+    max-width: 46px !important;
+    flex: 0 0 46px !important;
+    z-index: 260 !important;
+  }
+  body:has(#side):has(#main):not(:has(.two > div.x10l6tqk.x1o0tod [role="button"])):not(:has(.two > div.x10l6tqk.x1o0tod button)) .two:not(:has(> div:has(#side):hover)):not(:has(> header:hover)) > header {
+    display: none !important;
+  }
+  /* Ensure slide-out drawers (New chat, Profile/Settings, Status, Channels) inside .two > div.x10l6tqk.x1o0tod sit cleanly across the full width! */
+  body:has(#side) .two > div.x10l6tqk.x1o0tod > div,
+  body:has(#side) .two > div.x10l6tqk.x1o0tod > span > div {
+    margin-left: 46px !important;
+    width: calc(100vw - 46px) !important;
+    min-width: calc(100vw - 46px) !important;
+    max-width: calc(100vw - 46px) !important;
+    z-index: 250 !important;
+  }
+  /* When no chat is open yet (#main absent), hide ONLY the "Download WhatsApp for Windows" placeholder column (.xyyilfv) and let #side fill 100% of the sidebar! */
+  body:has(#side):not(:has(#main)) .two > div:has(#side),
+  body:has(#side):not(:has(#main)) div:has(> #side) {
+    flex: 1 1 auto !important;
+    width: calc(100vw - 46px) !important;
+    min-width: 0 !important;
+    max-width: calc(100vw - 46px) !important;
+  }
+  body:has(#side):not(:has(#main)) .two > div:has(#side) > header,
+  body:has(#side):not(:has(#main)) #side {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+  body:has(#side):not(:has(#main)) .two > div.xyyilfv:not(:has(#main)) {
+    display: none !important;
+  }
+  /* When a chat thread IS open (#main present), collapse #side to a 78px Avatar Rail (with centered 68px highlight pill + 48px avatar) that expands to 230px on hover! */
+  body:has(#side):has(#main) .two > div:has(#side),
+  body:has(#side):has(#main) div:has(> #side) {
+    flex: 0 0 78px !important;
+    width: 78px !important;
+    min-width: 78px !important;
+    max-width: 78px !important;
+    border-right: 1px solid rgba(134, 150, 160, 0.25) !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+    transition: width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease, flex-basis 0.18s ease !important;
+  }
+  body:has(#side):has(#main) .two > div:has(#side):hover,
+  body:has(#side):has(#main) div:has(> #side):hover {
+    flex: 0 0 230px !important;
+    width: 230px !important;
+    min-width: 230px !important;
+    max-width: 230px !important;
+    z-index: 100 !important;
+    box-shadow: 6px 0 20px rgba(0, 0, 0, 0.35) !important;
+  }
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #pane-side [role="gridcell"] > div {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #pane-side [role="gridcell"] > div > div {
+    margin-left: 6px !important;
+    margin-right: 6px !important;
+    width: 64px !important;
+    box-sizing: border-box !important;
+  }
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #pane-side [role="gridcell"] > div > div > div:first-child {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #pane-side [role="gridcell"] > div > div > div:first-child > div:first-child {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #pane-side [role="gridcell"] > div > div > div:nth-child(2) {
+    display: none !important;
+  }
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) > header,
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #side header,
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #side [role="textbox"],
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #side [aria-label*="Search" i],
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #side [aria-label*="chat filter" i],
+  body:has(#side):has(#main) .two > div:has(#side):not(:hover) #side [role="tablist"] {
+    display: none !important;
+  }
+  body:has(#side) #side {
+    min-width: 0 !important;
+    width: 100% !important;
+    overflow-x: hidden !important;
+  }
+  body:has(#side) .two > div:has(#main),
+  body:has(#side) div:has(> #main) {
+    flex: 1 1 auto !important;
+    width: calc(100vw - 78px) !important;
+    min-width: 0 !important;
+    max-width: calc(100vw - 78px) !important;
+  }
+  body:has(#side) #main {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  body:has(#side) #main header {
+    padding-left: 8px !important;
+    padding-right: 6px !important;
+  }
+  body:has(#side) #main footer {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+  }
+
+  /* Constrain Emoji / GIF / Sticker panel (#expressions-panel-container) so it never overflows left or right */
+  #expressions-panel-container [role="application"] {
+    left: 6px !important;
+    right: 6px !important;
+    width: calc(100vw - 12px) !important;
+    max-width: calc(100vw - 12px) !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+  #expressions-panel-container [role="application"] ul,
+  #expressions-panel-container [role="application"] form,
+  #expressions-panel-container [role="application"] div,
+  #expressions-panel-container [role="application"] span,
+  #expressions-panel-container [role="application"] input {
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+  #expressions-panel-container [role="application"] form {
+    width: calc(100% - 16px) !important;
+    margin: 0 auto !important;
+  }
+}

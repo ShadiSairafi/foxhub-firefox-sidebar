@@ -1,0 +1,113 @@
+/* 3. Discord Narrow Sidebar Optimization */
+html, body, #app-mount,
+[class*="app_"], [class*="bg_"], [class*="layers_"],
+[class*="base_"], [class*="content_"], [class*="chat_"],
+[class*="chatContent_"] {
+  min-width: 0 !important;
+  max-width: 100vw !important;
+}
+
+/* Always show Discord QR Code Login cleanly stacked inside narrow sidebars (< 850px) without needing to widen the panel! */
+@media (max-width: 850px) {
+  form[class*="authBox"],
+  div[class*="authBox"],
+  div[class*="authBoxExpanded"] {
+    width: 94vw !important;
+    max-width: 440px !important;
+    max-height: 92vh !important;
+    padding: 16px 14px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
+  }
+  form[class*="authBox"] > div,
+  div[class*="authBox"] > div[class*="centeringWrapper"] > div,
+  div:has(> div[class*="mainLoginContainer"]) {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 14px !important;
+    width: 100% !important;
+  }
+  div[class*="mainLoginContainer"] {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  div[class*="verticalSeparator"] {
+    display: block !important;
+    width: 100% !important;
+    height: 1px !important;
+    margin: 4px 0 !important;
+    background: rgba(255, 255, 255, 0.14) !important;
+  }
+  div[class*="qrLogin"],
+  div[class*="qrLoginInner"] {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+  }
+}
+
+@media (max-width: 680px) {
+  nav[class*="guilds_"],
+  nav[class*="guilds_"] * {
+    mask: none !important;
+    -webkit-mask: none !important;
+  }
+  nav[class*="guilds_"] foreignObject,
+  nav[class*="guilds_"] [class*="wrapper_"] img {
+    border-radius: 12px !important;
+  }
+  div[class*="sidebar_"]:not([class*="sidebarList_"]):not(:hover) {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+  div[class*="sidebar_"]:not([class*="sidebarList_"]):not(:hover) div[class*="sidebarList_"],
+  div[class*="sidebar_"]:not([class*="sidebarList_"]):not(:hover) section[class*="panels_"] {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    opacity: 0 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+    border: none !important;
+  }
+  div[class*="sidebar_"]:not([class*="sidebarList_"]):hover {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    z-index: 200 !important;
+  }
+  div[class*="sidebar_"]:not([class*="sidebarList_"]):hover div[class*="sidebarList_"] {
+    width: 192px !important;
+    min-width: 192px !important;
+    max-width: 192px !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.5) !important;
+  }
+  div[class*="sidebar_"]:not([class*="sidebarList_"]):hover section[class*="panels_"] {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    z-index: 210 !important;
+  }
+  div[class*="page_"],
+  main[class*="container_"],
+  div[class*="chat_"],
+  div[class*="chatContent_"],
+  div[class*="tabBody_"] {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    flex: 1 1 auto !important;
+  }
+  div[class*="nowPlayingColumn_"],
+  aside[class*="membersWrap_"],
+  div[class*="membersWrap_"] {
+    display: none !important;
+  }
+}

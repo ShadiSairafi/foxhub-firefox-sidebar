@@ -1,0 +1,112 @@
+/* 7. Reddit & Reddit Chat Sidebar Optimization (All Sidebar & Fit-Zoom Widths) */
+shreddit-experience-tree,
+xpromo-app-selector,
+shreddit-async-loader[bundlename*="xpromo"],
+#credential_picker_container {
+  display: none !important;
+}
+
+@media (max-width: 2400px) {
+  /* Hide the desktop right-hand info sidebar so the post/feed fills 100% of the FoxHub sidebar width */
+  #right-sidebar-container,
+  aside[aria-label*="sidebar" i],
+  div[id*="right-sidebar"] {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+  }
+
+  /* At wide Fit-zoom or wide sidebar widths (>960px), keep #left-sidebar-container collapsed unless opened via ☰ so it never steals a 272px column or stacks above the feed */
+  @media (min-width: 961px) {
+    #left-sidebar-container:not([open]):not(:focus-within) {
+      display: none !important;
+      width: 0 !important;
+      min-width: 0 !important;
+      max-width: 0 !important;
+    }
+  }
+
+  /* Ensure the ☰ hamburger left drawer opens cleanly on top of the backdrop */
+  #left-sidebar-container[open],
+  #left-sidebar-container:focus-within,
+  reddit-sidebar-nav {
+    z-index: 9999 !important;
+    max-width: min(320px, 82vw) !important;
+  }
+
+  /* Collapse .main-container's 2-column grid (minmax(0,1fr) 316px) into a single 100%-width column so no 340px black void remains on the right! */
+  shreddit-app,
+  div.grid-container,
+  .subgrid-container,
+  .main-container,
+  div[class*="grid-container"],
+  div[class*="subgrid-container"],
+  div[class*="main-container"],
+  main.main,
+  main,
+  #main-content,
+  shreddit-feed,
+  shreddit-post,
+  shreddit-comment-tree,
+  div[slot="text-body"],
+  shreddit-post [slot="post-media-container"],
+  shreddit-post figure,
+  article {
+    grid-template-columns: minmax(0, 1fr) !important;
+    flex: 1 1 100% !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    box-sizing: border-box !important;
+  }
+  .subgrid-container,
+  .main-container,
+  main.main {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  /* Fix Top-Right Profile Avatar Overflow in Reddit Header */
+  reddit-header-large,
+  shreddit-app > header,
+  header {
+    max-width: 100vw !important;
+    width: 100% !important;
+    padding-left: 6px !important;
+    padding-right: 10px !important;
+    box-sizing: border-box !important;
+  }
+  header nav,
+  reddit-header-large nav {
+    max-width: 100% !important;
+    width: 100% !important;
+    padding-left: 4px !important;
+    padding-right: 6px !important;
+    gap: 4px !important;
+    box-sizing: border-box !important;
+  }
+  reddit-search-large,
+  faceplate-search-input,
+  #search-input {
+    flex: 1 1 75px !important;
+    min-width: 65px !important;
+    max-width: 100% !important;
+  }
+}
+
+@media (max-width: 580px) {
+  /* Hide the word "Create" next to the + icon so Bell & Profile Avatar fit 100% inside the right edge */
+  #create-post span:not(:first-child),
+  a[href*="/submit"] span:not(:first-child) {
+    display: none !important;
+  }
+  #create-post,
+  a[href*="/submit"] {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    min-width: 32px !important;
+  }
+}

@@ -1,0 +1,55 @@
+/* 9. X (Twitter) Narrow Sidebar Optimization — Preserve window (html) as scroll container so VirtualScroller loads infinite posts! */
+html {
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  overflow-x: clip !important;
+  overflow-y: scroll !important;
+}
+body, #react-root {
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  overflow-x: clip !important;
+  overflow-y: visible !important;
+}
+
+@media (max-width: 780px) {
+  header[role="banner"] {
+    flex: 0 0 52px !important;
+    width: 52px !important;
+    min-width: 52px !important;
+    max-width: 52px !important;
+    align-items: center !important;
+  }
+  header[role="banner"] > div,
+  header[role="banner"] > div > div {
+    width: 52px !important;
+    max-width: 52px !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+    align-items: center !important;
+  }
+  header[role="banner"] nav a span {
+    display: none !important;
+  }
+  [data-testid="sidebarColumn"] {
+    display: none !important;
+  }
+  main[role="main"] {
+    flex: 1 1 0% !important;
+    width: calc(100vw - 52px) !important;
+    max-width: calc(100vw - 52px) !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+  main[role="main"] > div,
+  [data-testid="primaryColumn"],
+  [data-testid="DMDrawer"],
+  section[aria-labelledby],
+  article[data-testid="tweet"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+    box-sizing: border-box !important;
+  }
+}

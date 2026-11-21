@@ -1,0 +1,133 @@
+/* 6b. YouTube Sidebar Optimization (Always hide redundant left mini-guide & cinematics canvas inside FoxHub) */
+ytd-mini-guide-renderer {
+  display: none !important;
+  width: 0 !important;
+}
+tp-yt-app-drawer#guide {
+  z-index: 2020 !important;
+}
+ytd-app[mini-guide-visible] ytd-page-manager.ytd-app,
+ytd-app[guide-persistent-and-visible] ytd-page-manager.ytd-app,
+ytd-page-manager.ytd-app,
+#page-manager.ytd-app,
+ytd-browse,
+ytd-two-column-browse-results-renderer {
+  margin-left: 0 !important;
+  width: 100% !important;
+  max-width: 100vw !important;
+  min-width: 0 !important;
+}
+ytd-shorts,
+#shorts-container,
+ytd-reel-video-renderer {
+  max-width: 100vw !important;
+  min-width: 0 !important;
+}
+@media (max-width: 640px) {
+  ytd-shorts,
+  #shorts-container,
+  #shorts-inner-container {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+  ytd-reel-video-renderer[is-active],
+  ytd-reel-video-renderer #player-container {
+    width: calc(100vw - 8px) !important;
+    max-width: calc(100vw - 8px) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+}
+/* Disable YouTube Ambient Mode (#cinematics) 30fps canvas blur loop in sidebar to save 3-5% CPU while gaming! */
+#cinematics,
+ytd-watch-flexy #cinematics,
+ytd-watch-flexy #cinematics canvas {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+@media (max-width: 960px) {
+  ytd-rich-grid-renderer,
+  #contents.ytd-rich-grid-renderer {
+    --ytd-rich-grid-items-per-row: 1 !important;
+    --ytd-rich-grid-posts-per-row: 1 !important;
+    --ytd-rich-grid-slim-items-per-row: 2 !important;
+    --ytd-rich-grid-game-cards-per-row: 1 !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    box-sizing: border-box !important;
+  }
+  ytd-rich-grid-row,
+  #contents.ytd-rich-grid-row {
+    display: contents !important;
+  }
+  ytd-rich-item-renderer,
+  ytd-rich-item-renderer[rendered-from-rich-grid] {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 14px !important;
+  }
+  ytd-rich-section-renderer {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  #masthead-container.ytd-app,
+  ytd-masthead {
+    width: 100vw !important;
+    max-width: 100vw !important;
+  }
+  #container.ytd-masthead {
+    padding: 0 8px !important;
+    gap: 4px !important;
+  }
+  #guide-button.ytd-masthead,
+  #country-code.ytd-topbar-logo-renderer,
+  #voice-search-button.ytd-masthead,
+  #buttons.ytd-masthead ytd-button-renderer {
+    display: none !important;
+  }
+  #center.ytd-masthead {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    margin: 0 4px !important;
+  }
+  ytd-searchbox,
+  yt-searchbox,
+  #search-form,
+  #container.ytd-searchbox {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  ytd-feed-filter-chip-bar-renderer {
+    width: 100% !important;
+    max-width: 100vw !important;
+  }
+  ytd-watch-flexy[flexy] #columns.ytd-watch-flexy {
+    flex-direction: column !important;
+    min-width: 0 !important;
+    max-width: 100vw !important;
+  }
+  ytd-watch-flexy #primary.ytd-watch-flexy,
+  ytd-watch-flexy #secondary.ytd-watch-flexy {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    padding: 0 8px !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+}

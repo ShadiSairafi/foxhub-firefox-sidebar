@@ -1,0 +1,28 @@
+/* Google Keep Narrow Sidebar Optimization (340px–480px) */
+html, body, [role="main"] {
+  min-width: 0 !important;
+  max-width: 100vw !important;
+  overflow-x: clip !important;
+}
+@media (max-width: 680px) {
+  header[role="banner"] {
+    min-width: 0 !important;
+    max-width: 100vw !important;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+    box-sizing: border-box !important;
+  }
+  [role="main"] {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    padding: 8px !important;
+    box-sizing: border-box !important;
+  }
+  [role="dialog"],
+  [role="textbox"] {
+    max-width: calc(100vw - 16px) !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+}
