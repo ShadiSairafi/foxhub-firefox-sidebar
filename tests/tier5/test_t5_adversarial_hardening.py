@@ -3038,16 +3038,24 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
             "._aatk video{display:block;width:340px;height:150px;}"
             "</style></head><body>"
             "<div role='dialog'><article><div class='_aatk'>"
+            "<div id='no-sound-pill' style='position:absolute;top:0;left:50%;height:28px;width:150px;'><span>Video Has No Sound</span></div>"
+            "<button id='native-no-audio' style='position:absolute;bottom:8px;right:8px;' aria-label='Video has no audio'><svg aria-label='Video has no audio'></svg></button>"
             "<img alt='poster'/>"
             "<video id='reel-v'></video>"
             "</div></article></div>"
             "<script type='module'>"
             "import { initScrubberLoadbar } from '/src/content/core/scrubber-loadbar.js';"
+            "window.__nativeNoAudioClicks = 0;"
+            "document.getElementById('native-no-audio').addEventListener('click', () => { window.__nativeNoAudioClicks++; });"
             "const ctx = { initialSyncAccent: '#ff3366', isBgAudioFrame: false, isStandbyBgFrame: false, hasHost: (h) => h === 'instagram.com' };"
             "initScrubberLoadbar(ctx);"
             "window.dispatchEvent(new Event('resize'));"
             "await new Promise((r) => setTimeout(r, 460));"
+            "const muteBtn = document.querySelector('button[data-pm-ig-modal-mute=\"1\"]');"
+            "if (muteBtn) muteBtn.click();"
+            "await new Promise((r) => setTimeout(r, 50));"
             "const bar = document.getElementById('pm-universal-reel-scrubber');"
+            "const pill = document.getElementById('no-sound-pill');"
             "const box = document.querySelector('._aatk').getBoundingClientRect();"
             "const vid = document.getElementById('reel-v').getBoundingClientRect();"
             "const barRect = bar ? bar.getBoundingClientRect() : null;"
@@ -3056,7 +3064,9 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
             "  boxBottom: Math.round(box.bottom),"
             "  vidBottom: Math.round(vid.bottom),"
             "  barTop: barRect ? Math.round(barRect.top) : -1,"
-            "  barBottom: barRect ? Math.round(barRect.bottom) : -1"
+            "  barBottom: barRect ? Math.round(barRect.bottom) : -1,"
+            "  noSoundPillHidden: Boolean(pill && window.getComputedStyle(pill).display === 'none'),"
+            "  nativeNoAudioClicks: window.__nativeNoAudioClicks"
             "};"
             "</script></body></html>"
         )
@@ -3082,6 +3092,8 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
             delta=3,
             msg=f"Scrubber must anchor to modal box bottom ({res['boxBottom']}), NOT pre-metadata video bottom ({res['vidBottom']})"
         )
+        self.assertTrue(res["noSoundPillHidden"], "False 'Video Has No Sound' overlay pill must be hidden when video has audio")
+        self.assertEqual(res["nativeNoAudioClicks"], 0, "Custom mute toggle must NOT click native 'Video has no audio' button")
 
 
 if __name__ == "__main__":

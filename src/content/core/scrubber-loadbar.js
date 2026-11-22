@@ -496,6 +496,30 @@ export function initScrubberLoadbar(ctx) {
     return svg;
   };
 
+  const hideFalseIgNoSoundToast = (mediaBox, vid) => {
+    if (!mediaBox || !vid) return;
+    if (vid.mozHasAudio === false && vid.readyState >= 2) return;
+    const dialogRoot = mediaBox.closest('div[role="dialog"]') || mediaBox;
+    const nodes = dialogRoot.querySelectorAll('span, div');
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      if (el.childElementCount > 1) continue;
+      const txt = (el.textContent || '').trim();
+      if (!/^video has no (sound|audio)$/i.test(txt)) continue;
+      let target = el;
+      for (let depth = 0; depth < 4; depth++) {
+        const parent = target.parentElement;
+        if (!parent || parent === mediaBox || parent === dialogRoot || parent === document.body) break;
+        if ((parent.textContent || '').trim() !== txt) break;
+        const pRect = parent.getBoundingClientRect();
+        if (pRect.height > 72 || pRect.width > 280) break;
+        target = parent;
+      }
+      target.style.setProperty('display', 'none', 'important');
+      target.setAttribute('data-pm-hidden-nosound', '1');
+    }
+  };
+
   const syncInstagramModalVideoControls = () => {
     if (!isIg) return;
     const mediaBox = document.querySelector('div[role="dialog"] article ._aatk');
@@ -508,6 +532,7 @@ export function initScrubberLoadbar(ctx) {
       if (playBadge) playBadge.style.display = 'none';
       return;
     }
+    hideFalseIgNoSoundToast(mediaBox, vid);
     if (!muteBtn) {
       muteBtn = document.createElement('button');
       muteBtn.type = 'button';
@@ -543,7 +568,8 @@ export function initScrubberLoadbar(ctx) {
           const targetMuted = !currentVid.muted;
           const nativeSvg = mediaBox.querySelector('svg[aria-label*="audio" i]');
           const nativeBtn = nativeSvg ? nativeSvg.closest('button, [role="button"]') : null;
-          if (nativeBtn) {
+          const nativeAria = `${nativeSvg?.getAttribute('aria-label') || ''} ${nativeBtn?.getAttribute('aria-label') || ''}`;
+          if (nativeBtn && !/no\s+(audio|sound)|unavailable|disabled/i.test(nativeAria)) {
             try {
               nativeBtn.click();
             } catch (_) {}
