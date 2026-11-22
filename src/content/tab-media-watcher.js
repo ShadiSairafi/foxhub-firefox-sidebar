@@ -57,7 +57,7 @@
     (has('google.com') && path.includes('/recaptcha'))) return;
 
   const u = (p) => browser.runtime.getURL('src/content/' + p);
-  const boot = (p) => Promise.all([p, import(u('core/frame-bootstrap.js'))])
+  const boot = (p) => Promise.all([p, import(browser.runtime.getURL('src/content/core/frame-bootstrap.js'))])
     .then(([, m]) => m?.bootstrapFoxHubFrame?.()).catch(() => {});
   if (!isFH && isAcct) return boot(null);
 
@@ -66,7 +66,7 @@
   try { if (!tm) tm = sessionStorage.getItem('__pm_social_theme') || ''; } catch (_) {}
   const isDark = tm === 'true-night' || tm === 'midnight-oled';
   const isMir = ['spotify.com', 'youtube.com', 'youtu.be'].some(has);
-  const mirP = isMir && !isTop && !isBoot ? import(u('core/media-mirror.js')).catch(() => null) : null;
+  const mirP = isMir && !isTop && !isBoot ? import(browser.runtime.getURL('src/content/core/media-mirror.js')).catch(() => null) : null;
   const de = doc.documentElement;
 
   if (isBoot) {
