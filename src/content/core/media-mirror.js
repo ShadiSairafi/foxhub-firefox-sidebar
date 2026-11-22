@@ -99,12 +99,13 @@ export function isMediaElementAudible(ctx, el) {
       // Firefox MSE <video> on Instagram Reels / TikTok can report mozHasAudio=false while audio plays via MSE/startup
       try {
         const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-        if (r && r.width >= 80 && r.height >= 80) return true;
+        if (r && r.width >= 120 && r.height >= 120) return true;
       } catch (_) {}
-      return rs < 3 || ct < 1.5;
+      return rs < 3 && ct < 1.2;
     }
-    // On other hosts, allow startup frames before audio decoder initializes; filter confirmed decoded silent loops
-    return rs < 3 || ct < 0.8;
+    if (el.hasAttribute?.('muted') || el.defaultMuted) return false;
+    // Filter confirmed silent loops; only treat very early startup frames as potentially audible
+    return rs < 2 && ct < 0.25;
   }
   return true;
 }
@@ -231,8 +232,9 @@ export function stopLocalMseAudioBridge(ctx) {
       delete activeMseMediaEl.wrappedJSObject.muted;
     }
     if (activeMseMediaEl) {
-      activeMseMediaEl.muted = false;
-      activeMseMediaEl.volume = 1.0;
+      activeMseMediaEl.muted = Boolean(ctx?.state?.desiredMuted);
+      activeMseMediaEl.volume =
+        typeof ctx?.state?.desiredVolume === 'number' ? ctx.state.desiredVolume : 1.0;
     }
   } catch (_) {}
   activeMseMediaEl = null;
@@ -277,8 +279,8 @@ export function startLocalMseAudioBridge(ctx, mediaEl) {
         delete mediaEl.wrappedJSObject.volume;
         delete mediaEl.wrappedJSObject.muted;
       }
-      mediaEl.muted = false;
-      mediaEl.volume = 1.0;
+      mediaEl.muted = Boolean(ctx?.state?.desiredMuted);
+      mediaEl.volume = typeof ctx?.state?.desiredVolume === 'number' ? ctx.state.desiredVolume : 1.0;
     } catch (_) {}
     ctx.state.bgAudioMseBridgeStarted = false;
     if (markAutoplayBlocked) ctx.state.bgAudioAutoplayBlocked = true;
@@ -290,8 +292,8 @@ export function startLocalMseAudioBridge(ctx, mediaEl) {
   const restoreCancelledMediaEl = () => {
     if (ctx.state.bgAudioMseBridgeStarted && activeMseMediaEl === mediaEl) return;
     try {
-      mediaEl.muted = false;
-      mediaEl.volume = 1.0;
+      mediaEl.muted = Boolean(ctx?.state?.desiredMuted);
+      mediaEl.volume = typeof ctx?.state?.desiredVolume === 'number' ? ctx.state.desiredVolume : 1.0;
     } catch (_) {}
   };
   (async () => {
@@ -548,13 +550,209 @@ export function installNonMirrorAudioTracker(ctx) {
     ensureWebAudioKeepalive(ctx.INAUDIBLE_VOLUME);
   }
 
+  const appliedNonMirrorEls = new WeakSet();
+  const hookedNonMirrorEls = new WeakSet();
+  let isApplyingNonMirrorVol = false;
+  let lastNonMirrorVolGestureAt = 0;
+
+  const isNonMirrorVolTarget = (target) => {
+    if (!target || typeof target.closest !== 'function') return false;
+    try {
+      if (
+        target.closest(
+          '.volume, .volume__button, .volume__sliderWrapper, [class*="volume" i], [data-testid*="volume" i], [aria-label*="volume" i], [aria-label*="mute" i], [title*="volume" i], [title*="mute" i], input[type="range"]'
+        )
+      ) {
+        return true;
+      }
+    } catch (_) {}
+    return target.tagName === 'AUDIO' || target.tagName === 'VIDEO';
+  };
+
+  if (!ctx.isBgAudioFrame && !ctx.isStandbyBgFrame) {
+    const markNonMirrorVolGesture = (ev) => {
+      if (ev && ev.isTrusted && isNonMirrorVolTarget(ev.target)) {
+        lastNonMirrorVolGestureAt = Date.now();
+      }
+    };
+    window.addEventListener('pointerdown', markNonMirrorVolGesture, { capture: true, passive: true });
+    window.addEventListener('mousedown', markNonMirrorVolGesture, { capture: true, passive: true });
+    window.addEventListener('pointerup', markNonMirrorVolGesture, { capture: true, passive: true });
+    window.addEventListener('wheel', markNonMirrorVolGesture, { capture: true, passive: true });
+    window.addEventListener('keydown', markNonMirrorVolGesture, { capture: true, passive: true });
+    window.addEventListener(
+      'pointermove',
+      (ev) => {
+        if (ev && ev.isTrusted && ev.buttons > 0 && isNonMirrorVolTarget(ev.target)) {
+          lastNonMirrorVolGestureAt = Date.now();
+        }
+      },
+      { capture: true, passive: true }
+    );
+  }
+
+  const applyDesiredVolumeToNonMirrorEl = (el) => {
+    if (!el || !ctx || !ctx.state) return;
+    if (ctx.state.bgAudioMseBridgeStarted) return;
+    if (!ctx.state.hasPersistedVolume) return;
+    const targetVol =
+      typeof ctx.state.desiredVolume === 'number' && Number.isFinite(ctx.state.desiredVolume)
+        ? Math.min(1, Math.max(0, ctx.state.desiredVolume))
+        : 1.0;
+    const targetMuted = Boolean(ctx.state.desiredMuted);
+    isApplyingNonMirrorVol = true;
+    try {
+      if (Math.abs((Number(el.volume) || 0) - targetVol) > 0.005) {
+        el.volume = targetVol;
+      }
+      if (Boolean(el.muted) !== targetMuted) {
+        el.muted = targetMuted;
+      }
+      appliedNonMirrorEls.add(el);
+    } catch (_) {
+    } finally {
+      isApplyingNonMirrorVol = false;
+    }
+  };
+
+  const notifyNonMirrorVolumeChanged = (nextVol, nextMuted) => {
+    const appId = ctx?.appMeta?.appId || '';
+    if (!appId) return;
+    try {
+      ctx.notifyParent?.('PM_NON_MIRROR_VOLUME_CHANGED', {
+        appId,
+        volume: nextVol,
+        muted: nextMuted
+      });
+    } catch (_) {}
+    try {
+      if (typeof browser !== 'undefined' && browser.runtime && typeof browser.runtime.sendMessage === 'function') {
+        browser.runtime
+          .sendMessage({
+            type: 'PM_NON_MIRROR_VOLUME_CHANGED',
+            appId,
+            volume: nextVol,
+            muted: nextMuted
+          })
+          .catch(() => {});
+      }
+    } catch (_) {}
+  };
+
+  const handleNonMirrorTrack = (el) => {
+    if (!el || (el.tagName !== 'AUDIO' && el.tagName !== 'VIDEO')) return;
+    trackedMediaEls.add(el);
+    if (ctx.state?.hasPersistedVolume && !ctx.state.bgAudioMseBridgeStarted) {
+      if (!appliedNonMirrorEls.has(el) || !ctx.state.userAdjustedInPageVolume) {
+        applyDesiredVolumeToNonMirrorEl(el);
+      }
+    }
+  };
+
+  const handleNonMirrorVolumeChange = (el) => {
+    if (!el || (el.tagName !== 'AUDIO' && el.tagName !== 'VIDEO')) return;
+    trackedMediaEls.add(el);
+    if (isApplyingNonMirrorVol || ctx.state?.bgAudioMseBridgeStarted) return;
+    if (
+      !ctx.isBgAudioFrame &&
+      !ctx.isStandbyBgFrame &&
+      lastNonMirrorVolGestureAt > (ctx.state?.lastFoxHubVolCommandAt || 0) &&
+      Date.now() - lastNonMirrorVolGestureAt < 1800
+    ) {
+      const nextVol = Math.round(Math.min(1, Math.max(0, Number(el.volume) || 0)) * 100) / 100;
+      const nextMuted = Boolean(el.muted);
+      const changed =
+        !ctx.state.userAdjustedInPageVolume ||
+        Math.abs((Number(ctx.state.desiredVolume) || 0) - nextVol) > 0.005 ||
+        Boolean(ctx.state.desiredMuted) !== nextMuted;
+      ctx.state.userAdjustedInPageVolume = true;
+      ctx.state.desiredVolume = nextVol;
+      ctx.state.desiredMuted = nextMuted;
+      ctx.state.hasPersistedVolume = true;
+      if (changed) {
+        notifyNonMirrorVolumeChanged(nextVol, nextMuted);
+      }
+      return;
+    }
+    if (ctx.state?.hasPersistedVolume) {
+      applyDesiredVolumeToNonMirrorEl(el);
+    }
+  };
+
+  const trackNonMirrorEl = (el) => {
+    if (!el || (el.tagName !== 'AUDIO' && el.tagName !== 'VIDEO')) return;
+    trackedMediaEls.add(el);
+    if (hookedNonMirrorEls.has(el)) return;
+    hookedNonMirrorEls.add(el);
+    try {
+      el.addEventListener('loadedmetadata', () => handleNonMirrorTrack(el));
+      el.addEventListener('play', () => handleNonMirrorTrack(el));
+      el.addEventListener('volumechange', () => handleNonMirrorVolumeChange(el));
+    } catch (_) {}
+  };
+
+  if (typeof document !== 'undefined') {
+    try {
+      document.querySelectorAll('audio, video').forEach((el) => trackNonMirrorEl(el));
+    } catch (_) {}
+    if (typeof document.addEventListener === 'function') {
+      const onMediaTrackEvent = (ev) => {
+        const el = ev && ev.target;
+        if (!el || (el.tagName !== 'AUDIO' && el.tagName !== 'VIDEO')) return;
+        const wasHooked = hookedNonMirrorEls.has(el);
+        trackNonMirrorEl(el);
+        if (!wasHooked) {
+          handleNonMirrorTrack(el);
+        }
+      };
+      document.addEventListener('loadedmetadata', onMediaTrackEvent, true);
+      document.addEventListener('play', onMediaTrackEvent, true);
+      document.addEventListener(
+        'volumechange',
+        (ev) => {
+          const el = ev && ev.target;
+          if (!el || (el.tagName !== 'AUDIO' && el.tagName !== 'VIDEO')) return;
+          const wasHooked = hookedNonMirrorEls.has(el);
+          trackNonMirrorEl(el);
+          if (!wasHooked) {
+            handleNonMirrorVolumeChange(el);
+          }
+        },
+        true
+      );
+    }
+  }
+
+  if (typeof pageWin.Audio === 'function') {
+    try {
+      const OrigAudio = pageWin.Audio;
+      const WrappedAudio = exportFunction(function (src) {
+        const el = src !== undefined ? new OrigAudio(src) : new OrigAudio();
+        try {
+          trackNonMirrorEl(el);
+          if (ctx?.state?.hasPersistedVolume && !ctx.state.bgAudioMseBridgeStarted) {
+            applyDesiredVolumeToNonMirrorEl(el);
+          }
+        } catch (_) {}
+        return el;
+      }, pageWin);
+      WrappedAudio.prototype = OrigAudio.prototype;
+      pageWin.Audio = WrappedAudio;
+    } catch (_) {}
+  }
+
   if (pageWin.HTMLMediaElement && pageWin.HTMLMediaElement.prototype) {
     const proto = pageWin.HTMLMediaElement.prototype;
     const origPlay = proto.play;
     if (typeof origPlay === 'function') {
       define(proto, 'play', function () {
         try {
-          trackedMediaEls.add(this);
+          trackNonMirrorEl(this);
+          if (ctx?.state?.hasPersistedVolume && !ctx.state.bgAudioMseBridgeStarted) {
+            if (!appliedNonMirrorEls.has(this) || !ctx.state.userAdjustedInPageVolume) {
+              applyDesiredVolumeToNonMirrorEl(this);
+            }
+          }
         } catch (_) {}
         return origPlay.call(this);
       });
@@ -594,6 +792,7 @@ export function installMediaMirrorHooks(ctx, opt = null) {
   let msCounter = Date.now();
   let isFrameUnloading = false;
   let lastUserGestureAt = 0;
+  let lastVolumeGestureAt = 0;
   let lastPauseControlGestureAt = 0;
   let internalHandoffSeekUntil = 0;
   let lastUserSeekBarScrubAt = 0;
@@ -604,11 +803,17 @@ export function installMediaMirrorHooks(ctx, opt = null) {
   let mirrorWasPlaying = false;
   let mirrorAutoPausedByTab = false;
   let pendingYtSeekTarget = null;
+  let pendingConnectAlign = null;
   let lastSpSeekAt = 0;
   let lastSpSeekTarget = -1;
   let runMirrorSyncTick = () => {};
-  let activeMirrorDesiredMuted = false;
-  let activeMirrorDesiredVolume = 1.0;
+  let activeMirrorDesiredMuted = Boolean(ctx?.state?.desiredMuted);
+  let activeMirrorDesiredVolume =
+    typeof ctx?.state?.desiredVolume === 'number' && Number.isFinite(ctx.state.desiredVolume)
+      ? Math.min(1, Math.max(0, ctx.state.desiredVolume))
+      : 1.0;
+  let hasAuthoritativeMirrorVolume = false;
+  let syncingMirrorUi = false;
 
   ensureWebAudioKeepalive(ctx.INAUDIBLE_VOLUME);
 
@@ -708,9 +913,33 @@ export function installMediaMirrorHooks(ctx, opt = null) {
     return 'none';
   };
 
+  const isVolumeControlTarget = (target) => {
+    try {
+      if (!target || !target.closest) return false;
+      return Boolean(
+        target.closest(
+          '[data-testid="volume-bar"], [data-testid="volume-bar-toggle-mute-button"], ' +
+          '[data-testid*="volume" i], [aria-label*="volume" i], [aria-label*="mute" i], [aria-label*="unmute" i], ' +
+          '.ytp-volume-panel, .ytp-mute-button, .ytp-volume-slider, ytmusic-player-bar #volume-slider, ' +
+          'ytmusic-player-bar tp-yt-paper-slider, ytmusic-player-bar .volume, .volume__button, .volume__sliderWrapper'
+        )
+      );
+    } catch (_) {
+      return false;
+    }
+  };
+
   const recordUserGesture = (ev) => {
+    if (syncingMirrorUi) return;
     const now = Date.now();
     lastUserGestureAt = now;
+    if (!ctx.isBgAudioFrame && !ctx.isStandbyBgFrame && ev && ev.isTrusted) {
+      const volTarget = isVolumeControlTarget(ev.target);
+      const isYtMuteKey = IS_YT && ev.type === 'keydown' && String(ev.key || '').toLowerCase() === 'm';
+      if (volTarget || isYtMuteKey) {
+        lastVolumeGestureAt = now;
+      }
+    }
     const pauseIntent = isPauseControlInteraction(ev);
     if (pauseIntent === 'pause') {
       lastPauseControlGestureAt = now;
@@ -732,14 +961,27 @@ export function installMediaMirrorHooks(ctx, opt = null) {
   window.addEventListener('keydown', recordUserGesture, { capture: true, passive: true });
   window.addEventListener('touchstart', recordUserGesture, { capture: true, passive: true });
   window.addEventListener(
+    'wheel',
+    (ev) => {
+      if (!syncingMirrorUi && !ctx.isBgAudioFrame && !ctx.isStandbyBgFrame && ev && ev.isTrusted && isVolumeControlTarget(ev.target)) {
+        lastVolumeGestureAt = Date.now();
+      }
+    },
+    { capture: true, passive: true }
+  );
+  window.addEventListener(
     'pointermove',
     (ev) => {
-      if (ev && ev.isTrusted && ev.buttons > 0) {
-        lastUserGestureAt = Date.now();
+      if (!syncingMirrorUi && ev && ev.isTrusted && ev.buttons > 0) {
+        const nowMove = Date.now();
+        lastUserGestureAt = nowMove;
+        if (!ctx.isBgAudioFrame && !ctx.isStandbyBgFrame && isVolumeControlTarget(ev.target)) {
+          lastVolumeGestureAt = nowMove;
+        }
         if (ev.target && ev.target.closest) {
           try {
             if (ev.target.closest('[data-testid="playback-progressbar"], [data-testid="progress-bar"], .playback-bar, .ytp-progress-bar')) {
-              lastUserSeekBarScrubAt = Date.now();
+              lastUserSeekBarScrubAt = nowMove;
             }
           } catch (_) {}
         }
@@ -750,9 +992,12 @@ export function installMediaMirrorHooks(ctx, opt = null) {
   window.addEventListener(
     'pointerup',
     (ev) => {
-      if (ev && ev.isTrusted) {
+      if (!syncingMirrorUi && ev && ev.isTrusted) {
         const now = Date.now();
         lastUserGestureAt = now;
+        if (!ctx.isBgAudioFrame && !ctx.isStandbyBgFrame && isVolumeControlTarget(ev.target)) {
+          lastVolumeGestureAt = now;
+        }
         if (isPauseControlInteraction(ev) === 'pause') {
           lastPauseControlGestureAt = now;
         }
@@ -769,17 +1014,95 @@ export function installMediaMirrorHooks(ctx, opt = null) {
     { capture: true, passive: true }
   );
 
-  if (IS_YT) {
+  const syncMirrorVolumeToPlayerUi = (vol, muted) => {
+    const safeVol = Math.min(1, Math.max(0, Number(vol)));
+    const effPct = muted ? 0 : Math.round(safeVol * 100);
+    syncingMirrorUi = true;
     try {
-      for (const store of [window.sessionStorage, window.localStorage]) {
-        if (!store) continue;
-        const rawVol = store.getItem('yt-player-volume');
-        if (rawVol && rawVol.includes('"muted":true')) {
-          store.setItem('yt-player-volume', rawVol.replace(/"muted"\s*:\s*true/g, '"muted":false'));
+      mediaEls.forEach((el) => {
+        try {
+          el.dispatchEvent(new Event('volumechange'));
+        } catch (_) {}
+      });
+      if (IS_YT) {
+        const ytVolPayload = JSON.stringify({
+          data: JSON.stringify({ volume: Math.round(safeVol * 100), muted: Boolean(muted) }),
+          creation: Date.now(),
+          expiration: Date.now() + 30 * 86400 * 1000
+        });
+        for (const store of [window.sessionStorage, window.localStorage]) {
+          try {
+            if (store && store.getItem('yt-player-volume')) {
+              store.setItem('yt-player-volume', ytVolPayload);
+            }
+          } catch (_) {}
+        }
+      } else {
+        const rangeInput = document.querySelector('[data-testid="volume-bar"] input[type="range"]');
+        if (rangeInput && Date.now() - lastVolumeGestureAt > 1500) {
+          const maxAttr = Number(rangeInput.max) || 1;
+          const targetVal = maxAttr > 2 ? String(effPct) : String(Math.round((effPct / 100) * 100) / 100);
+          if (String(rangeInput.value) !== targetVal) {
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+              pageWin.HTMLInputElement ? pageWin.HTMLInputElement.prototype : HTMLInputElement.prototype,
+              'value'
+            )?.set;
+            if (nativeSetter) {
+              nativeSetter.call(rangeInput.wrappedJSObject || rangeInput, targetVal);
+            } else {
+              rangeInput.value = targetVal;
+            }
+            rangeInput.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+            rangeInput.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+          }
+        }
+        const volProg = document.querySelector('[data-testid="volume-bar"] [data-testid="progress-bar"]');
+        if (volProg && volProg.style) {
+          volProg.style.setProperty('--progress-bar-transform', `${effPct}%`);
         }
       }
-    } catch (_) {}
-  }
+    } catch (_) {
+    } finally {
+      syncingMirrorUi = false;
+    }
+  };
+
+  try {
+    if (typeof browser !== 'undefined' && browser.storage && browser.storage.local) {
+      browser.storage.local
+        .get('settings')
+        .then((res) => {
+          const map = res && res.settings && res.settings.mediaVolumeMap;
+          const appKey = IS_YT ? 'youtube' : 'spotify';
+          const saved = map && map[appKey];
+          if (saved && typeof saved === 'object') {
+            if (!hasAuthoritativeMirrorVolume) {
+              if (typeof saved.volume === 'number' && Number.isFinite(saved.volume)) {
+                activeMirrorDesiredVolume = Math.min(1, Math.max(0, saved.volume));
+              }
+              if (typeof saved.muted === 'boolean') {
+                activeMirrorDesiredMuted = saved.muted;
+              }
+              if (ctx && ctx.state) {
+                ctx.state.desiredVolume = activeMirrorDesiredVolume;
+                ctx.state.desiredMuted = activeMirrorDesiredMuted;
+              }
+              syncMirrorVolumeToPlayerUi(activeMirrorDesiredVolume, activeMirrorDesiredMuted);
+            }
+          }
+          if (IS_YT && !(saved && saved.muted === true)) {
+            for (const store of [window.sessionStorage, window.localStorage]) {
+              if (!store) continue;
+              const rawVol = store.getItem('yt-player-volume');
+              if (rawVol && rawVol.includes('"muted":true')) {
+                store.setItem('yt-player-volume', rawVol.replace(/"muted"\s*:\s*true/g, '"muted":false'));
+              }
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  } catch (_) {}
 
   let emeBridgePort = null;
   const ensureBridgePort = () => {
@@ -1215,24 +1538,32 @@ export function installMediaMirrorHooks(ctx, opt = null) {
     if (lockedEls.has(el)) return true;
     lockedEls.add(el);
 
-    if (typeof el.volume === 'number' && el.volume > 0.001 && activeMirrorDesiredVolume === 1.0) {
-      activeMirrorDesiredVolume = el.volume;
-    }
     try {
       el.muted = false;
       el.volume = ctx.INAUDIBLE_VOLUME;
-      const rawEl = el.wrappedJSObject;
+      const rawEl = el.wrappedJSObject || el;
       Object.defineProperty(rawEl, 'volume', {
         get: exportFunction(() => activeMirrorDesiredVolume, pageWin),
         set: exportFunction((v) => {
           if (isFrameUnloading) return;
           const num = Number(v);
           if (!Number.isNaN(num) && num >= 0 && num <= 1) {
-            if (num === 0 && Date.now() - lastUserGestureAt >= 1500) {
+            const recentVolGesture =
+              !ctx.isBgAudioFrame &&
+              !ctx.isStandbyBgFrame &&
+              !syncingMirrorUi &&
+              Date.now() - lastVolumeGestureAt < 1500;
+            if (!recentVolGesture) {
               return;
             }
-            activeMirrorDesiredVolume = num;
-            postBridge('VOLUME', { volume: activeMirrorDesiredVolume, muted: activeMirrorDesiredMuted });
+            activeMirrorDesiredVolume = Math.round(num * 100) / 100;
+            hasAuthoritativeMirrorVolume = true;
+            if (ctx && ctx.state) ctx.state.desiredVolume = activeMirrorDesiredVolume;
+            postBridge('VOLUME', {
+              volume: activeMirrorDesiredVolume,
+              muted: activeMirrorDesiredMuted,
+              userInitiated: true
+            });
           }
         }, pageWin),
         configurable: true
@@ -1242,15 +1573,25 @@ export function installMediaMirrorHooks(ctx, opt = null) {
         set: exportFunction((m) => {
           if (isFrameUnloading) return;
           const wantMute = Boolean(m);
-          if (wantMute && Date.now() - lastUserGestureAt >= 1500) {
+          const recentVolGesture =
+            !ctx.isBgAudioFrame &&
+            !ctx.isStandbyBgFrame &&
+            !syncingMirrorUi &&
+            Date.now() - lastVolumeGestureAt < 1500;
+          if (!recentVolGesture) {
             return;
           }
           activeMirrorDesiredMuted = wantMute;
-          postBridge('VOLUME', { volume: activeMirrorDesiredVolume, muted: activeMirrorDesiredMuted });
+          hasAuthoritativeMirrorVolume = true;
+          if (ctx && ctx.state) ctx.state.desiredMuted = activeMirrorDesiredMuted;
+          postBridge('VOLUME', {
+            volume: activeMirrorDesiredVolume,
+            muted: activeMirrorDesiredMuted,
+            userInitiated: true
+          });
         }, pageWin),
         configurable: true
       });
-      postBridge('VOLUME', { volume: activeMirrorDesiredVolume, muted: activeMirrorDesiredMuted });
     } catch (_) {}
 
     el.addEventListener('volumechange', () => {
@@ -1283,6 +1624,19 @@ export function installMediaMirrorHooks(ctx, opt = null) {
         if (el.muted) el.muted = false;
       } catch (_) {}
       applyPendingYtSeek(el);
+      if (pendingConnectAlign && !IS_YT) {
+        const nowAlign = Date.now();
+        if (nowAlign > pendingConnectAlign.expiresAt) {
+          pendingConnectAlign = null;
+        } else if (el.readyState >= 1) {
+          const targetSec =
+            pendingConnectAlign.targetSec + Math.max(0, (nowAlign - pendingConnectAlign.setAt) / 1000);
+          pendingConnectAlign = null;
+          if ((Number(el.currentTime) || 0) < targetSec - 0.8 && pageWin.__seekActiveSpMediaEl) {
+            pageWin.__seekActiveSpMediaEl(targetSec, false, false);
+          }
+        }
+      }
       wantPlay.set(el, true);
       if (getActiveEl() === el) {
         mirrorWasPlaying = true;
@@ -1304,6 +1658,19 @@ export function installMediaMirrorHooks(ctx, opt = null) {
         if (el.muted) el.muted = false;
       } catch (_) {}
       applyPendingYtSeek(el);
+      if (pendingConnectAlign && !IS_YT) {
+        const nowAlign = Date.now();
+        if (nowAlign > pendingConnectAlign.expiresAt) {
+          pendingConnectAlign = null;
+        } else if (el.readyState >= 1) {
+          const targetSec =
+            pendingConnectAlign.targetSec + Math.max(0, (nowAlign - pendingConnectAlign.setAt) / 1000);
+          pendingConnectAlign = null;
+          if ((Number(el.currentTime) || 0) < targetSec - 0.8 && pageWin.__seekActiveSpMediaEl) {
+            pageWin.__seekActiveSpMediaEl(targetSec, false, false);
+          }
+        }
+      }
       wantPlay.set(el, true);
       if (getActiveEl() === el) {
         mirrorWasPlaying = true;
@@ -1391,12 +1758,45 @@ export function installMediaMirrorHooks(ctx, opt = null) {
 
   if (!IS_YT && pageWin.WebSocket) {
     try {
+      const extractDealerActiveDeviceId = (root) => {
+        if (!root || typeof root !== 'object') return '';
+        const stack = [{ node: root, depth: 0 }];
+        const seen = new Set();
+        while (stack.length > 0) {
+          const { node, depth } = stack.pop();
+          if (!node || typeof node !== 'object' || seen.has(node) || depth > 5) continue;
+          seen.add(node);
+          if (typeof node.active_device_id === 'string' && node.active_device_id) {
+            return node.active_device_id;
+          }
+          if (Array.isArray(node)) {
+            for (let i = 0; i < node.length; i++) {
+              if (node[i] && typeof node[i] === 'object') stack.push({ node: node[i], depth: depth + 1 });
+            }
+          } else {
+            const keys = Object.keys(node);
+            for (let i = 0; i < keys.length; i++) {
+              const child = node[keys[i]];
+              if (child && typeof child === 'object') stack.push({ node: child, depth: depth + 1 });
+            }
+          }
+        }
+        return '';
+      };
       const OrigWS = pageWin.WebSocket;
       const WrappedWS = exportFunction(function (url, protocols) {
         const uStr = String(url || '');
         const ws = protocols !== undefined ? new OrigWS(url, protocols) : new OrigWS(url);
         if (uStr.includes('dealer.spotify.com')) {
           dealerSockets.add(ws);
+          ws.addEventListener('message', (ev) => {
+            try {
+              if (!ev || typeof ev.data !== 'string' || ev.data[0] !== '{') return;
+              const parsed = JSON.parse(ev.data);
+              const devId = extractDealerActiveDeviceId(parsed);
+              if (devId) spConnectState.activeDeviceId = devId;
+            } catch (_) {}
+          });
           ws.addEventListener('close', () => dealerSockets.delete(ws), { once: true });
         }
         return ws;
@@ -1757,15 +2157,24 @@ export function installMediaMirrorHooks(ctx, opt = null) {
   define(pageWin, '__pmDisableSpBridge', function () {});
   define(pageWin, '__pmSetMirrorMute', function (muted) {
     activeMirrorDesiredMuted = Boolean(muted);
+    hasAuthoritativeMirrorVolume = true;
+    if (ctx && ctx.state) ctx.state.desiredMuted = activeMirrorDesiredMuted;
+    syncMirrorVolumeToPlayerUi(activeMirrorDesiredVolume, activeMirrorDesiredMuted);
   });
   define(pageWin, '__pmSetMirrorVolume', function (volume, muted) {
     const num = Number(volume);
     if (!Number.isNaN(num) && num >= 0 && num <= 1) {
-      activeMirrorDesiredVolume = num;
+      activeMirrorDesiredVolume = Math.round(num * 100) / 100;
     }
     if (typeof muted === 'boolean') {
       activeMirrorDesiredMuted = muted;
     }
+    hasAuthoritativeMirrorVolume = true;
+    if (ctx && ctx.state) {
+      ctx.state.desiredVolume = activeMirrorDesiredVolume;
+      ctx.state.desiredMuted = activeMirrorDesiredMuted;
+    }
+    syncMirrorVolumeToPlayerUi(activeMirrorDesiredVolume, activeMirrorDesiredMuted);
   });
   define(pageWin, '__pmStopYtMirror', function () {
     mirrorWasPlaying = false;
@@ -1912,6 +2321,13 @@ export function installMediaMirrorHooks(ctx, opt = null) {
           spConnectState.lastTransferAt = now;
         } else {
           spConnectState.lastSelfTransferAt = now;
+        }
+        if (Number(ctx?.state?.expectedTrackTime) > 2.5) {
+          pendingConnectAlign = {
+            targetSec: Number(ctx.state.expectedTrackTime),
+            setAt: ctx.state.sidebarAutoResumeRequestedAt || now,
+            expiresAt: now + 10000
+          };
         }
         const reqHeaders = Object.assign({}, spConnectState.headers, {
           'content-type': 'application/json'

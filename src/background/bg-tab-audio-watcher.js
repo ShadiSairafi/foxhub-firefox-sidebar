@@ -182,8 +182,12 @@
         sp.remotePaused = false;
         sp.lastPlayedAt = Date.now();
         if (sp.videoEl) {
+          const savedSpVol = typeof bg.getSavedMediaVolumeState === 'function' ? bg.getSavedMediaVolumeState(appId) : { volume: 1.0 };
           sp.videoEl.muted = Boolean(sp.desiredMuted);
-          sp.videoEl.volume = sp.desiredVolume > 0 ? sp.desiredVolume : 1.0;
+          sp.videoEl.volume =
+            typeof sp.desiredVolume === 'number' && Number.isFinite(sp.desiredVolume)
+              ? sp.desiredVolume
+              : savedSpVol.volume;
           sp.lastPlayTrigger = 'tab-audio-auto-resume';
           if (sp.isClear) {
             const p = sp.videoEl.play();
@@ -210,8 +214,11 @@
     ta.tabAutoPausedMseAppIds.forEach((appId) => {
       const player = bg.bgMsePlayers.get(appId);
       if (player && player.audioEl) {
-        player.audioEl.muted = false;
-        player.audioEl.volume = 1.0;
+        const savedMseVol = typeof bg.getSavedMediaVolumeState === 'function'
+          ? bg.getSavedMediaVolumeState(appId)
+          : { volume: 1.0, muted: false };
+        player.audioEl.muted = Boolean(savedMseVol.muted);
+        player.audioEl.volume = savedMseVol.volume;
         if (player.audioEl.paused) {
           player.audioEl.play().catch(() => {});
         }
@@ -299,7 +306,7 @@
         if (stoppedAt && Date.now() - stoppedAt >= 30000) {
           ta.recentlyStoppedMediaTabMap.delete(tid);
           ta.lastLoggedDrainIgnoreMap.delete(tid);
-        } else if (stoppedAt && Date.now() - stoppedAt < 20000) {
+        } else if (stoppedAt && Date.now() - stoppedAt < 30000) {
           const mediaCheck = await Promise.race([
             browser.tabs.sendMessage(tid, { type: 'CHECK_TAB_HAS_ACTIVE_MEDIA' }).catch(() => null),
             new Promise((resolve) => setTimeout(() => resolve(null), 220))
@@ -448,15 +455,22 @@
           const timeStalled = sp.lastTimeAdvanceAt > 0 && now - sp.lastTimeAdvanceAt > 1400;
 
           if (nearTrackEnd && timeStalled && bg.bgNextSpPlayers.has(sp.appId)) {
-            bg.logAudioDiag('watchdog-promote-next-player', {
-              appId: sp.appId,
-              sourceType: sp.sourceType,
-              ct: Math.round(ct * 100) / 100,
-              bufEnd: Math.round(bufEnd * 100) / 100,
-              trackDuration: Math.round((sp.trackDuration || 0) * 100) / 100
-            });
-            bg.promoteNextSpPlayer(sp.appId, 0);
-            return;
+            const nextSp = bg.bgNextSpPlayers.get(sp.appId);
+            if (
+              nextSp &&
+              !nextSp.disposed &&
+              (nextSp.isClear || nextSp.hasLicense || (nextSp.createdAt > 0 && now - nextSp.createdAt > 6000))
+            ) {
+              bg.logAudioDiag('watchdog-promote-next-player', {
+                appId: sp.appId,
+                sourceType: sp.sourceType,
+                ct: Math.round(ct * 100) / 100,
+                bufEnd: Math.round(bufEnd * 100) / 100,
+                trackDuration: Math.round((sp.trackDuration || 0) * 100) / 100
+              });
+              bg.promoteNextSpPlayer(sp.appId, 0);
+              return;
+            }
           }
 
           if (bufEnd > 2 && bufEnd - ct <= 0.04 && sp.lastTimeAdvanceAt > 0 && now - sp.lastTimeAdvanceAt > 2800) {

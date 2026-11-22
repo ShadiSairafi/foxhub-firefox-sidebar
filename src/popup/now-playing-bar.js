@@ -13,9 +13,10 @@
   let isScrubbing = false;
   let scrubPreviewTime = 0;
   let isVolScrubbing = false;
-  let lastNonZeroVolume = 1.0;
+  const lastNonZeroVolumeByApp = Object.create(null);
   let lastVolDispatchAt = 0;
   let lastUserVolAt = 0;
+  let lastUserVolAppId = '';
   let lastUserVolValue = 1.0;
   let lastUserVolMuted = false;
   let dismissedPausedAppId = '';
@@ -82,11 +83,11 @@
     return svg;
   }
 
-  function setVisualVolume(vol, muted) {
+  function setVisualVolume(vol, muted, appId = '') {
     const safeVol = Math.min(1, Math.max(0, Number.isFinite(Number(vol)) ? Number(vol) : 1.0));
     const isMuted = Boolean(muted || safeVol <= 0.001);
-    if (!isMuted && safeVol > 0.02) {
-      lastNonZeroVolume = safeVol;
+    if (!isMuted && safeVol > 0.001 && appId) {
+      lastNonZeroVolumeByApp[appId] = safeVol;
     }
     const displayPct = isMuted ? 0 : Math.round(safeVol * 100);
     const volBtn = document.getElementById('pm-np-vol-btn');
@@ -116,20 +117,25 @@
     if (!np || !np.appId) return;
     const clampedVol = Math.round(Math.min(1, Math.max(0, Number(vol) || 0)) * 100) / 100;
     const wantMuted = typeof mutedOverride === 'boolean' ? mutedOverride : clampedVol <= 0.001;
-    if (!wantMuted && clampedVol > 0.02) {
-      lastNonZeroVolume = clampedVol;
+    if (!wantMuted && clampedVol > 0.001) {
+      lastNonZeroVolumeByApp[np.appId] = clampedVol;
     }
     lastUserVolAt = Date.now();
+    lastUserVolAppId = np.appId;
     lastUserVolValue = clampedVol;
     lastUserVolMuted = wantMuted;
     if (lastNpSnapshot) {
       lastNpSnapshot = {
         ...lastNpSnapshot,
         volume: clampedVol,
-        muted: wantMuted
+        muted: wantMuted,
+        lastNonZeroVolume:
+          !wantMuted && clampedVol > 0.001
+            ? clampedVol
+            : lastNonZeroVolumeByApp[np.appId] || lastNpSnapshot.lastNonZeroVolume
       };
     }
-    setVisualVolume(clampedVol, wantMuted);
+    setVisualVolume(clampedVol, wantMuted, np.appId);
     const now = Date.now();
     if (!forceSend && now - lastVolDispatchAt < 45) return;
     lastVolDispatchAt = now;
@@ -212,6 +218,13 @@
     P.sendNowPlayingCommand?.(np.appId, 'seek', { seekTime: clampedSec });
   }
 
+  P.resetNowPlayingVolumeOptimisticLock = function (appId = '') {
+    if (!appId || lastUserVolAppId === appId) {
+      lastUserVolAt = 0;
+      lastUserVolAppId = '';
+    }
+  };
+
   P.renderNowPlayingBar = function () {
     const st = P.state;
     const s = st.appSettings;
@@ -281,14 +294,30 @@
     if (showProgress) updateProgressBarOnly();
 
     if (!isVolScrubbing) {
-      const useOptimisticVol = lastUserVolAt > 0 && Date.now() - lastUserVolAt < 1000;
+      const savedMapVol = st.appSettings?.mediaVolumeMap?.[np.appId];
+      const useOptimisticVol =
+        lastUserVolAppId === np.appId && lastUserVolAt > 0 && Date.now() - lastUserVolAt < 1000;
+      const persistedLastNonZero =
+        (typeof np.lastNonZeroVolume === 'number' && np.lastNonZeroVolume > 0.001 ? np.lastNonZeroVolume : 0) ||
+        (savedMapVol && typeof savedMapVol.lastNonZeroVolume === 'number' && savedMapVol.lastNonZeroVolume > 0.001
+          ? savedMapVol.lastNonZeroVolume
+          : 0);
+      if (persistedLastNonZero > 0.001 && (!lastNonZeroVolumeByApp[np.appId] || !useOptimisticVol)) {
+        lastNonZeroVolumeByApp[np.appId] = persistedLastNonZero;
+      }
       const effVol = useOptimisticVol
         ? lastUserVolValue
         : typeof np.volume === 'number' && Number.isFinite(np.volume)
           ? np.volume
-          : 1.0;
-      const effMuted = useOptimisticVol ? lastUserVolMuted : Boolean(np.muted);
-      setVisualVolume(effVol, effMuted);
+          : savedMapVol && typeof savedMapVol.volume === 'number'
+            ? savedMapVol.volume
+            : 1.0;
+      const effMuted = useOptimisticVol
+        ? lastUserVolMuted
+        : typeof np.muted === 'boolean'
+          ? np.muted
+          : Boolean(savedMapVol?.muted);
+      setVisualVolume(effVol, effMuted, np.appId);
     }
 
     const artEl = document.getElementById('pm-np-art');
@@ -501,11 +530,33 @@
       if (!np || !np.appId) return;
       const curMuted = Boolean(np.muted || (typeof np.volume === 'number' && np.volume <= 0.001));
       if (curMuted) {
-        const restoreVol = lastNonZeroVolume > 0.05 ? lastNonZeroVolume : 0.8;
+        const savedMapVol = P.state?.appSettings?.mediaVolumeMap?.[np.appId];
+        const npLastNonZero =
+          typeof np.lastNonZeroVolume === 'number' && np.lastNonZeroVolume > 0.001 ? np.lastNonZeroVolume : 0;
+        const savedLastNonZero =
+          savedMapVol && typeof savedMapVol.lastNonZeroVolume === 'number' && savedMapVol.lastNonZeroVolume > 0.001
+            ? savedMapVol.lastNonZeroVolume
+            : 0;
+        const memLastNonZero =
+          typeof lastNonZeroVolumeByApp[np.appId] === 'number' && lastNonZeroVolumeByApp[np.appId] > 0.001
+            ? lastNonZeroVolumeByApp[np.appId]
+            : 0;
+        const useOptimisticForApp =
+          lastUserVolAppId === np.appId && lastUserVolAt > 0 && Date.now() - lastUserVolAt < 1000;
+        const restoreVol =
+          (useOptimisticForApp ? memLastNonZero : 0) ||
+          npLastNonZero ||
+          savedLastNonZero ||
+          memLastNonZero ||
+          0.8;
         commitVolume(restoreVol, false, true);
       } else {
-        const curVol = typeof np.volume === 'number' && np.volume > 0.02 ? np.volume : lastNonZeroVolume;
-        if (curVol > 0.02) lastNonZeroVolume = curVol;
+        const memNonZero =
+          typeof lastNonZeroVolumeByApp[np.appId] === 'number' && lastNonZeroVolumeByApp[np.appId] > 0.001
+            ? lastNonZeroVolumeByApp[np.appId]
+            : 0;
+        const curVol = typeof np.volume === 'number' && np.volume > 0.001 ? np.volume : memNonZero;
+        if (curVol > 0.001) lastNonZeroVolumeByApp[np.appId] = curVol;
         commitVolume(0, true, true);
       }
     });

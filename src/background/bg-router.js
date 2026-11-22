@@ -153,9 +153,9 @@
     const artist = st && st.artist ? String(st.artist) : '';
     const currentTime =
       sp && sp.videoEl && Number.isFinite(sp.videoEl.currentTime) && sp.videoEl.currentTime > 0
-        ? Math.floor(sp.videoEl.currentTime)
+        ? Math.round(Number(sp.videoEl.currentTime) * 10) / 10
         : st
-          ? Math.floor(Number(st.currentTime) || 0)
+          ? Math.round((Number(st.currentTime) || 0) * 10) / 10
           : 0;
     const duration = (sp && Number(sp.trackDuration)) || (st ? Number(st.duration) || 0 : 0);
     const resumeUrl = overrideUrl || (bgEntry && bgEntry.url) || (st && st.resumeUrl) || '';
@@ -166,7 +166,7 @@
         urlTrackTitle = bg.trackUrlOriginalTitleMap.get(`${id}:${p}`) || '';
       } catch (_) {}
     }
-    return { trackTitle, artist, currentTime, duration, resumeUrl, urlTrackTitle };
+    return { trackTitle, artist, currentTime, duration, resumeUrl, urlTrackTitle, handedOffAt: Date.now() };
   }
 
   // Synchronous hooks consumed by popup/tests via browser.extension.getBackgroundPage()
@@ -195,6 +195,9 @@
       const activeBgApps = [];
       bg.bgAudioPool.forEach((val, id) => {
         const meta = buildBgTakeoverMeta(id, val);
+        const sp = bg.bgSpEmePlayers.get(id);
+        const st = bg.liveMediaPlaybackState.get(id);
+        const isPlayingBg = !currentlyPausedByTab && !(sp && sp.explicitUserPause);
         activeBgApps.push({
           appId: id,
           url: val.url,
@@ -205,6 +208,7 @@
           duration: meta.duration,
           resumeUrl: meta.resumeUrl,
           urlTrackTitle: meta.urlTrackTitle,
+          handedOffAt: isPlayingBg ? (st?.handedOffAt || meta.handedOffAt) : undefined,
           bgMasterActive: false
         });
       });
@@ -841,6 +845,39 @@
           });
         }
 
+        case 'SIDEBAR_FRAME_RELOAD_PREPARE': {
+          const appId = msg.appId || 'spotify';
+          const activeSp = bg.bgSpEmePlayers.get(appId);
+          if (activeSp && !activeSp.disposed) {
+            const minCt = Math.max(
+              activeSp.minContinueCt || 0,
+              activeSp.videoEl && Number.isFinite(activeSp.videoEl.currentTime)
+                ? Number(activeSp.videoEl.currentTime)
+                : 0,
+              Number(activeSp.targetTime) || 0
+            );
+            activeSp.reloadingSidebarFrameAt = Date.now();
+            activeSp.awaitingBgFrameHandoff = true;
+            activeSp.handoffSource = 'sidebar';
+            activeSp.handoffStartedAt = Date.now();
+            activeSp.minContinueCt = minCt;
+            const nx = bg.bgNextSpPlayers.get(appId);
+            if (nx && nx.sourceType === 'sidebar') {
+              bg.bgNextSpPlayers.delete(appId);
+              bg.disposeSpPlayerInstance(nx);
+            }
+            if (appId === 'spotify') {
+              bg.ensureStagingSpEmePlayer(appId, activeSp.mime || 'audio/mp4; codecs="mp4a.40.2"', 0, 'sidebar');
+              const stSp = bg.bgStagingSpPlayers.get(appId);
+              if (stSp) {
+                stSp.minContinueCt = minCt;
+                stSp.targetTime = minCt;
+              }
+            }
+          }
+          return Promise.resolve({ ok: true });
+        }
+
         case 'SIDEBAR_SP_TAKEOVER_BEGIN': {
           const appId = msg.appId || 'spotify';
           bg.state.lastSidebarPlayIntentAt = 0;
@@ -888,12 +925,20 @@
             activeSp.remotePaused = false;
             if (activeSp.videoEl) {
               activeSp.videoEl.muted = Boolean(activeSp.desiredMuted);
+              const savedVol = typeof bg.getSavedMediaVolumeState === 'function' ? bg.getSavedMediaVolumeState(appId) : { volume: 1.0 };
               activeSp.videoEl.volume =
-                activeSp.desiredVolume > 0 ? activeSp.desiredVolume : activeSp.desiredMuted ? 0 : 1.0;
+                typeof activeSp.desiredVolume === 'number' && Number.isFinite(activeSp.desiredVolume)
+                  ? activeSp.desiredVolume
+                  : savedVol.volume;
               activeSp.videoEl.playbackRate = 1.0;
             }
             if (appId === 'spotify') {
               bg.ensureStagingSpEmePlayer(appId, activeSp.mime || 'audio/mp4; codecs="mp4a.40.2"', 0, 'sidebar');
+              const stSp = bg.bgStagingSpPlayers.get(appId);
+              if (stSp && spMeta.currentTime > 0) {
+                stSp.minContinueCt = Math.max(stSp.minContinueCt || 0, spMeta.currentTime);
+                if (!stSp.targetTime) stSp.targetTime = spMeta.currentTime;
+              }
             }
             const remBuf = bg.getSpBufferedEnd(activeSp) - (Number(activeSp.videoEl?.currentTime) || 0);
             bg.logAudioDiag('sidebar-takeover-begin', {
@@ -921,6 +966,11 @@
           const aria = String(msg.aria || '').toLowerCase();
           bg.logAudioDiag('sidebar-playpause-click', { appId, aria });
           if (aria.includes('pause')) {
+            const stSp = bg.bgStagingSpPlayers.get(appId);
+            if (stSp && !stSp.disposed) {
+              bg.bgStagingSpPlayers.delete(appId);
+              bg.disposeSpPlayerInstance(stSp);
+            }
             const sp = bg.bgSpEmePlayers.get(appId);
             if (sp && sp.videoEl) {
               sp.awaitingBgFrameHandoff = false;
@@ -932,12 +982,29 @@
               } catch (_) {}
             }
             if (bg.bgAudioPool.has(appId)) {
+              const bgPort = bg.emeBridgePorts.get(`bg:${appId}`);
+              if (bgPort) {
+                try { bgPort.postMessage({ cmd: 'PAUSE_LOCAL_MEDIA', markShouldResume: false }); } catch (_) {}
+              }
               bg.removeBgAudioIframeOnly(appId);
             }
             const st = bg.liveMediaPlaybackState.get(appId);
             if (st) {
               st.isPlaying = false;
               st.updatedAt = Date.now();
+            }
+            bg.refreshBgAudioIndicator();
+          } else if (aria.includes('play') && bg.bgAudioPool.has(appId)) {
+            const sp = bg.bgSpEmePlayers.get(appId);
+            if (sp && !sp.disposed) {
+              sp.explicitUserPause = false;
+              sp.remotePaused = false;
+              sp.lastPlayedAt = Date.now();
+              bg.syncSpInstanceTimeAndPlay(sp);
+            }
+            const bgPort = bg.emeBridgePorts.get(`bg:${appId}`);
+            if (bgPort) {
+              try { bgPort.postMessage({ cmd: 'RESUME_BG_SP_MEDIA' }); } catch (_) {}
             }
             bg.refreshBgAudioIndicator();
           }
@@ -1027,8 +1094,8 @@
               '';
             const resolvedCt =
               sp && sp.videoEl && Number.isFinite(sp.videoEl.currentTime) && sp.videoEl.currentTime > 0
-                ? Math.floor(sp.videoEl.currentTime)
-                : Math.floor(Number(prevSt?.currentTime) || 0);
+                ? Math.round(Number(sp.videoEl.currentTime) * 10) / 10
+                : Math.round((Number(prevSt?.currentTime) || 0) * 10) / 10;
             const resolvedDur = (sp && Number(sp.trackDuration)) || Number(prevSt?.duration) || 0;
             let urlTrackTitle = '';
             if (id === 'spotify' && resumeUrl && bg.trackUrlOriginalTitleMap) {
@@ -1037,6 +1104,7 @@
                 urlTrackTitle = bg.trackUrlOriginalTitleMap.get(`${id}:${p}`) || '';
               } catch (_) {}
             }
+            const handedOffAt = actuallyPlaying ? Date.now() : undefined;
             activeBgApps.push({
               appId: id,
               url: resumeUrl,
@@ -1047,6 +1115,7 @@
               duration: resolvedDur,
               resumeUrl,
               urlTrackTitle,
+              handedOffAt,
               autoPausedByTab: currentlyPausedByTab,
               bgMasterActive: false
             });
@@ -1060,7 +1129,7 @@
                   duration: resolvedDur,
                   resumeUrl,
                   title: resolvedTitle || prevSt?.title || '',
-                  handedOffAt: actuallyPlaying ? Date.now() : undefined
+                  handedOffAt
                 },
                 prevSt
               )
@@ -1115,6 +1184,18 @@
             ...cmdRes,
             nowPlaying: bg.getActiveNowPlayingState()
           });
+        }
+
+        case 'PM_NON_MIRROR_VOLUME_CHANGED': {
+          if (msg.appId && typeof bg.handleNonMirrorVolumeChanged === 'function') {
+            const entry = bg.handleNonMirrorVolumeChanged(msg.appId, msg.volume, msg.muted);
+            return Promise.resolve({
+              ok: Boolean(entry),
+              entry,
+              nowPlaying: bg.getActiveNowPlayingState()
+            });
+          }
+          return Promise.resolve({ ok: false });
         }
 
         case 'GET_FRAME_OPT_BUNDLE': {

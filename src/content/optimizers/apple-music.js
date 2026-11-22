@@ -123,8 +123,22 @@ export function initOptimizer() {
           return false;
         }
         case 'PM_MEDIA_CONTROL':
+          if (msg.command === 'set_volume' && Number.isFinite(Number(msg.volume)) && mediaEl) {
+            const nextVol = Math.min(1, Math.max(0, Number(msg.volume)));
+            const wantMuted = typeof msg.muted === 'boolean' ? msg.muted : nextVol <= 0.001;
+            if (!ctx?.state?.bgAudioMseBridgeStarted) {
+              mediaEl.volume = nextVol;
+              mediaEl.muted = wantMuted;
+            }
+            return true;
+          }
           if (msg.command === 'mute_toggle' && mediaEl) {
-            mediaEl.muted = Boolean(msg.muted);
+            if (!ctx?.state?.bgAudioMseBridgeStarted) {
+              if (!msg.muted && Number.isFinite(Number(msg.volume)) && Number(msg.volume) > 0) {
+                mediaEl.volume = Math.min(1, Number(msg.volume));
+              }
+              mediaEl.muted = Boolean(msg.muted);
+            }
             return true;
           }
           return false;

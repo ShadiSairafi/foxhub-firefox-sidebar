@@ -212,6 +212,9 @@ export function initFrameContext(seed = null) {
       expectedTrackTime: 0,
       expectedTrackDuration: 0,
       isTabAudioAutoPaused: false,
+      desiredVolume: 1.0,
+      desiredMuted: false,
+      hasPersistedVolume: false,
       lastRouteOrClickAt: Date.now()
     }
   };

@@ -811,7 +811,8 @@
                 currentTime: Number(bgApp.currentTime) || 0,
                 duration: Number(bgApp.duration) || 0,
                 resumeUrl: bgApp.resumeUrl || bgApp.url || '',
-                urlTrackTitle: bgApp.urlTrackTitle || ''
+                urlTrackTitle: bgApp.urlTrackTitle || '',
+                handedOffAt: typeof bgApp.handedOffAt === 'number' && bgApp.handedOffAt > 0 ? bgApp.handedOffAt : 0
               });
               if (bgApp.bgMasterActive) {
                 st.bgMasterAudioSet.add(bgApp.appId);
@@ -964,7 +965,8 @@
                 currentTime: Number(bgApp.currentTime) || 0,
                 duration: Number(bgApp.duration) || 0,
                 resumeUrl: bgApp.resumeUrl || bgApp.url || '',
-                urlTrackTitle: bgApp.urlTrackTitle || ''
+                urlTrackTitle: bgApp.urlTrackTitle || '',
+                handedOffAt: typeof bgApp.handedOffAt === 'number' && bgApp.handedOffAt > 0 ? bgApp.handedOffAt : 0
               });
               const resolvedBgUrl = bgApp.url
                 ? bgApp.appId === 'spotify' && P.resolveSpotifyReopenUrl

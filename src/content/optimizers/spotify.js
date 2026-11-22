@@ -733,13 +733,15 @@ export function initOptimizer(ctx) {
 
     handleUserMediaGesture(e, _ctx, helpers) {
       if (ctx.state.spAutoClickInFlight) return true;
-      ctx.state.sidebarAutoResumeRequested = false;
       if (e && e.target && e.target.closest) {
         const playOrPauseBtn = e.target.closest(
           '[data-testid="control-button-playpause"], [data-testid="play-button"]'
         );
         if (playOrPauseBtn) {
           const aria = (playOrPauseBtn.getAttribute('aria-label') || '').toLowerCase();
+          if (aria.includes('pause') || aria.includes('stop')) {
+            ctx.state.sidebarAutoResumeRequested = false;
+          }
           const now = Date.now();
 
           if (e.type === 'pointerdown' || e.type === 'mousedown') {

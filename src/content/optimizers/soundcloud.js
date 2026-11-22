@@ -92,6 +92,18 @@ export function initOptimizer(ctx) {
     },
 
     handleBgAutoResume(_ctx, stateObj, mediaEl, helpers) {
+      const activeCtx = _ctx || ctx;
+      if (
+        mediaEl &&
+        activeCtx?.state?.hasPersistedVolume &&
+        !activeCtx?.state?.bgAudioMseBridgeStarted &&
+        !activeCtx?.state?.userAdjustedInPageVolume
+      ) {
+        try {
+          mediaEl.muted = Boolean(activeCtx.state.desiredMuted);
+          mediaEl.volume = typeof activeCtx.state.desiredVolume === 'number' ? activeCtx.state.desiredVolume : 1.0;
+        } catch (_) {}
+      }
       if (stateObj.isPlaying) {
         ctx.state.bgAudioAutoResumed = true;
         return true;
@@ -105,8 +117,8 @@ export function initOptimizer(ctx) {
       }
       if (mediaEl && mediaEl.readyState >= 2) {
         if (helpers.curAutoplayPolicy === 'allowed') {
-          mediaEl.muted = false;
-          mediaEl.volume = 1.0;
+          mediaEl.muted = Boolean(ctx?.state?.desiredMuted);
+          mediaEl.volume = typeof ctx?.state?.desiredVolume === 'number' ? ctx.state.desiredVolume : 1.0;
           mediaEl
             .play()
             .then(() => {
@@ -183,13 +195,33 @@ export function initOptimizer(ctx) {
           return false;
         }
         case 'PM_MEDIA_CONTROL':
-          if (msg.command === 'mute_toggle') {
-            const wantMuted = Boolean(msg.muted);
+          if (msg.command === 'set_volume' && Number.isFinite(Number(msg.volume))) {
+            const nextVol = Math.min(1, Math.max(0, Number(msg.volume)));
+            const wantMuted = typeof msg.muted === 'boolean' ? msg.muted : nextVol <= 0.001;
+            const bridgeCaptureActive = Boolean(ctx?.state?.bgAudioMseBridgeStarted || _ctx?.state?.bgAudioMseBridgeStarted);
             const volBtn = document.querySelector('.volume__button');
             if (volBtn && volBtn.classList.contains('muted') !== wantMuted) {
               try { volBtn.click(); } catch (_) {}
             }
-            if (mediaEl) mediaEl.muted = wantMuted;
+            if (mediaEl && !bridgeCaptureActive) {
+              mediaEl.volume = nextVol;
+              mediaEl.muted = wantMuted;
+            }
+            return true;
+          }
+          if (msg.command === 'mute_toggle') {
+            const wantMuted = Boolean(msg.muted);
+            const bridgeCaptureActive = Boolean(ctx?.state?.bgAudioMseBridgeStarted || _ctx?.state?.bgAudioMseBridgeStarted);
+            const volBtn = document.querySelector('.volume__button');
+            if (volBtn && volBtn.classList.contains('muted') !== wantMuted) {
+              try { volBtn.click(); } catch (_) {}
+            }
+            if (mediaEl && !bridgeCaptureActive) {
+              if (!wantMuted && Number.isFinite(Number(msg.volume)) && Number(msg.volume) > 0) {
+                mediaEl.volume = Math.min(1, Number(msg.volume));
+              }
+              mediaEl.muted = wantMuted;
+            }
             return true;
           }
           return false;

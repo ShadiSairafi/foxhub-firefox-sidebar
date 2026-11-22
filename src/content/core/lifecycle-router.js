@@ -88,6 +88,64 @@ function normalizeConfiguredShortcut(str) {
 export function initLifecycleRouter(ctx, opt = null) {
   if (ctx.isSwBootstrap || (!ctx.isFoxHubMediaFrame && !ctx.isPocketMailSidebarTop)) return;
 
+  const frameAppId = ctx.appMeta?.appId || '';
+  let lastAppliedStorageVolSig = '';
+  const applySavedFrameVolume = (settingsObj) => {
+    const map = settingsObj && settingsObj.mediaVolumeMap;
+    const saved =
+      frameAppId && map && typeof map === 'object' && Object.prototype.hasOwnProperty.call(map, frameAppId)
+        ? map[frameAppId]
+        : null;
+    if (!saved || typeof saved !== 'object') return;
+    const savedVol =
+      typeof saved.volume === 'number' && Number.isFinite(saved.volume)
+        ? Math.round(Math.min(1, Math.max(0, saved.volume)) * 100) / 100
+        : null;
+    const savedMuted = typeof saved.muted === 'boolean' ? saved.muted : null;
+    if (savedVol === null && savedMuted === null) return;
+    const nextSig = `${savedVol !== null ? savedVol : ''}:${savedMuted !== null ? savedMuted : ''}`;
+    if (nextSig === lastAppliedStorageVolSig) return;
+    lastAppliedStorageVolSig = nextSig;
+    const matchesInPageAdjusted =
+      ctx.state.userAdjustedInPageVolume &&
+      (savedVol === null || Math.abs((Number(ctx.state.desiredVolume) || 0) - savedVol) <= 0.005) &&
+      (savedMuted === null || Boolean(ctx.state.desiredMuted) === savedMuted);
+    if (matchesInPageAdjusted) return;
+    if (savedVol !== null) {
+      ctx.state.desiredVolume = savedVol;
+      ctx.state.hasPersistedVolume = true;
+    }
+    if (savedMuted !== null) {
+      ctx.state.desiredMuted = savedMuted;
+      ctx.state.hasPersistedVolume = true;
+    }
+    ctx.state.lastFoxHubVolCommandAt = Date.now();
+    if (!isAudioMirrorActive(ctx) && !ctx.state.bgAudioMseBridgeStarted) {
+      ctx.state.userAdjustedInPageVolume = false;
+      const seenEls = new Set();
+      const applyEl = (m) => {
+        if (!m || seenEls.has(m)) return;
+        seenEls.add(m);
+        try {
+          m.volume = ctx.state.desiredVolume;
+          m.muted = Boolean(ctx.state.desiredMuted);
+        } catch (_) {}
+      };
+      applyEl(getActiveMediaElement(ctx));
+      getTrackedMediaElements().forEach(applyEl);
+    }
+  };
+  try {
+    if (frameAppId && typeof browser !== 'undefined' && browser.storage?.local) {
+      browser.storage.local.get('settings').then((res) => applySavedFrameVolume(res?.settings)).catch(() => {});
+      browser.storage.onChanged?.addListener((changes, area) => {
+        if (area === 'local' && changes?.settings?.newValue) {
+          applySavedFrameVolume(changes.settings.newValue);
+        }
+      });
+    }
+  } catch (_) {}
+
   window.addEventListener(
     'pointerdown',
     () => {
@@ -699,12 +757,18 @@ export function initLifecycleRouter(ctx, opt = null) {
       if (ctx.isStandbyBgFrame) return;
 
       const reportVol =
-        mediaEl && !isAudioMirrorActive(ctx) && !ctx.state.bgAudioMseBridgeStarted && typeof mediaEl.volume === 'number'
-          ? Math.min(1, Math.max(0, Number(mediaEl.volume)))
+        mediaEl && !isAudioMirrorActive(ctx) && !ctx.state.bgAudioMseBridgeStarted
+          ? ctx.state.hasPersistedVolume
+            ? ctx.state.desiredVolume
+            : typeof mediaEl.volume === 'number'
+              ? Math.min(1, Math.max(0, Number(mediaEl.volume)))
+              : undefined
           : undefined;
       const reportMuted =
         mediaEl && !isAudioMirrorActive(ctx) && !ctx.state.bgAudioMseBridgeStarted
-          ? Boolean(mediaEl.muted)
+          ? ctx.state.hasPersistedVolume
+            ? Boolean(ctx.state.desiredMuted)
+            : Boolean(mediaEl.muted)
           : undefined;
 
       ctx.notifyParent('PM_FRAME_PLAYBACK_STATE', {
@@ -744,8 +808,8 @@ export function initLifecycleRouter(ctx, opt = null) {
             if (!mediaEl.paused && !mediaEl.muted && mediaEl.volume > 0) {
               ctx.state.bgAudioAutoResumed = true;
             } else {
-              mediaEl.muted = false;
-              mediaEl.volume = 1.0;
+              mediaEl.muted = Boolean(ctx.state.desiredMuted);
+              mediaEl.volume = typeof ctx.state.desiredVolume === 'number' ? ctx.state.desiredVolume : 1.0;
               mediaEl
                 .play()
                 .then(() => {
@@ -778,8 +842,8 @@ export function initLifecycleRouter(ctx, opt = null) {
           }
         } else if (ctx.state.sidebarAutoResumeRequested && mediaEl && mediaEl.readyState >= 2) {
           if (curAutoplayPolicy === 'allowed') {
-            mediaEl.muted = false;
-            mediaEl.volume = 1.0;
+            mediaEl.muted = Boolean(ctx.state.desiredMuted);
+            mediaEl.volume = typeof ctx.state.desiredVolume === 'number' ? ctx.state.desiredVolume : 1.0;
             mediaEl
               .play()
               .then(() => {
@@ -857,8 +921,8 @@ export function initLifecycleRouter(ctx, opt = null) {
         if ((wasMseBridge || wasAutoResume) && canPlayNatively) {
           const mediaEl = getActiveMediaElement(ctx);
           if (mediaEl) {
-            mediaEl.muted = false;
-            mediaEl.volume = 1.0;
+            mediaEl.muted = Boolean(ctx.state.desiredMuted);
+            mediaEl.volume = typeof ctx.state.desiredVolume === 'number' ? ctx.state.desiredVolume : 1.0;
             if (mediaEl.paused) mediaEl.play().catch(() => {});
           }
         }
@@ -1048,6 +1112,11 @@ export function initLifecycleRouter(ctx, opt = null) {
         if (msg.command === 'set_volume' && Number.isFinite(Number(msg.volume))) {
           const nextVol = Math.min(1, Math.max(0, Number(msg.volume)));
           const wantMuted = typeof msg.muted === 'boolean' ? msg.muted : nextVol <= 0.001;
+          ctx.state.desiredVolume = nextVol;
+          ctx.state.desiredMuted = wantMuted;
+          ctx.state.hasPersistedVolume = true;
+          ctx.state.userAdjustedInPageVolume = false;
+          ctx.state.lastFoxHubVolCommandAt = Date.now();
           if (opt && typeof opt.handleCommand === 'function' && opt.handleCommand(msg, ctx, {
             getActiveMediaElement: () => getActiveMediaElement(ctx)
           })) {
@@ -1060,7 +1129,7 @@ export function initLifecycleRouter(ctx, opt = null) {
                 window.wrappedJSObject.__pmSetMirrorVolume(nextVol, wantMuted);
               }
             } catch (_) {}
-          } else {
+          } else if (!ctx.state.bgAudioMseBridgeStarted) {
             const el = getActiveMediaElement(ctx);
             if (el) {
               try {
@@ -1079,6 +1148,11 @@ export function initLifecycleRouter(ctx, opt = null) {
         } else if (msg.command === 'mute_toggle') {
           const wantMuted = Boolean(msg.muted);
           const nextVol = Number.isFinite(Number(msg.volume)) ? Math.min(1, Math.max(0, Number(msg.volume))) : null;
+          ctx.state.desiredMuted = wantMuted;
+          if (!wantMuted && nextVol !== null && nextVol > 0) ctx.state.desiredVolume = nextVol;
+          ctx.state.hasPersistedVolume = true;
+          ctx.state.userAdjustedInPageVolume = false;
+          ctx.state.lastFoxHubVolCommandAt = Date.now();
           if (opt && typeof opt.handleCommand === 'function' && opt.handleCommand(msg, ctx, {
             getActiveMediaElement: () => getActiveMediaElement(ctx)
           })) {
@@ -1093,7 +1167,7 @@ export function initLifecycleRouter(ctx, opt = null) {
                 window.wrappedJSObject.__pmSetMirrorMute(wantMuted);
               }
             } catch (_) {}
-          } else {
+          } else if (!ctx.state.bgAudioMseBridgeStarted) {
             const el = getActiveMediaElement(ctx);
             if (el) {
               if (!wantMuted && nextVol !== null && nextVol > 0) el.volume = nextVol;

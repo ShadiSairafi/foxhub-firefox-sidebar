@@ -7,6 +7,36 @@
   const P = (global.FoxHubPopup = global.FoxHubPopup || {});
   const recentPriorityPausedUntilMap = new Map();
 
+  function getSavedAppVolume(appId) {
+    const st = P.state;
+    const map = st.appSettings && st.appSettings.mediaVolumeMap;
+    const saved = appId && map && typeof map === 'object' && Object.prototype.hasOwnProperty.call(map, appId)
+      ? map[appId]
+      : null;
+    const bgNp = st.bgNowPlayingState && st.bgNowPlayingState.appId === appId ? st.bgNowPlayingState : null;
+    const vol =
+      saved && typeof saved.volume === 'number' && Number.isFinite(saved.volume)
+        ? Math.min(1, Math.max(0, saved.volume))
+        : bgNp && typeof bgNp.volume === 'number' && Number.isFinite(bgNp.volume)
+          ? Math.min(1, Math.max(0, bgNp.volume))
+          : 1.0;
+    const muted =
+      saved && typeof saved.muted === 'boolean'
+        ? saved.muted
+        : bgNp && typeof bgNp.muted === 'boolean'
+          ? bgNp.muted
+          : false;
+    const lastNonZeroVolume =
+      saved && typeof saved.lastNonZeroVolume === 'number' && saved.lastNonZeroVolume > 0.001
+        ? saved.lastNonZeroVolume
+        : bgNp && typeof bgNp.lastNonZeroVolume === 'number' && bgNp.lastNonZeroVolume > 0.001
+          ? bgNp.lastNonZeroVolume
+          : vol > 0.001
+            ? vol
+            : 1.0;
+    return { volume: vol, muted, lastNonZeroVolume };
+  }
+
   P.cleanupSidebarMsePlayer = function (appId) {
     const st = P.state;
     const player = st.sidebarMsePlayers.get(appId);
@@ -284,16 +314,21 @@
       const isMatch = appMeta && appMeta.id === raw.appId;
       const appName = raw.appName || (isMatch ? appMeta.name : raw.appId);
       const color = raw.color || (isMatch ? appMeta.color : '') || '#1DB954';
+      const savedVol = getSavedAppVolume(raw.appId);
       return {
         appId: raw.appId,
         appName,
         color,
         isPlaying: st.isAutoPausedByExternalTab ? false : Boolean(raw.isPlaying),
-        muted: Boolean(raw.muted),
+        muted: typeof raw.muted === 'boolean' ? raw.muted : savedVol.muted,
         volume:
           typeof raw.volume === 'number' && Number.isFinite(raw.volume)
             ? Math.min(1, Math.max(0, raw.volume))
-            : 1.0,
+            : savedVol.volume,
+        lastNonZeroVolume:
+          typeof raw.lastNonZeroVolume === 'number' && raw.lastNonZeroVolume > 0.001
+            ? raw.lastNonZeroVolume
+            : savedVol.lastNonZeroVolume,
         title: raw.title || appName,
         artist: raw.artist || '',
         album: raw.album || '',
@@ -384,6 +419,36 @@
       if (res) {
         if (res.nowPlaying) {
           st.bgNowPlayingState = res.nowPlaying;
+        }
+        if (command === 'set_volume' || command === 'mute_toggle') {
+          const prevSaved = getSavedAppVolume(appId);
+          const npMatch = res.nowPlaying && res.nowPlaying.appId === appId ? res.nowPlaying : null;
+          const nextVol =
+            npMatch && typeof npMatch.volume === 'number'
+              ? npMatch.volume
+              : typeof res.volume === 'number'
+                ? res.volume
+                : prevSaved.volume;
+          const nextMuted =
+            npMatch && typeof npMatch.muted === 'boolean'
+              ? npMatch.muted
+              : typeof res.muted === 'boolean'
+                ? res.muted
+                : prevSaved.muted;
+          const nextLastNonZero =
+            npMatch && typeof npMatch.lastNonZeroVolume === 'number' && npMatch.lastNonZeroVolume > 0.001
+              ? npMatch.lastNonZeroVolume
+              : !nextMuted && nextVol > 0.001
+                ? nextVol
+                : prevSaved.lastNonZeroVolume;
+          if (!st.appSettings.mediaVolumeMap || typeof st.appSettings.mediaVolumeMap !== 'object') {
+            st.appSettings.mediaVolumeMap = {};
+          }
+          st.appSettings.mediaVolumeMap[appId] = {
+            volume: nextVol,
+            muted: nextMuted,
+            lastNonZeroVolume: nextLastNonZero
+          };
         }
         const prev = st.framePlaybackStates.get(appId);
         if (
@@ -506,6 +571,9 @@
         });
       }
     }
+    if (msg.userVolumeChangedAppId) {
+      P.resetNowPlayingVolumeOptimisticLock?.(msg.userVolumeChangedAppId);
+    }
     P.renderOperaRail?.();
     P.renderNowPlayingBar?.();
   };
@@ -626,6 +694,42 @@
         ? data.flatFrameName.replace('pm-media-frame-', '')
         : fallback);
 
+    if (data.type === 'PM_NON_MIRROR_VOLUME_CHANGED') {
+      const appId = resolveAppId(data.appId || '');
+      if (appId) {
+        P.resetNowPlayingVolumeOptimisticLock?.(appId);
+        const rawVol = Number(data.volume);
+        const nextVol = Number.isFinite(rawVol) ? Math.round(Math.min(1, Math.max(0, rawVol)) * 100) / 100 : 1.0;
+        const nextMuted = Boolean(data.muted);
+        const prevSaved = getSavedAppVolume(appId);
+        const nextLastNonZero = !nextMuted && nextVol > 0.001 ? nextVol : prevSaved.lastNonZeroVolume;
+        if (!st.appSettings.mediaVolumeMap || typeof st.appSettings.mediaVolumeMap !== 'object') {
+          st.appSettings.mediaVolumeMap = {};
+        }
+        st.appSettings.mediaVolumeMap[appId] = {
+          volume: nextVol,
+          muted: nextMuted,
+          lastNonZeroVolume: nextLastNonZero
+        };
+        const prevPb = st.framePlaybackStates.get(appId);
+        if (prevPb) {
+          prevPb.volume = nextVol;
+          prevPb.muted = nextMuted;
+          prevPb.lastNonZeroVolume = nextLastNonZero;
+        }
+        if (st.bgNowPlayingState && st.bgNowPlayingState.appId === appId) {
+          st.bgNowPlayingState = {
+            ...st.bgNowPlayingState,
+            volume: nextVol,
+            muted: nextMuted,
+            lastNonZeroVolume: nextLastNonZero
+          };
+        }
+        P.renderNowPlayingBar?.();
+      }
+      return true;
+    }
+
     if (data.type === 'PM_SIDEBAR_TOOK_OVER_AUDIO') {
       const appId = resolveAppId('');
       if (appId) {
@@ -738,9 +842,20 @@
             if (appId === st.activeRailAppId) {
               P.pauseOtherSidebarMediaFrames(appId);
             }
-            st.pendingSidebarAudioTakeoverSet.delete(appId);
+            let hasPendingStaging = false;
+            try {
+              const bgWin =
+                browser.extension && typeof browser.extension.getBackgroundPage === 'function'
+                  ? browser.extension.getBackgroundPage()
+                  : null;
+              hasPendingStaging = Boolean(bgWin?.FoxHubBg?.bgStagingSpPlayers?.has(appId));
+            } catch (_) {}
+            if (!hasPendingStaging) {
+              st.pendingSidebarAudioTakeoverSet.delete(appId);
+            }
             st.bgMasterAudioSet.delete(appId);
             const prevPb = st.framePlaybackStates.get(appId);
+            const savedVol = getSavedAppVolume(appId);
             const prevWasPlaying = Boolean(prevPb?.isPlaying);
             const prevAudible = st.currentAudibleBgAppId;
             const liveSec = Math.floor(Number(data.currentTime) || 0);
@@ -770,6 +885,9 @@
               artworkUrl: data.artworkUrl !== undefined ? String(data.artworkUrl) : (prevPb?.artworkUrl || ''),
               canPrev: data.canPrev !== undefined ? Boolean(data.canPrev) : (prevPb?.canPrev !== false),
               canNext: data.canNext !== undefined ? Boolean(data.canNext) : (prevPb?.canNext !== false),
+              volume: typeof prevPb?.volume === 'number' ? prevPb.volume : savedVol.volume,
+              muted: typeof prevPb?.muted === 'boolean' ? prevPb.muted : savedVol.muted,
+              lastNonZeroVolume: prevPb?.lastNonZeroVolume || savedVol.lastNonZeroVolume,
               updatedAt: Date.now()
             };
             st.framePlaybackStates.set(appId, pb);
@@ -849,16 +967,35 @@
         }
         let player = st.sidebarMsePlayers.get(appId);
         if (!player) {
+          const savedMseVol = getSavedAppVolume(appId);
           const ms = new MediaSource();
           const objUrl = URL.createObjectURL(ms);
           const audioEl = document.createElement('audio');
           audioEl.autoplay = true;
-          audioEl.muted = false;
-          audioEl.volume = 1.0;
+          audioEl.muted = Boolean(savedMseVol.muted);
+          audioEl.volume = savedMseVol.volume;
           audioEl.src = objUrl;
           document.body.appendChild(audioEl);
           player = { ms, audioEl, sb: null, queue: [], objUrl };
           st.sidebarMsePlayers.set(appId, player);
+
+          const appendNextOrTrim = (item) => {
+            try {
+              player.sb.appendBuffer(item);
+            } catch (err) {
+              if (err && err.name === 'QuotaExceededError' && player.sb && !player.sb.updating && player.sb.buffered.length > 0) {
+                try {
+                  const bStart = player.sb.buffered.start(0);
+                  const ct = Number(player.audioEl.currentTime) || 0;
+                  const cutEnd = Math.min(Math.max(bStart, ct - 2), Math.max(bStart + 4, ct - 8));
+                  if (cutEnd > bStart + 0.1) {
+                    player.queue.unshift(item);
+                    player.sb.remove(bStart, cutEnd);
+                  }
+                } catch (_) {}
+              }
+            }
+          };
 
           ms.addEventListener('sourceopen', () => {
             try {
@@ -873,13 +1010,13 @@
                     }
                   }
                   if (player.queue.length > 0 && !player.sb.updating) {
-                    player.sb.appendBuffer(player.queue.shift());
+                    appendNextOrTrim(player.queue.shift());
                   }
                   if (player.audioEl.paused) player.audioEl.play().catch(() => {});
                 } catch (_) {}
               });
               if (player.queue.length > 0 && !player.sb.updating) {
-                player.sb.appendBuffer(player.queue.shift());
+                appendNextOrTrim(player.queue.shift());
               }
             } catch (_) {}
           });
@@ -888,8 +1025,22 @@
         if (player.sb && !player.sb.updating && player.queue.length === 0) {
           try {
             player.sb.appendBuffer(data.chunk);
-          } catch (_) {}
-        } else if (player.queue.length < 40) {
+          } catch (err) {
+            if (err && err.name === 'QuotaExceededError' && player.sb && !player.sb.updating && player.sb.buffered.length > 0) {
+              try {
+                const bStart = player.sb.buffered.start(0);
+                const ct = Number(player.audioEl.currentTime) || 0;
+                const cutEnd = Math.min(Math.max(bStart, ct - 2), Math.max(bStart + 4, ct - 8));
+                if (cutEnd > bStart + 0.1) {
+                  player.queue.unshift(data.chunk);
+                  player.sb.remove(bStart, cutEnd);
+                }
+              } catch (_) {}
+            } else if (player.queue.length < 120) {
+              player.queue.push(data.chunk);
+            }
+          }
+        } else if (player.queue.length < 120) {
           player.queue.push(data.chunk);
         }
       }
@@ -945,6 +1096,7 @@
         if (!effectivePlaying && !isTakeoverOrMse && st.currentAudibleBgAppId === appId) {
           st.currentAudibleBgAppId = null;
         }
+        const savedPbVol = getSavedAppVolume(appId);
         const pb = {
           isPlaying: Boolean(effectivePlaying || isTakeoverOrMse),
           currentTime: isNonPlayableYt ? 0 : Number(data.currentTime) || 0,
@@ -956,13 +1108,19 @@
           artworkUrl: data.artworkUrl !== undefined ? String(data.artworkUrl) : (prevPb?.artworkUrl || ''),
           canPrev: data.canPrev !== undefined ? Boolean(data.canPrev) : (prevPb?.canPrev !== false),
           canNext: data.canNext !== undefined ? Boolean(data.canNext) : (prevPb?.canNext !== false),
-          muted: data.muted !== undefined ? Boolean(data.muted) : Boolean(prevPb?.muted),
+          muted:
+            typeof data.muted === 'boolean'
+              ? data.muted
+              : typeof prevPb?.muted === 'boolean'
+                ? prevPb.muted
+                : savedPbVol.muted,
           volume:
             typeof data.volume === 'number' && Number.isFinite(data.volume)
               ? Math.min(1, Math.max(0, data.volume))
-              : typeof prevPb?.volume === 'number'
+              : typeof prevPb?.volume === 'number' && Number.isFinite(prevPb.volume)
                 ? prevPb.volume
-                : 1.0,
+                : savedPbVol.volume,
+          lastNonZeroVolume: prevPb?.lastNonZeroVolume || savedPbVol.lastNonZeroVolume,
           updatedAt: Date.now()
         };
         st.framePlaybackStates.set(appId, pb);
@@ -1157,13 +1315,26 @@
     const np = st.bgNowPlayingState && st.bgNowPlayingState.appId === appId ? st.bgNowPlayingState : null;
     const rawTitle = meta?.trackTitle || meta?.title || np?.title || pb?.title || '';
     const expectedTrackTitle = rawTitle && rawTitle.toLowerCase() !== 'spotify' ? rawTitle : '';
+    const baseTime = Number(meta?.currentTime ?? np?.currentTime ?? pb?.currentTime ?? 0) || 0;
+    const expectedDuration = Number(meta?.duration ?? np?.duration ?? pb?.duration ?? 0) || 0;
+    const handedOffAt = Number(meta?.handedOffAt) || 0;
+    let expectedTime = baseTime;
+    if (!st.isAutoPausedByExternalTab && !meta?.autoPausedByTab && handedOffAt > 0 && baseTime >= 0) {
+      const elapsedMs = Date.now() - handedOffAt;
+      if (elapsedMs > 0 && elapsedMs < 30000) {
+        expectedTime = Math.round((baseTime + elapsedMs / 1000) * 10) / 10;
+        if (expectedDuration > 0) {
+          expectedTime = Math.min(expectedTime, Math.max(0, expectedDuration - 0.5));
+        }
+      }
+    }
     return {
       target: 'pocketmail-media-frame',
       cmd: 'AUTO_RESUME_PLAYBACK',
       expectedTrackTitle,
       expectedArtist: meta?.artist || np?.artist || pb?.artist || '',
-      expectedTime: Number(meta?.currentTime ?? np?.currentTime ?? pb?.currentTime ?? 0) || 0,
-      expectedDuration: Number(meta?.duration ?? np?.duration ?? pb?.duration ?? 0) || 0
+      expectedTime,
+      expectedDuration
     };
   };
 

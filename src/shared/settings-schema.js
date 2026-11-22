@@ -99,6 +99,7 @@
     tabAudioBehavior: 'pause-resume',
     autoPauseOnTabAudio: true,
     bgAudioAppIds: ['spotify', 'youtube', 'soundcloud'],
+    mediaVolumeMap: {},
     customVideoLoadbar: true,
     videoLoadbarStyle: 'sunset',
     videoLoadbarColor: '#FF3366',
@@ -419,6 +420,7 @@
       persistentOpenAppIds: [],
       persistentSavedAppUrls: {},
       bgAudioAppIds: [...DEFAULT_SETTINGS.bgAudioAppIds],
+      mediaVolumeMap: {},
       accountConfigs: {},
       oauthAccounts: [],
       socialAppSoundMap: {},
@@ -607,6 +609,29 @@
   function clampNum(val, min, max, fallback) {
     if (typeof val !== 'number' || !Number.isFinite(val)) return fallback;
     return Math.min(max, Math.max(min, val));
+  }
+
+  function normalizeMediaVolumeMap(rawMap) {
+    if (!isPlainObject(rawMap)) return {};
+    const out = {};
+    const entries = Object.entries(rawMap);
+    for (let i = 0; i < entries.length && Object.keys(out).length < 50; i++) {
+      const [rawKey, rawVal] = entries[i];
+      if (!rawKey || FORBIDDEN_KEYS.has(rawKey) || !/^[a-z0-9_-]{1,64}$/i.test(rawKey)) continue;
+      if (!isPlainObject(rawVal)) continue;
+      const vol = Math.round(clampNum(rawVal.volume, 0, 1, 1.0) * 100) / 100;
+      const muted = Boolean(rawVal.muted);
+      const rawLast = clampNum(rawVal.lastNonZeroVolume, 0, 1, vol > 0.001 ? vol : 1.0);
+      const roundedLast = Math.round(rawLast * 100) / 100;
+      const lastNonZeroVolume =
+        roundedLast > 0.001 ? roundedLast : vol > 0.001 ? vol : 1.0;
+      out[rawKey] = {
+        volume: vol,
+        muted,
+        lastNonZeroVolume
+      };
+    }
+    return out;
   }
 
   function normalizeCustomAppEntry(c, idx) {
@@ -852,6 +877,7 @@
     // Safe plain objects
     merged.accountConfigs = isPlainObject(merged.accountConfigs) ? sanitizePlainObject(merged.accountConfigs) : {};
     merged.socialAppSoundMap = isPlainObject(merged.socialAppSoundMap) ? sanitizePlainObject(merged.socialAppSoundMap) : {};
+    merged.mediaVolumeMap = normalizeMediaVolumeMap(merged.mediaVolumeMap);
     merged.persistentSavedAppUrls = isPlainObject(merged.persistentSavedAppUrls)
       ? sanitizePlainObject(merged.persistentSavedAppUrls)
       : {};

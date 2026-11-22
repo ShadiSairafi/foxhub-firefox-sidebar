@@ -338,9 +338,30 @@
 
       if ((app.id === 'spotify' || app.id === 'youtube' || app.bgAudioSupported || P.isAppAllowedForBgAudio(app.id)) && !st.IS_POPOUT_VIEW) {
         const takeoverAppId = app.id;
+        let hasBgActive = Boolean(
+          st.currentAudibleBgAppId === takeoverAppId ||
+            st.bgMasterAudioSet.has(takeoverAppId) ||
+            (st.bgNowPlayingState && st.bgNowPlayingState.appId === takeoverAppId && st.bgNowPlayingState.isPlaying)
+        );
+        try {
+          const bgWin =
+            browser.extension && typeof browser.extension.getBackgroundPage === 'function'
+              ? browser.extension.getBackgroundPage()
+              : null;
+          if (bgWin?.FoxHubBg?.bgAudioPool?.has(takeoverAppId)) {
+            hasBgActive = true;
+          }
+        } catch (_) {}
+        if (hasBgActive) {
+          st.pendingSidebarAudioTakeoverSet.add(takeoverAppId);
+        }
         browser.runtime
           .sendMessage({ type: 'SIDEBAR_SP_TAKEOVER_BEGIN', appId: takeoverAppId })
           .then((res) => {
+            if (!st.mediaFramePool.has(takeoverAppId)) {
+              st.pendingSidebarAudioTakeoverSet.delete(takeoverAppId);
+              return;
+            }
             if (res && res.bgMasterActive) {
               st.bgMasterAudioSet.add(takeoverAppId);
               st.pendingSidebarAudioTakeoverSet.delete(takeoverAppId);
@@ -357,7 +378,11 @@
                   artist: res.artist || prevMeta.artist || '',
                   currentTime: typeof res.currentTime === 'number' ? res.currentTime : (prevMeta.currentTime || 0),
                   duration: typeof res.duration === 'number' ? res.duration : (prevMeta.duration || 0),
-                  resumeUrl: res.resumeUrl || prevMeta.resumeUrl || ''
+                  resumeUrl: res.resumeUrl || prevMeta.resumeUrl || '',
+                  handedOffAt:
+                    typeof res.handedOffAt === 'number' && res.handedOffAt > 0
+                      ? res.handedOffAt
+                      : prevMeta.handedOffAt || 0
                 });
               }
               if (st.activeRailAppId !== takeoverAppId) {
@@ -1658,17 +1683,18 @@
     });
 
     document.getElementById('btn-media-reload')?.addEventListener('click', () => {
-      const app = P.getAppsApi()?.getAppById(st.activeRailAppId, st.appSettings);
+      const appId = st.activeRailAppId;
+      const app = P.getAppsApi()?.getAppById(appId, st.appSettings);
       const entry = P.getActivePoolEntry();
       if (entry) {
         entry.loaded = false;
         entry.lastNavAt = Date.now();
       }
       if (app) P.showMediaBrandLoader(app, entry?.frame);
-      browser.runtime
-        .sendMessage({ type: 'PM_BYPASS_PERSISTENT_CACHE_ONCE', appId: st.activeRailAppId })
-        .catch(() => {})
-        .finally(() => P.sendCommandToMediaFrame('RELOAD'));
+      Promise.all([
+        browser.runtime.sendMessage({ type: 'SIDEBAR_FRAME_RELOAD_PREPARE', appId }).catch(() => {}),
+        browser.runtime.sendMessage({ type: 'PM_BYPASS_PERSISTENT_CACHE_ONCE', appId }).catch(() => {})
+      ]).finally(() => P.sendCommandToMediaFrame('RELOAD'));
     });
 
     document.getElementById('btn-media-zoom-out')?.addEventListener('click', () => {
