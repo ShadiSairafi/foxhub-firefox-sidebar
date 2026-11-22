@@ -517,6 +517,476 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
         for entry in res["qsWebUrlTags"]:
             self.assertFalse(entry["hasWebUrl"], f"Adversarial Quick Switcher input offered Web URL: {entry}")
 
+    def test_t5_06_now_playing_bar_interactive_seek_scrubber_and_bg_seek(self) -> None:
+        """Mini Now Playing progress bar supports click/drag/keyboard scrubbing and routes seek to bg & sidebar frames."""
+        settings = make_default_settings_seed(
+            miniNowPlayingEnabled=True,
+            miniNowPlayingShowProgress=True,
+            bgAudioAppIds=["spotify", "youtube", "soundcloud"],
+        )
+        self.open_bridged_app("src/popup/popup.html", "?sidebar=1", settings=settings)
+
+        res = self.safe_eval_async(
+            """
+            const uiDoc = window.__bridge.uiDoc;
+            const uiWin = window.__bridge.uiWin;
+            const bgWin = window.__bridge.bgWin;
+            const bg = bgWin.FoxHubBg;
+
+            // Seed an active Spotify playback state (200s track at 120s) + mock bridge ports to inspect SEEK_SP_MEDIA
+            const postedBgPort = [];
+            const postedSbPort = [];
+            bg.emeBridgePorts.set('bg:spotify', { postMessage: (m) => postedBgPort.push(m) });
+            bg.emeBridgePorts.set('sidebar:spotify', { postMessage: (m) => postedSbPort.push(m) });
+
+            const fakeVideo = bgWin.document.createElement('video');
+            bg.bgSpEmePlayers.set('spotify', {
+              id: 901,
+              appId: 'spotify',
+              isClear: false,
+              isStaging: false,
+              disposed: false,
+              sourceType: 'bg',
+              videoEl: fakeVideo,
+              sb: null,
+              trackDuration: 200,
+              trackTitle: 'Mortal Reminder',
+              targetTime: 120,
+              maxObservedCt: 120,
+              desiredVolume: 1.0,
+              desiredMuted: false,
+              remotePaused: false,
+              explicitUserPause: false,
+            });
+
+            await window.browser.runtime.sendMessage({
+              type: 'UPDATE_PERSISTENT_SESSION',
+              appId: 'spotify',
+              url: 'https://open.spotify.com/',
+              playback: {
+                isPlaying: true,
+                title: 'Mortal Reminder',
+                artist: 'Pentakill, Jorn',
+                currentTime: 120,
+                duration: 200,
+                canPrev: true,
+                canNext: true,
+              },
+            });
+            await new Promise((r) => setTimeout(r, 120));
+
+            const bar = uiDoc.getElementById('pm-mini-now-playing');
+            const scrubberRow = uiDoc.getElementById('pm-np-scrubber-row');
+            const track = uiDoc.getElementById('pm-np-progress-track');
+            const fill = uiDoc.getElementById('pm-np-progress-fill');
+            const thumb = uiDoc.getElementById('pm-np-progress-thumb');
+            const curTimeEl = uiDoc.getElementById('pm-np-time-current');
+            const durTimeEl = uiDoc.getElementById('pm-np-time-duration');
+            const rect = track.getBoundingClientRect();
+            const thumbOpacityIdle = uiWin.getComputedStyle(thumb).opacity;
+
+            // 1. Click/scrub backward to 25% (~50s) using pointerdown + pointerup
+            const targetX = rect.left + rect.width * 0.25;
+            const targetY = rect.top + rect.height / 2;
+            track.dispatchEvent(new uiWin.PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: targetX, clientY: targetY, button: 0, pointerId: 1, pointerType: 'mouse' }));
+            const scrubbingDuringDrag = track.classList.contains('is-scrubbing');
+            track.dispatchEvent(new uiWin.PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: targetX, clientY: targetY, button: 0, pointerId: 1, pointerType: 'mouse' }));
+            await new Promise((r) => setTimeout(r, 120));
+
+            const afterDragSp = bg.bgSpEmePlayers.get('spotify');
+            const dragState = {
+              barVisible: !bar.classList.contains('hidden'),
+              scrubberRowVisible: Boolean(scrubberRow && !scrubberRow.classList.contains('hidden')),
+              thumbOpacityIdle,
+              curTimeText: curTimeEl ? curTimeEl.textContent : '',
+              durTimeText: durTimeEl ? durTimeEl.textContent : '',
+              role: track.getAttribute('role'),
+              seekable: track.getAttribute('data-seekable'),
+              scrubbingDuringDrag,
+              scrubbingAfterUp: track.classList.contains('is-scrubbing'),
+              fillWidthAfterDrag: fill.style.width,
+              spTargetTime: afterDragSp.targetTime,
+              spIsExplicitUserScrub: afterDragSp.isExplicitUserScrub,
+              spPendingSeekIsUserScrub: afterDragSp.pendingSeekIsUserScrub,
+              liveCt: bg.liveMediaPlaybackState.get('spotify')?.currentTime,
+              bgPortSeeks: postedBgPort.filter((m) => m && m.cmd === 'SEEK_SP_MEDIA'),
+              sbPortSeeks: postedSbPort.filter((m) => m && m.cmd === 'SEEK_SP_MEDIA'),
+            };
+
+            // 2. Keyboard ArrowRight (+5s)
+            track.dispatchEvent(new uiWin.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+            await new Promise((r) => setTimeout(r, 80));
+            const afterKeyTarget = bg.bgSpEmePlayers.get('spotify').targetTime;
+
+            return { dragState, afterKeyTarget };
+            """
+        )
+
+        ds = res["dragState"]
+        self.assertTrue(ds["barVisible"])
+        self.assertTrue(ds["scrubberRowVisible"])
+        self.assertEqual(ds["thumbOpacityIdle"], "1", "Scrubber knob must be clearly visible even before hover")
+        self.assertEqual(ds["durTimeText"], "3:20")
+        self.assertIn(":", ds["curTimeText"])
+        self.assertEqual(ds["role"], "slider")
+        self.assertEqual(ds["seekable"], "1")
+        self.assertTrue(ds["scrubbingDuringDrag"])
+        self.assertFalse(ds["scrubbingAfterUp"])
+        self.assertAlmostEqual(ds["spTargetTime"], 50.0, delta=3.0)
+        self.assertTrue(ds["spIsExplicitUserScrub"])
+        self.assertTrue(ds["spPendingSeekIsUserScrub"])
+        self.assertGreaterEqual(len(ds["bgPortSeeks"]), 1)
+        self.assertTrue(ds["bgPortSeeks"][0].get("isUserScrub"))
+        self.assertGreaterEqual(len(ds["sbPortSeeks"]), 1)
+        self.assertGreater(res["afterKeyTarget"], ds["spTargetTime"] + 3.0)
+
+    def test_t5_07_switch_app_mid_spotify_reopen_aborts_takeover_without_muting_bg(self) -> None:
+        """Switching to another app before Spotify finishes reopening aborts sidebar takeover cleanly without muting or blocking bg track transitions."""
+        settings = make_default_settings_seed(
+            keepAudioPlayingWhenClosed=True,
+            bgAudioAppIds=["spotify", "youtube", "soundcloud"],
+        )
+        self.open_bridged_app("src/popup/popup.html", "?sidebar=1", settings=settings)
+
+        res = self.safe_eval_async(
+            """
+            const uiWin = window.__bridge.uiWin;
+            const bgWin = window.__bridge.bgWin;
+            const P = uiWin.FoxHubPopup;
+            const bg = bgWin.FoxHubBg;
+
+            // Simulate active background Spotify player playing 'Mortal Reminder'
+            const bgFrame = bgWin.document.createElement('iframe');
+            bg.bgAudioPool.set('spotify', { frame: bgFrame, url: 'https://open.spotify.com/', title: 'Mortal Reminder' });
+
+            const bgVideo = bgWin.document.createElement('video');
+            bgVideo.muted = false;
+            bgVideo.volume = 1.0;
+            const activeSp = {
+              id: 910,
+              appId: 'spotify',
+              msId: 10,
+              isClear: false,
+              isStaging: false,
+              disposed: false,
+              sourceType: 'bg',
+              awaitingBgFrameHandoff: false,
+              handoffSource: 'bg',
+              handoffStartedAt: 0,
+              videoEl: bgVideo,
+              sb: null,
+              trackDuration: 213,
+              trackTitle: 'Mortal Reminder',
+              targetTime: 140,
+              desiredVolume: 1.0,
+              desiredMuted: false,
+              remotePaused: false,
+              explicitUserPause: false,
+              queue: [],
+              pendingGenReqs: [],
+              processedInitDataKeys: new Set(),
+            };
+            bg.bgSpEmePlayers.set('spotify', activeSp);
+            bg.liveMediaPlaybackState.set('spotify', bg.normalizePlaybackMeta('spotify', {
+              isPlaying: true,
+              title: 'Mortal Reminder',
+              artist: 'Pentakill, Jorn',
+              currentTime: 140,
+              duration: 213,
+              resumeUrl: 'https://open.spotify.com/'
+            }));
+
+            // 1. Sidebar begins Spotify reopen takeover
+            const spApp = P.getAppsApi().getAppById('spotify', P.state.appSettings);
+            P.openMediaWorkspace(spApp);
+            await new Promise((r) => setTimeout(r, 120));
+
+            const midTakeoverState = {
+              awaitingBeforeSwitch: activeSp.awaitingBgFrameHandoff,
+              handoffSourceBeforeSwitch: activeSp.handoffSource,
+              hasStagingBeforeSwitch: bg.bgStagingSpPlayers.has('spotify'),
+              inPendingSet: P.state.pendingSidebarAudioTakeoverSet.has('spotify'),
+              hasSidebarSpFrame: P.state.mediaFramePool.has('spotify'),
+            };
+
+            // Verify booting sidebar VOLUME { muted: true } cannot mute bg player mid-handoff
+            bg.handleSpEmeBridgeMessage('spotify', { bridgeType: 'VOLUME', muted: true, volume: 0 }, 'sidebar');
+            const bgMutedAfterBootingVol = activeSp.desiredMuted || activeSp.videoEl.muted;
+
+            // 2. BEFORE Spotify sidebar finishes syncing, user switches to Instagram!
+            const igApp = P.getAppsApi().getAppById('instagram', P.state.appSettings);
+            P.openMediaWorkspace(igApp);
+            await new Promise((r) => setTimeout(r, 140));
+
+            const afterSwitchState = {
+              activeRailAppId: P.state.activeRailAppId,
+              inPendingSet: P.state.pendingSidebarAudioTakeoverSet.has('spotify'),
+              inBgMasterSet: P.state.bgMasterAudioSet.has('spotify'),
+              hasSidebarSpFrame: P.state.mediaFramePool.has('spotify'),
+              bgPoolStillAlive: bg.bgAudioPool.has('spotify'),
+              hasStagingAfterSwitch: bg.bgStagingSpPlayers.has('spotify'),
+              awaitingAfterSwitch: activeSp.awaitingBgFrameHandoff,
+              handoffSourceAfterSwitch: activeSp.handoffSource,
+              bgMutedAfterSwitch: activeSp.videoEl.muted,
+              bgDesiredMutedAfterSwitch: activeSp.desiredMuted,
+            };
+
+            // 3. Background Spotify advances to next track (new msId=11) -> MUST NOT be dropped!
+            bg.handleSpEmeBridgeMessage('spotify', { bridgeType: 'MSE_INIT', msId: 11, mime: 'audio/mp4; codecs="mp4a.40.2"' }, 'bg');
+            const activeSpAfterNextTrack = bg.bgSpEmePlayers.get('spotify');
+            const nextPreloadOrUpdated =
+              (activeSpAfterNextTrack && activeSpAfterNextTrack.msId === 11) ||
+              bg.bgNextSpPlayers.has('spotify');
+
+            return {
+              midTakeoverState,
+              bgMutedAfterBootingVol,
+              afterSwitchState,
+              nextPreloadOrUpdated,
+            };
+            """
+        )
+
+        self.assertTrue(res["midTakeoverState"]["awaitingBeforeSwitch"])
+        self.assertEqual(res["midTakeoverState"]["handoffSourceBeforeSwitch"], "sidebar")
+        self.assertTrue(res["midTakeoverState"]["hasStagingBeforeSwitch"])
+        self.assertFalse(res["bgMutedAfterBootingVol"], "Booting sidebar iframe must not mute audible bg player")
+        aft = res["afterSwitchState"]
+        self.assertEqual(aft["activeRailAppId"], "instagram")
+        self.assertFalse(aft["inPendingSet"])
+        self.assertTrue(aft["inBgMasterSet"])
+        self.assertFalse(aft["hasSidebarSpFrame"], "Aborted half-booted Spotify sidebar iframe must be removed")
+        self.assertTrue(aft["bgPoolStillAlive"], "Background Spotify audio host must stay alive")
+        self.assertFalse(aft["hasStagingAfterSwitch"], "Sidebar staging player must be disposed on abort")
+        self.assertFalse(aft["awaitingAfterSwitch"], "awaitingBgFrameHandoff must clear on abort")
+        self.assertEqual(aft["handoffSourceAfterSwitch"], "bg")
+        self.assertFalse(aft["bgMutedAfterSwitch"])
+        self.assertFalse(aft["bgDesiredMutedAfterSwitch"])
+        self.assertTrue(res["nextPreloadOrUpdated"], "Next track MSE_INIT from bg must not be dropped after abort")
+
+    def test_t5_08_selected_app_priority_bg_spotify_never_pauses_instagram_reel(self) -> None:
+        """Background Spotify heartbeats never auto-pause selected Instagram Reels, and audible Reels cleanly pause Spotify."""
+        settings = make_default_settings_seed(
+            keepAudioPlayingWhenClosed=True,
+            bgAudioAppIds=["spotify", "youtube", "soundcloud"],
+        )
+        self.open_bridged_app("src/popup/popup.html", "?sidebar=1", settings=settings)
+
+        res = self.safe_eval_async(
+            """
+            const uiWin = window.__bridge.uiWin;
+            const bgWin = window.__bridge.bgWin;
+            const P = uiWin.FoxHubPopup;
+            const bg = bgWin.FoxHubBg;
+
+            // Open Instagram (selected app) and mock its contentWindow.postMessage to catch any PAUSE_LOCAL_MEDIA
+            const igApp = P.getAppsApi().getAppById('instagram', P.state.appSettings);
+            P.openMediaWorkspace(igApp);
+            await new Promise((r) => setTimeout(r, 80));
+
+            const igEntry = P.state.mediaFramePool.get('instagram');
+            const igPostedMsgs = [];
+            Object.defineProperty(igEntry, 'frame', {
+              value: {
+                classList: igEntry.frame.classList,
+                remove: () => {},
+                contentWindow: { postMessage: (msg) => igPostedMsgs.push(msg) },
+              },
+              configurable: true,
+            });
+
+            // Setup background Spotify currently playing
+            const spVideo = bgWin.document.createElement('video');
+            let spPauseCount = 0;
+            Object.defineProperty(spVideo, 'paused', { get: () => spPauseCount > 0, configurable: true });
+            spVideo.pause = () => { spPauseCount += 1; };
+            const spObj = {
+              id: 920,
+              appId: 'spotify',
+              isClear: false,
+              isStaging: false,
+              disposed: false,
+              sourceType: 'bg',
+              videoEl: spVideo,
+              sb: null,
+              trackDuration: 210,
+              trackTitle: 'Lightbringer (Acoustic)',
+              desiredVolume: 1.0,
+              desiredMuted: false,
+              remotePaused: false,
+              explicitUserPause: false,
+            };
+            bg.bgSpEmePlayers.set('spotify', spObj);
+            const spPortMsgs = [];
+            const spBgFrameMsgs = [];
+            bg.emeBridgePorts.set('bg:spotify', { postMessage: (m) => spPortMsgs.push(m) });
+            bg.bgAudioPool.set('spotify', {
+              frame: { contentWindow: { postMessage: (m) => spBgFrameMsgs.push(m) }, remove: () => {} },
+              url: 'https://open.spotify.com/',
+              title: 'Lightbringer (Acoustic)',
+            });
+            bg.liveMediaPlaybackState.set('spotify', bg.normalizePlaybackMeta('spotify', {
+              isPlaying: true,
+              title: 'Lightbringer (Acoustic)',
+              artist: 'Pentakill, Jorn',
+              currentTime: 25,
+              duration: 210,
+            }));
+            P.state.bgMasterAudioSet.add('spotify');
+            P.state.currentAudibleBgAppId = 'spotify';
+            P.state.framePlaybackStates.set('spotify', { isPlaying: true, title: 'Lightbringer (Acoustic)', updatedAt: Date.now() });
+
+            // 1. Background Spotify fires routine SYNC_TIME & PM_FRAME_PLAYBACK_STATE while Instagram is selected
+            P.handleAudioWindowMessage(
+              { data: { type: 'PM_SP_EME_BRIDGE', bridgeType: 'SYNC_TIME', paused: false, currentTime: 26, flatFrameName: 'pm-media-frame-spotify', alreadyRoutedToBg: true } },
+              null
+            );
+            P.handleAudioWindowMessage(
+              { data: { type: 'PM_FRAME_PLAYBACK_STATE', isPlaying: true, currentTime: 26, duration: 210, title: 'Lightbringer (Acoustic)', flatFrameName: 'pm-media-frame-spotify' } },
+              null
+            );
+            await new Promise((r) => setTimeout(r, 80));
+
+            const igPausedByBgSpotify = igPostedMsgs.filter((m) => m && m.cmd === 'PAUSE_LOCAL_MEDIA').length;
+
+            // 2. Now user plays an audible Reel inside the SELECTED app (Instagram) -> must pause Spotify cleanly!
+            P.handleAudioWindowMessage(
+              { data: { type: 'PM_FRAME_PLAYBACK_STATE', isPlaying: true, currentTime: 2, duration: 15, title: 'Instagram Reel', flatFrameName: 'pm-media-frame-instagram' } },
+              igEntry
+            );
+            await new Promise((r) => setTimeout(r, 120));
+
+            // 3. Stale in-flight SYNC_TIME { paused: false } from Spotify 50ms later must NOT resurrect Spotify!
+            bg.handleSpEmeBridgeMessage('spotify', { bridgeType: 'SYNC_TIME', paused: false, currentTime: 27, duration: 210 }, 'bg');
+            await new Promise((r) => setTimeout(r, 60));
+
+            const igPausedAfterOwnPlay = igPostedMsgs.filter((m) => m && m.cmd === 'PAUSE_LOCAL_MEDIA').length;
+
+            return {
+              igPausedByBgSpotify,
+              igPausedAfterOwnPlay,
+              spPauseCount,
+              spExplicitUserPause: spObj.explicitUserPause,
+              spRemotePaused: spObj.remotePaused,
+              spLivePlaying: bg.liveMediaPlaybackState.get('spotify')?.isPlaying,
+              spPortPauseCmds: spPortMsgs.filter((m) => m && m.cmd === 'PAUSE_LOCAL_MEDIA').length,
+              spDuplicateBgFramePauses: spBgFrameMsgs.filter((m) => m && m.cmd === 'PAUSE_LOCAL_MEDIA').length,
+            };
+            """
+        )
+
+        self.assertEqual(res["igPausedByBgSpotify"], 0, "Background Spotify SYNC_TIME must NEVER pause selected Instagram Reel")
+        self.assertEqual(res["igPausedAfterOwnPlay"], 0, "Selected Instagram Reel must remain unpaused")
+        self.assertGreaterEqual(res["spPauseCount"], 1, "Audible selected Instagram Reel must cleanly pause Spotify")
+        self.assertTrue(res["spExplicitUserPause"])
+        self.assertTrue(res["spRemotePaused"], "Stale in-flight SYNC_TIME must not resurrect paused Spotify")
+        self.assertFalse(res["spLivePlaying"])
+        self.assertEqual(res["spPortPauseCmds"], 1, "Exactly one PAUSE_LOCAL_MEDIA should be delivered over bg port")
+        self.assertEqual(res["spDuplicateBgFramePauses"], 0, "Must not double-post PAUSE_LOCAL_MEDIA to bg frame when port delivered")
+
+    def test_t5_09_now_playing_stays_visible_when_paused_with_paused_only_close_button(self) -> None:
+        """Mini Now Playing bar stays visible on pause by default, shows X close button ONLY when paused, and reappears on resume."""
+        settings = make_default_settings_seed(
+            miniNowPlayingEnabled=True,
+            miniNowPlayingAutoHidePaused=False,
+            bgAudioAppIds=["spotify", "youtube", "soundcloud"],
+        )
+        self.open_bridged_app("src/popup/popup.html", "?sidebar=1", settings=settings)
+
+        res = self.safe_eval_async(
+            """
+            const uiDoc = window.__bridge.uiDoc;
+            const bgWin = window.__bridge.bgWin;
+            const schema = bgWin.FoxHubSettingsSchema;
+
+            // Verify schema default and one-shot migration for existing v2.8.0 profiles
+            const defaultAutoHide = schema.DEFAULT_SETTINGS.miniNowPlayingAutoHidePaused;
+            const migratedProfile = schema.normalizeSettings({
+              topBarAutoHideMigratedV1: true,
+              persistenceDefaultOffMigratedV4: true,
+              miniNowPlayingAutoHidePaused: true,
+            });
+
+            // 1. Start Spotify playing -> bar visible, X close button MUST be hidden while playing
+            await window.browser.runtime.sendMessage({
+              type: 'UPDATE_PERSISTENT_SESSION',
+              appId: 'spotify',
+              url: 'https://open.spotify.com/',
+              playback: {
+                isPlaying: true,
+                title: 'White Iverson',
+                artist: 'Post Malone',
+                currentTime: 64,
+                duration: 256,
+              },
+            });
+            await new Promise((r) => setTimeout(r, 120));
+
+            const bar = uiDoc.getElementById('pm-mini-now-playing');
+            const closeBtn = uiDoc.getElementById('pm-np-close');
+            const playBtn = uiDoc.getElementById('pm-np-playpause');
+
+            const whilePlaying = {
+              barVisible: !bar.classList.contains('hidden'),
+              closeHidden: closeBtn.classList.contains('hidden'),
+              iconState: playBtn.dataset.iconState,
+            };
+
+            // 2. Click pause -> bar MUST stay visible, play icon shown, X close button MUST appear
+            playBtn.click();
+            await new Promise((r) => setTimeout(r, 140));
+            const whilePaused = {
+              barVisible: !bar.classList.contains('hidden'),
+              closeHidden: closeBtn.classList.contains('hidden'),
+              iconState: playBtn.dataset.iconState,
+            };
+
+            // 3. Click X close button -> bar hides cleanly
+            closeBtn.click();
+            await new Promise((r) => setTimeout(r, 60));
+            const afterClose = {
+              barVisible: !bar.classList.contains('hidden'),
+            };
+
+            // 4. Resume playback -> bar automatically reappears and X close button hides again!
+            await window.browser.runtime.sendMessage({
+              type: 'TOGGLE_NOW_PLAYING_COMMAND',
+              appId: 'spotify',
+              command: 'play_pause',
+            });
+            await new Promise((r) => setTimeout(r, 140));
+            const afterResume = {
+              barVisible: !bar.classList.contains('hidden'),
+              closeHidden: closeBtn.classList.contains('hidden'),
+              iconState: playBtn.dataset.iconState,
+            };
+
+            return {
+              defaultAutoHide,
+              migratedAutoHide: migratedProfile.miniNowPlayingAutoHidePaused,
+              migratedFlag: migratedProfile.miniNowPlayingKeepPausedMigratedV1,
+              whilePlaying,
+              whilePaused,
+              afterClose,
+              afterResume,
+            };
+            """
+        )
+
+        self.assertFalse(res["defaultAutoHide"], "Default miniNowPlayingAutoHidePaused must be false")
+        self.assertFalse(res["migratedAutoHide"], "Existing v2.8.0 profiles must migrate miniNowPlayingAutoHidePaused to false")
+        self.assertTrue(res["migratedFlag"])
+        self.assertTrue(res["whilePlaying"]["barVisible"])
+        self.assertTrue(res["whilePlaying"]["closeHidden"], "Close X button must be hidden while playing")
+        self.assertEqual(res["whilePlaying"]["iconState"], "pause")
+        self.assertTrue(res["whilePaused"]["barVisible"], "Bar must STAY visible when paused")
+        self.assertFalse(res["whilePaused"]["closeHidden"], "Close X button must appear when paused")
+        self.assertEqual(res["whilePaused"]["iconState"], "play")
+        self.assertFalse(res["afterClose"]["barVisible"], "Clicking X close button must hide the paused bar")
+        self.assertTrue(res["afterResume"]["barVisible"], "Resuming playback must bring the bar back")
+        self.assertTrue(res["afterResume"]["closeHidden"], "Close X button must hide again once playing")
+        self.assertEqual(res["afterResume"]["iconState"], "pause")
+
 
 if __name__ == "__main__":
     unittest.main()

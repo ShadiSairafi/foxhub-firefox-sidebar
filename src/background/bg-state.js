@@ -129,6 +129,7 @@
         !data.settings.persistenceDefaultOffMigratedV4 ||
         !data.settings.bgAudioAppIdsMigratedV1 ||
         !data.settings.bgAudioAppIdsSoundCloudMigratedV2 ||
+        !data.settings.miniNowPlayingKeepPausedMigratedV1 ||
         (data.settings.muteSiteNotifications === undefined && data.settings.socialAppNotifySounds === false) ||
         (data.settings.muteSiteNotifications === true && data.settings.socialAppNotifySounds !== false);
       if (needsMigrationSave) {

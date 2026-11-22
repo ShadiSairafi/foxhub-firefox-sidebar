@@ -88,6 +88,27 @@ export function closeWebAudioKeepalive() {
   } catch (_) {}
 }
 
+export function isMediaElementAudible(ctx, el) {
+  if (!el || el.paused || el.ended) return false;
+  if (el.muted || !(Number(el.volume) > 0)) return false;
+  if (el.mozHasAudio === false) {
+    const isShortFormHost = Boolean(ctx && (ctx.hasHost('instagram.com') || ctx.hasHost('tiktok.com')));
+    const rs = Number(el.readyState) || 0;
+    const ct = Number(el.currentTime) || 0;
+    if (isShortFormHost) {
+      // Firefox MSE <video> on Instagram Reels / TikTok can report mozHasAudio=false while audio plays via MSE/startup
+      try {
+        const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+        if (r && r.width >= 80 && r.height >= 80) return true;
+      } catch (_) {}
+      return rs < 3 || ct < 1.5;
+    }
+    // On other hosts, allow startup frames before audio decoder initializes; filter confirmed decoded silent loops
+    return rs < 3 || ct < 0.8;
+  }
+  return true;
+}
+
 export function getActiveMediaElement(ctx) {
   if (ctx.hasHost('youtube.com') && !ctx.hasHost('music.youtube.com')) {
     const p = window.location.pathname || '/';
@@ -126,22 +147,33 @@ export function getActiveMediaElement(ctx) {
     }
   };
 
-  const audiblePlaying = combined.find(
-    (el) =>
-      !el.paused &&
-      !el.ended &&
-      !el.muted &&
-      Number(el.volume) > 0 &&
-      el.mozHasAudio !== false &&
-      el.readyState >= 1 &&
-      !isPreview(el)
-  );
-  if (audiblePlaying) return audiblePlaying;
+  const isVisibleInViewport = (el) => {
+    try {
+      if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+      const r = el.getBoundingClientRect();
+      const vh = window.innerHeight || 600;
+      const vw = window.innerWidth || 420;
+      return r.width >= 60 && r.height >= 60 && r.bottom > 24 && r.top < vh - 24 && r.right > 0 && r.left < vw;
+    } catch (_) {
+      return false;
+    }
+  };
 
-  const playing = combined.find(
+  const audiblePlayingCandidates = combined.filter(
+    (el) => isMediaElementAudible(ctx, el) && el.readyState >= 1 && !isPreview(el)
+  );
+  if (audiblePlayingCandidates.length > 0) {
+    const visibleAudible = audiblePlayingCandidates.find(isVisibleInViewport);
+    return visibleAudible || audiblePlayingCandidates[0];
+  }
+
+  const playingCandidates = combined.filter(
     (el) => !el.paused && !el.ended && el.readyState >= 1 && !isPreview(el)
   );
-  if (playing) return playing;
+  if (playingCandidates.length > 0) {
+    const visiblePlaying = playingCandidates.find(isVisibleInViewport);
+    return visiblePlaying || playingCandidates[0];
+  }
 
   const mainYt = document.querySelector(
     '#movie_player video.html5-main-video, ytd-player video.html5-main-video, video.html5-main-video'
@@ -784,8 +816,9 @@ export function installMediaMirrorHooks(ctx, opt = null) {
           }
           if (msg.cmd === 'SEEK_SP_MEDIA') {
             const seekSec = Number(msg.currentTime) || 0;
+            const isUserScrub = Boolean(msg.isUserScrub);
             const nowSeek = Date.now();
-            if (Math.abs(seekSec - lastSpSeekTarget) < 0.25 && nowSeek - lastSpSeekAt < 140) {
+            if (!isUserScrub && Math.abs(seekSec - lastSpSeekTarget) < 0.25 && nowSeek - lastSpSeekAt < 140) {
               return;
             }
             lastSpSeekAt = nowSeek;
@@ -794,7 +827,7 @@ export function installMediaMirrorHooks(ctx, opt = null) {
             try {
               if (pageWin && typeof pageWin.__seekActiveSpMediaEl === 'function') {
                 executed = Boolean(
-                  pageWin.__seekActiveSpMediaEl(seekSec, Boolean(msg.forceHarmonySeek))
+                  pageWin.__seekActiveSpMediaEl(seekSec, Boolean(msg.forceHarmonySeek), isUserScrub)
                 );
               }
             } catch (_) {}
@@ -1898,13 +1931,19 @@ export function installMediaMirrorHooks(ctx, opt = null) {
     } catch (_) {}
     return 'noop';
   });
-  define(pageWin, '__seekActiveSpMediaEl', function (targetTime, forceHarmonySeek) {
+  define(pageWin, '__seekActiveSpMediaEl', function (targetTime, forceHarmonySeek, isUserScrub) {
     try {
       const t = Number(targetTime);
       if (!(t >= 0)) return false;
-      internalHandoffSeekUntil = Date.now() + 4000;
+      if (isUserScrub) {
+        internalHandoffSeekUntil = 0;
+        lastUserSeekBarScrubAt = Date.now();
+        lastUserGestureAt = Date.now();
+      } else {
+        internalHandoffSeekUntil = Date.now() + 4000;
+      }
       if (IS_YT) {
-        if (!(t > 0)) return false;
+        if (!(t >= 0)) return false;
         pendingYtSeekTarget = { time: t, setAt: Date.now(), expiresAt: Date.now() + 4500 };
         const el = getActiveEl();
         if (el) applyPendingYtSeek(el);
@@ -1939,6 +1978,26 @@ export function installMediaMirrorHooks(ctx, opt = null) {
         return true;
       }
       const dur = capturedMediaSessionDuration || parseDomSpotifyDuration();
+      const rangeInput = document.querySelector(
+        '[data-testid="playback-progressbar"] input[type="range"]'
+      );
+      if (dur > 1 && rangeInput) {
+        try {
+          const maxAttr = Number(rangeInput.max) || 0;
+          const nextVal = maxAttr > dur * 100 ? Math.round(t * 1000) : Math.round(t);
+          const nativeSetter = Object.getOwnPropertyDescriptor(
+            pageWin.HTMLInputElement ? pageWin.HTMLInputElement.prototype : HTMLInputElement.prototype,
+            'value'
+          )?.set;
+          if (nativeSetter) {
+            nativeSetter.call(rangeInput.wrappedJSObject || rangeInput, String(nextVal));
+          } else {
+            rangeInput.value = String(nextVal);
+          }
+          rangeInput.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+          rangeInput.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        } catch (_) {}
+      }
       const progBar = document.querySelector(
         '[data-testid="playback-progressbar"] [data-testid="progress-bar"], [data-testid="playback-progressbar"]'
       );
@@ -1948,9 +2007,11 @@ export function installMediaMirrorHooks(ctx, opt = null) {
           const ratio = Math.min(0.995, Math.max(0.002, t / dur));
           const clientX = rect.left + rect.width * ratio;
           const clientY = rect.top + rect.height / 2;
-          progBar.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX, clientY }));
-          progBar.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX, clientY }));
-          progBar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX, clientY }));
+          progBar.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, pointerId: 1, isPrimary: true }));
+          progBar.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1 }));
+          progBar.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 0, pointerId: 1, isPrimary: true }));
+          progBar.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 0 }));
+          progBar.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX, clientY, button: 0 }));
           return true;
         }
       }

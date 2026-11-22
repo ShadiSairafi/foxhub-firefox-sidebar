@@ -121,7 +121,7 @@
     miniNowPlayingPosition: 'bottom',
     miniNowPlayingCompact: false,
     miniNowPlayingShowProgress: true,
-    miniNowPlayingAutoHidePaused: true,
+    miniNowPlayingAutoHidePaused: false,
     contextMenuEnabled: true,
     contextMenuOpenBehavior: 'sidebar',
     quickSwitcherEnabled: true,
@@ -136,7 +136,8 @@
     persistenceDefaultSelectedMigratedV1: true,
     persistenceYoutubeAddedMigratedV2: true,
     persistenceAllSocialMigratedV3: true,
-    persistenceDefaultOffMigratedV4: true
+    persistenceDefaultOffMigratedV4: true,
+    miniNowPlayingKeepPausedMigratedV1: true
   };
 
   const THEME_OR_LAYOUT_KEYS = [
@@ -676,6 +677,12 @@
         }
         merged.bgAudioAppIdsSoundCloudMigratedV2 = true;
       }
+      if (!cleanRaw.miniNowPlayingKeepPausedMigratedV1) {
+        if (cleanRaw.topBarAutoHideMigratedV1 && cleanRaw.persistenceDefaultOffMigratedV4) {
+          merged.miniNowPlayingAutoHidePaused = false;
+        }
+        merged.miniNowPlayingKeepPausedMigratedV1 = true;
+      }
     } else {
       merged.topBarAutoHideMigratedV1 = true;
       merged.bgAudioAppIdsMigratedV1 = true;
@@ -684,6 +691,7 @@
       merged.persistenceYoutubeAddedMigratedV2 = true;
       merged.persistenceAllSocialMigratedV3 = true;
       merged.persistenceDefaultOffMigratedV4 = true;
+      merged.miniNowPlayingKeepPausedMigratedV1 = true;
     }
 
     // 2. Bidirectional alias synchronization

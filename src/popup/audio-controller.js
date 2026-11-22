@@ -5,6 +5,7 @@
 
 (function (global) {
   const P = (global.FoxHubPopup = global.FoxHubPopup || {});
+  const recentPriorityPausedUntilMap = new Map();
 
   P.cleanupSidebarMsePlayer = function (appId) {
     const st = P.state;
@@ -149,36 +150,127 @@
 
   P.pauseOtherSidebarMediaFrames = function (activeAudioAppId) {
     const st = P.state;
-    st.framePlaybackStates.forEach((pb, id) => {
-      if (id !== activeAudioAppId && pb && pb.isPlaying) {
+    // Strict priority to the currently selected foreground app:
+    // background music heartbeats must NEVER auto-pause the user's selected app (e.g., Instagram Reels).
+    if (!activeAudioAppId || activeAudioAppId !== st.activeRailAppId) {
+      return;
+    }
+
+    const activeIsBgAudioApp = P.isAppAllowedForBgAudio(activeAudioAppId);
+    const otherIds = new Set([
+      ...st.mediaFramePool.keys(),
+      ...st.framePlaybackStates.keys(),
+      ...st.pendingSidebarAudioTakeoverSet,
+      ...st.bgMasterAudioSet,
+      ...(st.currentAudibleBgAppId ? [st.currentAudibleBgAppId] : []),
+      ...(st.bgNowPlayingState?.appId ? [st.bgNowPlayingState.appId] : [])
+    ]);
+
+    let pausedAny = false;
+    otherIds.forEach((id) => {
+      if (!id || id === activeAudioAppId) return;
+      const entry = st.mediaFramePool.get(id);
+      const pb = st.framePlaybackStates.get(id);
+      const isBgNpPlaying = Boolean(st.bgNowPlayingState && st.bgNowPlayingState.appId === id && st.bgNowPlayingState.isPlaying);
+      const wasActiveOrPlaying = Boolean(
+        (pb && pb.isPlaying) ||
+          isBgNpPlaying ||
+          st.sidebarMsePlayers.has(id) ||
+          st.pendingSidebarAudioTakeoverSet.has(id) ||
+          st.bgMasterAudioSet.has(id) ||
+          st.currentAudibleBgAppId === id
+      );
+
+      if (pb && pb.isPlaying) {
         pb.isPlaying = false;
+        pb.updatedAt = Date.now();
+        pausedAny = true;
       }
-    });
-    st.mediaFramePool.forEach((entry, id) => {
-      if (id === activeAudioAppId) {
-        entry.suppressedWhileInactive = false;
-        return;
+      if (isBgNpPlaying) {
+        st.bgNowPlayingState = {
+          ...st.bgNowPlayingState,
+          isPlaying: false,
+          updatedAt: Date.now()
+        };
+        pausedAny = true;
       }
-      entry.suppressedWhileInactive = true;
-      P.cleanupSidebarMsePlayer(id);
-      P.cleanupSidebarSpEmePlayer(id);
-      st.pendingSidebarAudioTakeoverSet.delete(id);
-      st.bgMasterAudioSet.delete(id);
       if (st.currentAudibleBgAppId === id) {
         st.currentAudibleBgAppId = null;
+        pausedAny = true;
       }
-      const pb = st.framePlaybackStates.get(id);
-      if (pb && pb.isPlaying) pb.isPlaying = false;
-      browser.runtime
-        .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: id, clearPlaybackState: true })
-        .catch(() => {});
-      try {
-        entry.frame.contentWindow?.postMessage(
-          { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
-          '*'
-        );
-      } catch (_) {}
+      P.cleanupSidebarMsePlayer(id);
+      P.cleanupSidebarSpEmePlayer(id);
+      const wasPendingTakeover = st.pendingSidebarAudioTakeoverSet.has(id);
+      st.pendingSidebarAudioTakeoverSet.delete(id);
+      st.bgMasterAudioSet.delete(id);
+
+      const otherIsBgMusicApp = P.isAppAllowedForBgAudio(id);
+      if (!activeIsBgAudioApp && otherIsBgMusicApp) {
+        // Selected foreground social app (e.g., Instagram Reels) takes audio priority:
+        // cleanly pause background music without wiping its track state or double-toggling Spotify's button.
+        recentPriorityPausedUntilMap.set(id, Date.now() + 2600);
+        if (wasPendingTakeover) {
+          browser.runtime.sendMessage({ type: 'ABORT_SIDEBAR_SP_TAKEOVER', appId: id }).catch(() => {});
+        }
+        if (wasActiveOrPlaying || wasPendingTakeover) {
+          pausedAny = true;
+          browser.runtime
+            .sendMessage({ type: 'TOGGLE_NOW_PLAYING_COMMAND', appId: id, command: 'pause' })
+            .then((res) => {
+              if (res && res.nowPlaying) {
+                st.bgNowPlayingState = res.nowPlaying;
+              }
+              P.renderOperaRail?.();
+              P.renderNowPlayingBar?.();
+            })
+            .catch(() => {
+              if (entry?.frame?.contentWindow) {
+                try {
+                  entry.frame.contentWindow.postMessage(
+                    { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+                    '*'
+                  );
+                } catch (_) {}
+              }
+            });
+        } else if (entry?.frame?.contentWindow) {
+          try {
+            entry.frame.contentWindow.postMessage(
+              { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+              '*'
+            );
+          } catch (_) {}
+        }
+        return;
+      }
+
+      if (entry) {
+        entry.suppressedWhileInactive = true;
+      }
+      if (wasActiveOrPlaying || entry) {
+        pausedAny = true;
+        browser.runtime
+          .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: id, clearPlaybackState: true })
+          .catch(() => {});
+      }
+      if (entry?.frame?.contentWindow) {
+        try {
+          entry.frame.contentWindow.postMessage(
+            { target: 'pocketmail-media-frame', cmd: 'PAUSE_LOCAL_MEDIA' },
+            '*'
+          );
+        } catch (_) {}
+      }
     });
+
+    const activeEntry = st.mediaFramePool.get(activeAudioAppId);
+    if (activeEntry) {
+      activeEntry.suppressedWhileInactive = false;
+    }
+    if (pausedAny) {
+      P.renderOperaRail?.();
+      P.renderNowPlayingBar?.();
+    }
   };
 
   P.getResolvedNowPlayingState = function () {
@@ -265,25 +357,43 @@
     return null;
   };
 
-  P.sendNowPlayingCommand = async function (appId, command) {
+  P.sendNowPlayingCommand = async function (appId, command, extra = {}) {
     const st = P.state;
     if (!appId || !command) return null;
+    if (command === 'play_pause' || command === 'prev' || command === 'next') {
+      recentPriorityPausedUntilMap.delete(appId);
+    }
     try {
-      const res = await browser.runtime.sendMessage({
+      const payload = {
         type: 'TOGGLE_NOW_PLAYING_COMMAND',
         appId,
         command
-      });
+      };
+      if (command === 'seek' && Number.isFinite(Number(extra?.seekTime))) {
+        payload.seekTime = Math.max(0, Number(extra.seekTime));
+      }
+      const res = await browser.runtime.sendMessage(payload);
       if (res) {
         if (res.nowPlaying) {
           st.bgNowPlayingState = res.nowPlaying;
         }
         const prev = st.framePlaybackStates.get(appId);
-        if (prev || typeof res.isPlaying === 'boolean' || typeof res.muted === 'boolean') {
+        if (
+          prev ||
+          typeof res.isPlaying === 'boolean' ||
+          typeof res.muted === 'boolean' ||
+          typeof res.currentTime === 'number'
+        ) {
           st.framePlaybackStates.set(appId, {
             ...(prev || {}),
             isPlaying: typeof res.isPlaying === 'boolean' ? res.isPlaying : Boolean(prev?.isPlaying),
             muted: typeof res.muted === 'boolean' ? res.muted : Boolean(prev?.muted),
+            currentTime:
+              typeof res.currentTime === 'number'
+                ? res.currentTime
+                : payload.seekTime !== undefined
+                  ? payload.seekTime
+                  : Number(prev?.currentTime) || 0,
             updatedAt: Date.now()
           });
         }
@@ -332,7 +442,6 @@
 
     if (!rawAudibleId) {
       st.currentAudibleBgAppId = null;
-      st.bgMasterAudioSet.clear();
     } else if (!hasUnknownAudible) {
       st.currentAudibleBgAppId = rawAudibleId;
     }
@@ -388,7 +497,7 @@
     const st = P.state;
     if (!msg || !msg.appId) return;
     const entry = st.mediaFramePool.get(msg.appId);
-    if (entry?.frame?.contentWindow) {
+    if (!msg.skipFramePost && entry?.frame?.contentWindow) {
       try {
         entry.frame.contentWindow.postMessage(
           {
@@ -396,6 +505,9 @@
             cmd: msg.cmd,
             command: msg.command,
             muted: msg.muted,
+            currentTime: msg.currentTime,
+            forceHarmonySeek: msg.forceHarmonySeek,
+            isUserScrub: msg.isUserScrub,
             markShouldResume: msg.markShouldResume
           },
           '*'
@@ -406,6 +518,8 @@
     if (mse && mse.audioEl) {
       if (msg.command === 'mute_toggle' && typeof msg.muted === 'boolean') {
         mse.audioEl.muted = msg.muted;
+      } else if (msg.cmd === 'SEEK_SP_MEDIA' && Number.isFinite(Number(msg.currentTime))) {
+        try { mse.audioEl.currentTime = Math.max(0, Number(msg.currentTime)); } catch (_) {}
       } else if (msg.cmd === 'PAUSE_LOCAL_MEDIA') {
         try { mse.audioEl.pause(); } catch (_) {}
       } else if (msg.cmd === 'RESUME_BG_SP_MEDIA') {
@@ -592,18 +706,12 @@
             appId === 'youtube' &&
             (data.href || sourceEntry?.currentUrl) &&
             !P.isPlayableYouTubeUrl(data.href || sourceEntry?.currentUrl);
-          if (!data.paused && !isNonPlayableYt) {
-            P.pauseOtherSidebarMediaFrames(appId);
-            if (st.pendingSidebarAudioTakeoverSet.size > 0 || st.bgMasterAudioSet.size > 0) {
-              Array.from(new Set([...st.pendingSidebarAudioTakeoverSet, ...st.bgMasterAudioSet])).forEach((otherId) => {
-                if (otherId !== appId) {
-                  st.pendingSidebarAudioTakeoverSet.delete(otherId);
-                  st.bgMasterAudioSet.delete(otherId);
-                  browser.runtime
-                    .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: otherId, clearPlaybackState: true })
-                    .catch(() => {});
-                }
-              });
+          const isInSelectedPriorityPauseGrace =
+            appId !== st.activeRailAppId &&
+            Date.now() < (recentPriorityPausedUntilMap.get(appId) || 0);
+          if (!data.paused && !isNonPlayableYt && !isInSelectedPriorityPauseGrace) {
+            if (appId === st.activeRailAppId) {
+              P.pauseOtherSidebarMediaFrames(appId);
             }
             st.pendingSidebarAudioTakeoverSet.delete(appId);
             st.bgMasterAudioSet.delete(appId);
@@ -630,8 +738,13 @@
               ...(prevPb || {}),
               isPlaying: true,
               currentTime: liveSec,
+              duration: Number(data.duration) || prevPb?.duration || 0,
               resumeUrl: nextResumeUrl,
-              title: prevPb?.title || (appId === 'youtube' ? 'YouTube' : 'Spotify'),
+              title: (data.trackTitle && String(data.trackTitle).trim()) || prevPb?.title || (appId === 'youtube' ? 'YouTube' : 'Spotify'),
+              artist: data.artist !== undefined ? String(data.artist) : (prevPb?.artist || ''),
+              artworkUrl: data.artworkUrl !== undefined ? String(data.artworkUrl) : (prevPb?.artworkUrl || ''),
+              canPrev: data.canPrev !== undefined ? Boolean(data.canPrev) : (prevPb?.canPrev !== false),
+              canNext: data.canNext !== undefined ? Boolean(data.canNext) : (prevPb?.canNext !== false),
               updatedAt: Date.now()
             };
             st.framePlaybackStates.set(appId, pb);
@@ -706,7 +819,9 @@
           st.pendingSidebarAudioTakeoverSet.delete(appId);
           browser.runtime.sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId }).catch(() => {});
         }
-        P.pauseOtherSidebarMediaFrames(appId);
+        if (appId === st.activeRailAppId) {
+          P.pauseOtherSidebarMediaFrames(appId);
+        }
         let player = st.sidebarMsePlayers.get(appId);
         if (!player) {
           const ms = new MediaSource();
@@ -781,24 +896,19 @@
             .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId, clearPlaybackState: true })
             .catch(() => {});
         }
-        const effectivePlaying = isNonPlayableYt || isDisallowedInactiveFrame ? false : Boolean(data.isPlaying);
+        const isInSelectedPriorityPauseGrace =
+          appId !== st.activeRailAppId &&
+          Date.now() < (recentPriorityPausedUntilMap.get(appId) || 0);
+        const effectivePlaying =
+          isNonPlayableYt || isDisallowedInactiveFrame || isInSelectedPriorityPauseGrace
+            ? false
+            : Boolean(data.isPlaying);
         if (isNonPlayableYt) {
           st.pendingSidebarAudioTakeoverSet.delete('youtube');
           if (st.currentAudibleBgAppId === 'youtube') st.currentAudibleBgAppId = null;
         }
-        if (effectivePlaying) {
+        if (effectivePlaying && appId === st.activeRailAppId) {
           P.pauseOtherSidebarMediaFrames(appId);
-          if (st.pendingSidebarAudioTakeoverSet.size > 0 || st.bgMasterAudioSet.size > 0) {
-            Array.from(new Set([...st.pendingSidebarAudioTakeoverSet, ...st.bgMasterAudioSet])).forEach((otherId) => {
-              if (otherId !== appId) {
-                st.pendingSidebarAudioTakeoverSet.delete(otherId);
-                st.bgMasterAudioSet.delete(otherId);
-                browser.runtime
-                  .sendMessage({ type: 'STOP_SINGLE_BG_AUDIO_APP', appId: otherId, clearPlaybackState: true })
-                  .catch(() => {});
-              }
-            });
-          }
         }
         const prevPb = st.framePlaybackStates.get(appId);
         const prevIsPlaying = Boolean(prevPb?.isPlaying);

@@ -212,8 +212,18 @@
     const appMeta = catalog && typeof catalog.getAppById === 'function' ? catalog.getAppById(targetId, s) : null;
     const appName = (appMeta && appMeta.id === targetId ? appMeta.name : null) || targetId;
 
-    const liveCt =
-      sp && !sp.disposed && sp.videoEl
+    const hasPendingUserScrub = Boolean(
+      sp &&
+        !sp.disposed &&
+        sp.pendingSeekIsUserScrub &&
+        Number.isFinite(sp.pendingSeekTarget) &&
+        sp.pendingSeekTarget >= 0 &&
+        sp.pendingSeekSetAt > 0 &&
+        Date.now() - sp.pendingSeekSetAt < 3500
+    );
+    const liveCt = hasPendingUserScrub
+      ? Number(sp.pendingSeekTarget) || 0
+      : sp && !sp.disposed && sp.videoEl && (Number(sp.videoEl.currentTime) > 0 || !(Number(st.currentTime) > 0))
         ? Number(sp.videoEl.currentTime) || 0
         : mse && mse.audioEl
           ? Number(mse.audioEl.currentTime) || 0
@@ -764,7 +774,11 @@
               sp.pendingSeekIsUserScrub = false;
             }
           }
-        } else if (sp.pendingSeekTarget > 0 && Date.now() - (sp.pendingSeekSetAt || 0) < 8500) {
+        } else if (
+          (sp.pendingSeekTarget > 0 || (sp.pendingSeekIsUserScrub && sp.pendingSeekTarget >= 0)) &&
+          sp.pendingSeekSetAt > 0 &&
+          Date.now() - sp.pendingSeekSetAt < 8500
+        ) {
           if (isTimeInSpBuffered(sp, sp.pendingSeekTarget)) {
             const allowPending = sp.pendingSeekIsUserScrub || isUserScrub || sp.pendingSeekTarget >= ct - 0.05;
             if (allowPending) {
@@ -844,7 +858,10 @@
           sp.pendingSeekTarget = sp.targetTime;
           sp.pendingSeekSetAt = Date.now();
           sp.pendingSeekIsUserScrub = isUserScrub;
-          if (sp.videoEl.readyState >= 1) {
+          // Only jump videoEl.currentTime immediately when the target is buffered (or no SourceBuffer yet),
+          // so unbuffered handoffs never stall videoEl into readyState=1 silence.
+          const hasSb = Boolean(sp.sb && sp.sb.buffered && sp.sb.buffered.length > 0);
+          if (sp.videoEl.readyState >= 1 && (!hasSb || isTimeInSpBuffered(sp, sp.targetTime))) {
             sp.videoEl.currentTime = sp.targetTime;
             if (isUserScrub) sp.maxObservedCt = sp.targetTime;
           }
@@ -1722,6 +1739,53 @@
     return getSpBufferedEnd(activeSp) > 0;
   }
 
+  function abortSidebarSpTakeover(appId) {
+    if (!appId) return;
+    const stagingSp = bg.bgStagingSpPlayers.get(appId);
+    if (stagingSp && stagingSp.sourceType === 'sidebar') {
+      bg.bgStagingSpPlayers.delete(appId);
+      disposeSpPlayerInstance(stagingSp);
+    }
+    const activeSp = bg.bgSpEmePlayers.get(appId);
+    if (activeSp && !activeSp.disposed) {
+      activeSp.awaitingBgFrameHandoff = false;
+      activeSp.handoffSource = 'bg';
+      activeSp.handoffStartedAt = 0;
+      if (!activeSp.explicitUserPause && !isTabPausedEnforced()) {
+        activeSp.remotePaused = false;
+        if (activeSp.videoEl) {
+          activeSp.videoEl.muted = Boolean(activeSp.desiredMuted);
+          activeSp.videoEl.volume = activeSp.desiredVolume > 0 ? activeSp.desiredVolume : 1.0;
+          activeSp.videoEl.playbackRate = 1.0;
+        }
+        syncSpInstanceTimeAndPlay(activeSp, false);
+        if (bg.bgAudioPool.has(appId) && activeSp.videoEl && activeSp.videoEl.paused) {
+          const bgPort = bg.emeBridgePorts.get(`bg:${appId}`);
+          if (bgPort) {
+            try {
+              bgPort.postMessage({ cmd: 'RESUME_BG_SP_MEDIA' });
+            } catch (_) {}
+          }
+          const bgEntry = bg.bgAudioPool.get(appId);
+          if (bgEntry && bgEntry.frame && bgEntry.frame.contentWindow) {
+            try {
+              bgEntry.frame.contentWindow.postMessage(
+                { target: 'pocketmail-media-frame', cmd: 'RESUME_BG_SP_MEDIA' },
+                '*'
+              );
+            } catch (_) {}
+          }
+        }
+      }
+    }
+    logAudioDiag('abort-sidebar-takeover', {
+      appId,
+      bgPoolAlive: bg.bgAudioPool.has(appId),
+      hasActiveSp: Boolean(activeSp && !activeSp.disposed)
+    });
+    refreshBgAudioIndicator(true);
+  }
+
   function activateSidebarSpTakeover(appId) {
     if (bg.bgAudioPool.has(appId)) {
       removeBgAudioIframeOnly(appId);
@@ -1951,6 +2015,7 @@
         activeSp.autoPausedByTab = false;
         activeSp.remotePaused = false;
         activeSp.explicitUserPause = false;
+        activeSp.pausedByCommandAt = 0;
         activeSp.lastPlayedAt = Date.now();
         syncSpInstanceTimeAndPlay(activeSp);
       }
@@ -2023,7 +2088,20 @@
     }
 
     const routeActiveSp = bg.bgSpEmePlayers.get(appId);
-    const routeStagingSp = bg.bgStagingSpPlayers.get(appId);
+    let routeStagingSp = bg.bgStagingSpPlayers.get(appId);
+    // Auto-expire stalled sidebar handoffs (>15s without buffered sidebar audio) so bg never starves on track change
+    if (
+      routeActiveSp &&
+      !routeActiveSp.disposed &&
+      routeActiveSp.awaitingBgFrameHandoff &&
+      routeActiveSp.handoffSource === 'sidebar' &&
+      routeActiveSp.handoffStartedAt > 0 &&
+      Date.now() - routeActiveSp.handoffStartedAt > 15000 &&
+      (!routeStagingSp || routeStagingSp.disposed || getSpBufferedEnd(routeStagingSp) <= 0)
+    ) {
+      abortSidebarSpTakeover(appId);
+      routeStagingSp = bg.bgStagingSpPlayers.get(appId);
+    }
     if (
       sourceType === 'sidebar' &&
       bg.bgAudioPool.has(appId) &&
@@ -2187,6 +2265,16 @@
     if (bt === 'VOLUME') {
       const target = useStaging ? bg.bgStagingSpPlayers.get(appId) : bg.bgSpEmePlayers.get(appId);
       if (!target) return;
+      // Never let a newly-booting sidebar iframe mute an audible background player mid-handoff
+      if (
+        sourceType === 'sidebar' &&
+        !useStaging &&
+        target.sourceType === 'bg' &&
+        bg.bgAudioPool.has(appId) &&
+        (data.muted === true || data.volume === 0)
+      ) {
+        return;
+      }
       if (typeof data.volume === 'number') target.desiredVolume = data.volume;
       if (typeof data.muted === 'boolean') target.desiredMuted = data.muted;
       if (!target.isStaging && target.videoEl) {
@@ -2300,8 +2388,14 @@
       if (data.fromSeek && data.paused) {
         if (effectiveForceSeek) {
           sp.targetTime = Number(data.currentTime) || 0;
-          if (sp.videoEl && !sp.videoEl.paused) {
-            syncSpInstanceTimeAndPlay(sp, true, isExplicitUserScrub);
+          if (sp.videoEl) {
+            if (!sp.videoEl.paused) {
+              syncSpInstanceTimeAndPlay(sp, true, isExplicitUserScrub);
+            } else if (isTimeInSpBuffered(sp, sp.targetTime)) {
+              try {
+                sp.videoEl.currentTime = sp.targetTime;
+              } catch (_) {}
+            }
           }
         } else if (!sp.videoEl || sp.videoEl.paused) {
           sp.targetTime = Number(data.currentTime) || 0;
@@ -2351,6 +2445,26 @@
         sp.autoPausedByTab = true;
         sp.explicitUserPause = false;
       } else if (!data.paused) {
+        if (sp.explicitUserPause && sp.pausedByCommandAt && Date.now() - sp.pausedByCommandAt < 2500) {
+          sp.remotePaused = true;
+          if (sp.videoEl && !sp.videoEl.paused) {
+            try {
+              sp.lastPauseTrigger = 'pause-command-grace';
+              sp.videoEl.pause();
+            } catch (_) {}
+          }
+          const sincePauseMs = Date.now() - sp.pausedByCommandAt;
+          if (sincePauseMs > 700 && (!sp.lastPauseReNudgeAt || Date.now() - sp.lastPauseReNudgeAt > 650)) {
+            sp.lastPauseReNudgeAt = Date.now();
+            const directPort = bg.emeBridgePorts.get(`${sourceType}:${appId}`);
+            if (directPort) {
+              try {
+                directPort.postMessage({ cmd: 'PAUSE_LOCAL_MEDIA', command: 'pause', markShouldResume: false });
+              } catch (_) {}
+            }
+          }
+          return;
+        }
         if (isTabPausedEnforced()) {
           const stayStopped = getBehavior() === 'pause-only';
           sp.remotePaused = true;
@@ -2590,7 +2704,7 @@
     refreshBgAudioIndicator();
   }
 
-  function handleNowPlayingCommand(appId, command) {
+  function handleNowPlayingCommand(appId, command, extra = {}) {
     const active = getActiveNowPlayingState();
     const targetId = appId || active?.appId || '';
     if (!targetId || !command) return { ok: false };
@@ -2601,15 +2715,19 @@
     const prevSt = bg.liveMediaPlaybackState.get(targetId);
 
     const dispatchToTargetFrames = (portCmd, framePayload) => {
+      let deliveredBgPort = false;
+      let deliveredSidebarPort = false;
       ['bg', 'sidebar'].forEach((src) => {
         const p = bg.emeBridgePorts.get(`${src}:${targetId}`);
         if (p) {
           try {
             p.postMessage(portCmd);
+            if (src === 'bg') deliveredBgPort = true;
+            else deliveredSidebarPort = true;
           } catch (_) {}
         }
       });
-      if (bgEntry && bgEntry.frame && bgEntry.frame.contentWindow) {
+      if (!deliveredBgPort && bgEntry && bgEntry.frame && bgEntry.frame.contentWindow) {
         try {
           bgEntry.frame.contentWindow.postMessage(
             { target: 'pocketmail-media-frame', ...framePayload },
@@ -2622,10 +2740,92 @@
           type: 'PM_FORWARD_MEDIA_COMMAND',
           appId: targetId,
           command,
+          skipFramePost: deliveredSidebarPort,
           ...framePayload
         })
         .catch(() => {});
     };
+
+    if (command === 'pause') {
+      if (sp && !sp.disposed) {
+        sp.awaitingBgFrameHandoff = false;
+        sp.explicitUserPause = true;
+        sp.pausedByCommandAt = Date.now();
+        sp.lastPauseReNudgeAt = 0;
+        sp.remotePaused = true;
+        if (sp.videoEl && !sp.videoEl.paused) {
+          try {
+            sp.lastPauseTrigger = 'selected-app-priority-pause';
+            sp.videoEl.pause();
+          } catch (_) {}
+        }
+      }
+      const curSt = bg.bgStagingSpPlayers.get(targetId);
+      if (curSt && !curSt.disposed) {
+        bg.bgStagingSpPlayers.delete(targetId);
+        disposeSpPlayerInstance(curSt);
+      }
+      if (mse && mse.audioEl && !mse.audioEl.paused) {
+        try {
+          mse.audioEl.pause();
+        } catch (_) {}
+      }
+      bg.liveMediaPlaybackState.set(
+        targetId,
+        normalizePlaybackMeta(targetId, { isPlaying: false }, prevSt)
+      );
+      dispatchToTargetFrames(
+        { cmd: 'PAUSE_LOCAL_MEDIA', command: 'pause', markShouldResume: false },
+        { cmd: 'PAUSE_LOCAL_MEDIA', command: 'pause', markShouldResume: false }
+      );
+      refreshBgAudioIndicator(true);
+      return { ok: true, isPlaying: false };
+    }
+
+    if (command === 'seek') {
+      const rawTarget = Number(extra && extra.seekTime);
+      if (!Number.isFinite(rawTarget) || rawTarget < 0) {
+        return { ok: false, error: 'Invalid seekTime' };
+      }
+      const dur = (sp && Number(sp.trackDuration)) || Number(prevSt?.duration) || 0;
+      const seekSec = dur > 0 ? Math.min(rawTarget, Math.max(0, dur - 0.25)) : rawTarget;
+      const now = Date.now();
+      if (sp && !sp.disposed) {
+        sp.isExplicitUserScrub = true;
+        sp.explicitUserScrubUntil = now + 3500;
+        sp.targetTime = seekSec;
+        sp.pendingSeekTarget = seekSec;
+        sp.pendingSeekSetAt = now;
+        sp.pendingSeekIsUserScrub = true;
+        sp.maxObservedCt = seekSec;
+        if (sp.videoEl && isTimeInSpBuffered(sp, seekSec)) {
+          try {
+            sp.videoEl.currentTime = seekSec;
+          } catch (_) {}
+        }
+      }
+      const curSt = bg.bgStagingSpPlayers.get(targetId);
+      if (curSt && !curSt.disposed) {
+        curSt.isExplicitUserScrub = true;
+        curSt.explicitUserScrubUntil = now + 3500;
+        curSt.targetTime = seekSec;
+      }
+      if (mse && mse.audioEl && Number.isFinite(mse.audioEl.duration)) {
+        try {
+          mse.audioEl.currentTime = Math.min(seekSec, mse.audioEl.duration);
+        } catch (_) {}
+      }
+      bg.liveMediaPlaybackState.set(
+        targetId,
+        normalizePlaybackMeta(targetId, { currentTime: Math.floor(seekSec) }, prevSt)
+      );
+      dispatchToTargetFrames(
+        { cmd: 'SEEK_SP_MEDIA', currentTime: seekSec, forceHarmonySeek: true, isUserScrub: true },
+        { cmd: 'SEEK_SP_MEDIA', currentTime: seekSec, forceHarmonySeek: true, isUserScrub: true }
+      );
+      refreshBgAudioIndicator(true);
+      return { ok: true, currentTime: seekSec };
+    }
 
     if (command === 'mute_toggle') {
       let nextMuted = !(prevSt && prevSt.muted);
@@ -2695,6 +2895,7 @@
         bg.tabAudio.tabAutoPausedMseAppIds.delete(targetId);
         if (sp && !sp.disposed) {
           sp.explicitUserPause = false;
+          sp.pausedByCommandAt = 0;
           sp.remotePaused = false;
           sp.autoPausedByTab = false;
           sp.lastPlayedAt = Date.now();
@@ -2717,6 +2918,8 @@
       } else {
         if (sp && !sp.disposed) {
           sp.explicitUserPause = true;
+          sp.pausedByCommandAt = Date.now();
+          sp.lastPauseReNudgeAt = 0;
           sp.remotePaused = true;
           if (sp.videoEl && !sp.videoEl.paused) {
             try {
@@ -2746,6 +2949,8 @@
     if (command === 'prev' || command === 'next') {
       bg.state.lastSidebarPlayIntentAt = Date.now();
       if (sp && !sp.disposed) {
+        sp.explicitUserPause = false;
+        sp.pausedByCommandAt = 0;
         sp.explicitSidebarPlayIntent = true;
         sp.explicitSidebarPlayIntentAt = Date.now();
       }
@@ -3264,6 +3469,7 @@
   bg.ensureNextSpEmePlayer = ensureNextSpEmePlayer;
   bg.ensureBgSpEmePlayer = ensureBgSpEmePlayer;
   bg.ensureStagingSpEmePlayer = ensureStagingSpEmePlayer;
+  bg.abortSidebarSpTakeover = abortSidebarSpTakeover;
   bg.activateSidebarSpTakeover = activateSidebarSpTakeover;
   bg.promoteStagingSpPlayer = promoteStagingSpPlayer;
   bg.checkAndPromoteStagingSpPlayer = checkAndPromoteStagingSpPlayer;

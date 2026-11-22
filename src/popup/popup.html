@@ -775,9 +775,6 @@
 
       <!-- Mini "Now Playing" Bar (Opera GX / Arc Style) -->
       <aside id="pm-mini-now-playing" class="pm-mini-np hidden" data-now-playing="1" aria-label="Now Playing">
-        <div id="pm-np-progress-track" class="pm-np-progress-track">
-          <div id="pm-np-progress-fill" class="pm-np-progress-fill"></div>
-        </div>
         <div class="pm-np-body">
           <button type="button" id="pm-np-jump" class="pm-np-jump-btn" title="Switch to player">
             <span id="pm-np-art" class="pm-np-art"></span>
@@ -790,7 +787,29 @@
             <button type="button" id="pm-np-prev" class="pm-np-ctrl-btn" title="Previous Track" aria-label="Previous Track"></button>
             <button type="button" id="pm-np-playpause" class="pm-np-ctrl-btn pm-np-play-btn" title="Play / Pause" aria-label="Play / Pause"></button>
             <button type="button" id="pm-np-next" class="pm-np-ctrl-btn" title="Next Track" aria-label="Next Track"></button>
+            <button type="button" id="pm-np-close" class="pm-np-ctrl-btn pm-np-close-btn hidden" title="Close Now Playing Bar" aria-label="Close Now Playing Bar"></button>
           </div>
+        </div>
+        <div id="pm-np-scrubber-row" class="pm-np-scrubber-row">
+          <span id="pm-np-time-current" class="pm-np-time pm-np-time-current">0:00</span>
+          <div
+            id="pm-np-progress-track"
+            class="pm-np-progress-track"
+            role="slider"
+            tabindex="0"
+            aria-label="Seek playback position"
+            aria-valuemin="0"
+            aria-valuemax="0"
+            aria-valuenow="0"
+            data-seekable="0"
+          >
+            <div class="pm-np-progress-rail">
+              <div id="pm-np-progress-fill" class="pm-np-progress-fill"></div>
+              <div id="pm-np-progress-thumb" class="pm-np-progress-thumb"></div>
+            </div>
+            <div id="pm-np-seek-tooltip" class="pm-np-seek-tooltip hidden">0:00</div>
+          </div>
+          <span id="pm-np-time-duration" class="pm-np-time pm-np-time-duration">--:--</span>
         </div>
       </aside>
 

@@ -830,6 +830,17 @@
           }
           return Promise.resolve({ ok: true });
 
+        case 'ABORT_SIDEBAR_SP_TAKEOVER': {
+          const appId = msg.appId || 'spotify';
+          if (typeof bg.abortSidebarSpTakeover === 'function') {
+            bg.abortSidebarSpTakeover(appId);
+          }
+          return Promise.resolve({
+            ok: true,
+            nowPlaying: bg.getActiveNowPlayingState()
+          });
+        }
+
         case 'SIDEBAR_SP_TAKEOVER_BEGIN': {
           const appId = msg.appId || 'spotify';
           bg.state.lastSidebarPlayIntentAt = 0;
@@ -1092,7 +1103,9 @@
         }
 
         case 'TOGGLE_NOW_PLAYING_COMMAND': {
-          const cmdRes = bg.handleNowPlayingCommand(msg.appId, msg.command);
+          const cmdRes = bg.handleNowPlayingCommand(msg.appId, msg.command, {
+            seekTime: msg.seekTime
+          });
           return Promise.resolve({
             ...cmdRes,
             nowPlaying: bg.getActiveNowPlayingState()

@@ -10,8 +10,15 @@ export function initOptimizer(ctx) {
   let spHydratedWithoutLocalMediaSince = 0;
   let lastSpPlayBtnEl = null;
   let lastSpPlayBtnClickAt = 0;
+  let lastAutoToggleAt = 0;
+  let lastAutoToggleWantPlaying = null;
 
   function clickSpotifyToggleOnce(wantPlaying) {
+    if (ctx.state.spAutoClickInFlight) return false;
+    const now = Date.now();
+    if (lastAutoToggleWantPlaying === Boolean(wantPlaying) && now - lastAutoToggleAt < 650) {
+      return false;
+    }
     const spToggle = document.querySelector('[data-testid="control-button-playpause"]');
     if (!spToggle || spToggle.disabled) return false;
     const aria = (spToggle.getAttribute('aria-label') || '').toLowerCase();
@@ -19,6 +26,8 @@ export function initOptimizer(ctx) {
     const isPausedUi = !isPlayingUi && (aria.includes('play') || !aria || aria.length < 30);
     if (wantPlaying && !isPausedUi) return false;
     if (!wantPlaying && !isPlayingUi) return false;
+    lastAutoToggleWantPlaying = Boolean(wantPlaying);
+    lastAutoToggleAt = now;
     ctx.state.spAutoClickInFlight = true;
     try {
       spToggle.click();
@@ -26,7 +35,7 @@ export function initOptimizer(ctx) {
     } finally {
       setTimeout(() => {
         ctx.state.spAutoClickInFlight = false;
-      }, 240);
+      }, 360);
     }
   }
 

@@ -360,6 +360,12 @@
                   resumeUrl: res.resumeUrl || prevMeta.resumeUrl || ''
                 });
               }
+              if (st.activeRailAppId !== takeoverAppId) {
+                // User already switched away before takeover began — abort cleanly so background audio stays master!
+                st.pendingSidebarAudioTakeoverSet.add(takeoverAppId);
+                P.abortIncompleteSidebarAudioTakeover?.(st.activeRailAppId);
+                return;
+              }
               st.pendingSidebarAudioTakeoverSet.add(takeoverAppId);
               if (entry.loaded && (!entry.autoResumeSentAt || Date.now() - entry.autoResumeSentAt > 4000)) {
                 entry.autoResumeSentAt = Date.now();
@@ -384,8 +390,39 @@
     return entry;
   };
 
+  P.abortIncompleteSidebarAudioTakeover = function (exceptAppId = '') {
+    const st = P.state;
+    const pendingIds = Array.from(st.pendingSidebarAudioTakeoverSet);
+    pendingIds.forEach((pendingId) => {
+      if (!pendingId || pendingId === exceptAppId) return;
+      st.pendingSidebarAudioTakeoverSet.delete(pendingId);
+      st.bgMasterAudioSet.add(pendingId);
+      const staleEntry = st.mediaFramePool.get(pendingId);
+      if (staleEntry) {
+        st.mediaFramePool.delete(pendingId);
+        if (staleEntry.currentUrl && !P.isTransientAuthOrBootUrl?.(staleEntry.currentUrl)) {
+          st.hibernatedAppUrls.set(pendingId, staleEntry.currentUrl);
+        }
+        try {
+          staleEntry.frame.contentWindow?.postMessage(
+            { target: 'pocketmail-media-frame', cmd: 'PREPARE_HANDOFF_UNLOAD' },
+            '*'
+          );
+        } catch (_) {}
+        try {
+          staleEntry.frame.remove();
+          staleEntry.frame.src = 'about:blank';
+        } catch (_) {}
+      }
+      browser.runtime
+        .sendMessage({ type: 'ABORT_SIDEBAR_SP_TAKEOVER', appId: pendingId })
+        .catch(() => {});
+    });
+  };
+
   P.switchActiveMediaFrame = function (appId) {
     const st = P.state;
+    P.abortIncompleteSidebarAudioTakeover(appId);
     st.mediaFramePool.forEach((entry, id) => {
       if (id === appId) {
         entry.suppressedWhileInactive = false;
@@ -444,6 +481,7 @@
     const st = P.state;
     const mediaWorkspace = P.dom.mediaWorkspace;
     if (!mediaWorkspace) return;
+    P.abortIncompleteSidebarAudioTakeover('');
     st.mediaFramePool.forEach((entry, id) => {
       if (!P.isAppAllowedForBgAudio(id)) {
         entry.suppressedWhileInactive = true;
@@ -1351,6 +1389,7 @@
             );
           } catch (_) {}
         } else if (
+          sourceEntry.appId === st.activeRailAppId &&
           st.pendingSidebarAudioTakeoverSet.has(sourceEntry.appId) &&
           (!sourceEntry.autoResumeSentAt || Date.now() - sourceEntry.autoResumeSentAt > 4000)
         ) {
@@ -1392,6 +1431,7 @@
             );
           } catch (_) {}
         } else if (
+          sourceEntry.appId === st.activeRailAppId &&
           st.pendingSidebarAudioTakeoverSet.has(sourceEntry.appId) &&
           (!sourceEntry.autoResumeSentAt || Date.now() - sourceEntry.autoResumeSentAt > 4000)
         ) {

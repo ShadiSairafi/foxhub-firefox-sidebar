@@ -17,6 +17,7 @@ import {
   getCapturedMediaSessionHandlers,
   getTrackedMediaElements,
   isAudioMirrorActive,
+  isMediaElementAudible,
   isShouldDebounceSkip,
   startLocalMseAudioBridge,
   stopLocalMseAudioBridge
@@ -655,7 +656,7 @@ export function initLifecycleRouter(ctx, opt = null) {
         const isAudibleMediaEl =
           isAudioMirrorActive(ctx) ||
           ctx.state.bgAudioMseBridgeStarted ||
-          (!mediaEl.muted && Number(mediaEl.volume) > 0 && mediaEl.mozHasAudio !== false);
+          isMediaElementAudible(ctx, mediaEl);
         if (!mediaEl.paused && !mediaEl.ended && isAudibleMediaEl) {
           isPlaying = true;
         } else if (
@@ -1070,18 +1071,39 @@ export function initLifecycleRouter(ctx, opt = null) {
         break;
       case 'SEEK_SP_MEDIA':
         try {
+          const targetSec = Math.max(0, Number(msg.currentTime) || 0);
+          const isUserScrub = Boolean(msg.isUserScrub);
           let executed = false;
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__seekActiveSpMediaEl === 'function') {
             executed = Boolean(
               window.wrappedJSObject.__seekActiveSpMediaEl(
-                Number(msg.currentTime) || 0,
-                Boolean(msg.forceHarmonySeek)
+                targetSec,
+                Boolean(msg.forceHarmonySeek),
+                isUserScrub
               )
             );
+          } else {
+            const msHandlers = getCapturedMediaSessionHandlers();
+            if (typeof msHandlers.seekto === 'function') {
+              try {
+                msHandlers.seekto({ seekTime: targetSec, fastSeek: false });
+                executed = true;
+              } catch (_) {}
+            }
+            if (!executed) {
+              const mediaEl = getActiveMediaElement(ctx);
+              if (mediaEl && Number.isFinite(targetSec)) {
+                try {
+                  const maxT = Number.isFinite(mediaEl.duration) && mediaEl.duration > 0 ? mediaEl.duration : targetSec;
+                  mediaEl.currentTime = Math.min(targetSec, maxT);
+                  executed = true;
+                } catch (_) {}
+              }
+            }
           }
           if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmPostSpBridgeSeekAck === 'function') {
             window.wrappedJSObject.__pmPostSpBridgeSeekAck(executed);
-          } else {
+          } else if (isAudioMirrorActive(ctx)) {
             ctx.realTopWin.postMessage(
               {
                 source: 'pocketmail-media-frame',
@@ -1092,6 +1114,9 @@ export function initLifecycleRouter(ctx, opt = null) {
               },
               '*'
             );
+          }
+          if (isUserScrub) {
+            setTimeout(() => reportLivePlaybackState(), 120);
           }
         } catch (_) {}
         break;
@@ -1457,6 +1482,33 @@ export function initLifecycleRouter(ctx, opt = null) {
     }, 80);
   }
   setInterval(reportLivePlaybackState, ctx.isBgAudioFrame ? 900 : 1200);
+
+  // Immediately report audible media start / unmute in selected foreground apps (e.g. Instagram Reels)
+  if (!ctx.isBgAudioFrame && !ctx.isStandbyBgFrame && !ctx.hasHost('spotify.com')) {
+    let fastMediaReportTimer = null;
+    let fastMediaVerifyTimer = null;
+    const scheduleFastPlaybackReport = (ev) => {
+      const t = ev && ev.target;
+      if (!t || (t.tagName !== 'VIDEO' && t.tagName !== 'AUDIO')) return;
+      if (!fastMediaReportTimer) {
+        fastMediaReportTimer = setTimeout(() => {
+          fastMediaReportTimer = null;
+          reportLivePlaybackState();
+        }, 80);
+      }
+      if ((ev.type === 'play' || ev.type === 'playing' || ev.type === 'volumechange') && !t.paused && !t.muted) {
+        clearTimeout(fastMediaVerifyTimer);
+        fastMediaVerifyTimer = setTimeout(() => {
+          fastMediaVerifyTimer = null;
+          reportLivePlaybackState();
+        }, 380);
+      }
+    };
+    document.addEventListener('play', scheduleFastPlaybackReport, true);
+    document.addEventListener('playing', scheduleFastPlaybackReport, true);
+    document.addEventListener('volumechange', scheduleFastPlaybackReport, true);
+    document.addEventListener('canplay', scheduleFastPlaybackReport, true);
+  }
 
   setInterval(() => {
     try {

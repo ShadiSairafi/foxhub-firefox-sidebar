@@ -2297,7 +2297,7 @@
       'Mini "Now Playing" Bar & Left-Rail Controls',
       'mini now playing bar spotify youtube soundcloud position bottom top compact progress bar auto hide paused left rail equalizer indicator quick controls play pause mute',
       (card) => {
-        const addToggleRow = (label, sub, key) => {
+        const addToggleRow = (label, sub, key, defaultOn = true) => {
           const row = document.createElement('div');
           row.className = 'fh-row';
           const meta = document.createElement('div');
@@ -2311,14 +2311,15 @@
           sEl.textContent = sub;
           meta.appendChild(l);
           meta.appendChild(sEl);
-          const sw = makeToggleSwitch(true, (checked) => {
+          const sw = makeToggleSwitch(defaultOn, (checked) => {
             savePatch({ [key]: checked }, `${label}: ${checked ? 'ON' : 'OFF'}`);
           }, { labelledBy: l.id, settingKey: key });
           row.appendChild(meta);
           row.appendChild(sw.wrap);
           card.appendChild(row);
           sectionUpdaters.push(() => {
-            sw.input.checked = getSettings()[key] !== false;
+            const val = getSettings()[key];
+            sw.input.checked = defaultOn ? val !== false : val === true;
           });
         };
 
@@ -2367,9 +2368,9 @@
           posBtns.forEach((b) => b.classList.toggle('active', b.getAttribute('data-np-pos') === curPos));
         });
 
-        addToggleRow('Compact Strip Layout', 'Single-line ultra-slim height for narrow sidebars.', 'miniNowPlayingCompact');
-        addToggleRow('Show Track Progress Bar', 'Display elapsed track progress line along the strip.', 'miniNowPlayingShowProgress');
-        addToggleRow('Auto-Hide When Paused', 'Hide the Now Playing bar automatically when playback pauses.', 'miniNowPlayingAutoHidePaused');
+        addToggleRow('Compact Strip Layout', 'Single-line ultra-slim height for narrow sidebars.', 'miniNowPlayingCompact', false);
+        addToggleRow('Show Track Progress Bar', 'Display interactive seek bar & timestamps to skip parts of the song.', 'miniNowPlayingShowProgress', true);
+        addToggleRow('Auto-Hide When Paused', 'Hide automatically on pause instead of staying visible with an × close button.', 'miniNowPlayingAutoHidePaused', false);
         addToggleRow('Left-Rail Equalizer Indicator', 'Show animated equalizer & track tooltip on the active music app icon.', 'railPlayingIndicatorEnabled');
         addToggleRow('Left-Rail Quick Play/Pause & Mute', 'Click the equalizer badge or middle-click the rail icon to play/pause (Shift+click to mute).', 'railQuickControlsEnabled');
       },
