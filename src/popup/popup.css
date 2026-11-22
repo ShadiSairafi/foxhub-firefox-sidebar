@@ -1162,8 +1162,8 @@ html[data-sidebar="true"] .pm-resize-grip {
 :root[data-color-scheme="dark"] .pm-otp-badge:hover,
 :root[data-color-scheme="dark"] .pm-action-pill-otp:hover {
   color: #FFFFFF;
-  background: #10B981;
-  border-color: #10B981;
+  background: #047857;
+  border-color: #047857;
 }
 
 :root[data-color-scheme="dark"] .pm-account-tag {
@@ -1243,6 +1243,16 @@ html[data-sidebar="true"] .pm-resize-grip {
 
 .pm-action-pill-danger:hover:focus-visible {
   outline-color: #FFF;
+}
+
+:root[data-color-scheme="dark"] .pm-action-pill-danger:hover {
+  background: #C93B2B;
+  color: #FFFFFF;
+  border-color: #C93B2B;
+}
+
+:root[data-color-scheme="dark"] .pm-action-pill-danger:hover:focus-visible {
+  outline-color: #FFFFFF;
 }
 
 /* Empty State */

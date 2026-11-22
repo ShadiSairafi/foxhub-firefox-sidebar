@@ -437,7 +437,7 @@
         '--accent': '#E57A54',
         '--accent-hover': '#F08C68',
         '--accent-soft': 'rgba(229, 122, 84, 0.20)',
-        '--accent-contrast': '#FFFFFF',
+        '--accent-contrast': '#1E1815',
         '--border-color': 'rgba(245, 236, 228, 0.14)',
         '--border-strong': 'rgba(245, 236, 228, 0.25)',
         '--shadow-soft': '0 6px 20px rgba(10, 7, 5, 0.35)',
@@ -446,7 +446,7 @@
         '--warning': '#F4A261',
         '--danger': '#E76F51',
         '--badge-bg': '#E57A54',
-        '--badge-text': '#FFFFFF',
+        '--badge-text': '#1E1815',
         '--scrollbar-thumb': 'rgba(245, 236, 228, 0.24)'
       }
     },
@@ -509,7 +509,7 @@
         '--accent': '#FF5C39',
         '--accent-hover': '#FF7455',
         '--accent-soft': 'rgba(255, 92, 57, 0.20)',
-        '--accent-contrast': '#FFFFFF',
+        '--accent-contrast': '#09090D',
         '--border-color': 'rgba(255, 255, 255, 0.14)',
         '--border-strong': 'rgba(255, 255, 255, 0.26)',
         '--shadow-soft': '0 6px 20px rgba(0, 0, 0, 0.80)',
@@ -518,7 +518,7 @@
         '--warning': '#FBBF24',
         '--danger': '#FF6B6B',
         '--badge-bg': '#FF5C39',
-        '--badge-text': '#FFFFFF',
+        '--badge-text': '#09090D',
         '--scrollbar-thumb': 'rgba(255, 255, 255, 0.24)'
       }
     }
@@ -901,11 +901,24 @@
         bgLayer.style.backgroundSize = 'cover';
         bgLayer.style.opacity = settings.wallpaperOpacity !== undefined ? settings.wallpaperOpacity : '0.9';
       } else if (wallpaperId === 'custom' && customWallpaperData) {
-        bgLayer.style.backgroundImage = `url("${customWallpaperData}")`;
-        bgLayer.style.backgroundSize = settings.wallpaperFit || 'cover';
-        bgLayer.style.backgroundRepeat = settings.wallpaperFit === 'repeat' ? 'repeat' : 'no-repeat';
-        bgLayer.style.backgroundPosition = 'center';
-        bgLayer.style.opacity = settings.wallpaperOpacity !== undefined ? settings.wallpaperOpacity : '0.88';
+        const rawWp = String(customWallpaperData).trim();
+        const isSafeWp =
+          rawWp.length > 0 &&
+          !/[\r\n\0]/.test(rawWp) &&
+          (/^https?:\/\//i.test(rawWp) ||
+            /^data:image\/[a-z0-9.+-]+;base64,/i.test(rawWp) ||
+            /^data:image\/svg\+xml[;,]/i.test(rawWp));
+        if (isSafeWp) {
+          const escapedWp = rawWp.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          bgLayer.style.backgroundImage = `url("${escapedWp}")`;
+          bgLayer.style.backgroundSize = settings.wallpaperFit || 'cover';
+          bgLayer.style.backgroundRepeat = settings.wallpaperFit === 'repeat' ? 'repeat' : 'no-repeat';
+          bgLayer.style.backgroundPosition = 'center';
+          bgLayer.style.opacity = settings.wallpaperOpacity !== undefined ? settings.wallpaperOpacity : '0.88';
+        } else {
+          bgLayer.style.backgroundImage = 'none';
+          bgLayer.style.opacity = '0';
+        }
       } else if (wallpaperId === 'none' || !WALLPAPERS[wallpaperId] || !WALLPAPERS[wallpaperId].svg) {
         bgLayer.style.backgroundImage = 'none';
         bgLayer.style.opacity = '0';

@@ -254,7 +254,7 @@ def run_suite(
         if p not in sys.path:
             sys.path.insert(0, p)
 
-    selected_tiers = ["infra", "1", "2", "3", "4"] if tier_arg == "all" else [tier_arg]
+    selected_tiers = ["infra", "1", "2", "3", "4", "5"] if tier_arg == "all" else [tier_arg]
     started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     t_start = time.perf_counter()
 
@@ -339,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="FoxHub Unified E2E Test Runner")
     parser.add_argument(
         "--tier",
-        choices=["all", "infra", "1", "2", "3", "4"],
+        choices=["all", "infra", "1", "2", "3", "4", "5"],
         default="all",
         help="Test tier to execute (default: all)",
     )

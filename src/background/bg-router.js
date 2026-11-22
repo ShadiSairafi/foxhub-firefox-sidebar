@@ -723,7 +723,18 @@
 
         case 'SIDEBAR_NAVIGATE_APP':
           return (async () => {
-            const targetUrl = msg.url || 'https://www.instagram.com/direct/inbox/#pm-sidebar';
+            const rawTarget = msg.url || 'https://www.instagram.com/direct/inbox/#pm-sidebar';
+            const targetUrl = String(rawTarget || '').trim();
+            const extBase =
+              typeof browser !== 'undefined' && browser.runtime && typeof browser.runtime.getURL === 'function'
+                ? browser.runtime.getURL('')
+                : '';
+            const isSafeTarget =
+              (schema && typeof schema.isSafeWebUrl === 'function' && schema.isSafeWebUrl(targetUrl)) ||
+              (extBase && targetUrl.startsWith(extBase));
+            if (!isSafeTarget) {
+              return { ok: false, error: 'Invalid URL' };
+            }
             if (sender && sender.tab && bg.companionWindowIds.has(sender.tab.windowId)) {
               if (bg.companionTabIds && typeof sender.tab.id === 'number') {
                 bg.companionTabIds.add(sender.tab.id);
@@ -755,9 +766,20 @@
 
         case 'OPEN_COMPANION_WINDOW':
           return (async () => {
-            const url = msg.url || browser.runtime.getURL('src/popup/popup.html?popout=1');
+            const defaultPopUrl = browser.runtime.getURL('src/popup/popup.html?popout=1');
+            const rawUrl = msg.url ? String(msg.url).trim() : defaultPopUrl;
+            const extBase =
+              typeof browser !== 'undefined' && browser.runtime && typeof browser.runtime.getURL === 'function'
+                ? browser.runtime.getURL('')
+                : '';
+            const isSafeCompanion =
+              (schema && typeof schema.isSafeWebUrl === 'function' && schema.isSafeWebUrl(rawUrl)) ||
+              (extBase && rawUrl.startsWith(extBase));
+            if (!isSafeCompanion) {
+              return { ok: false, error: 'Invalid URL' };
+            }
             const win = await browser.windows.create({
-              url,
+              url: rawUrl,
               type: 'popup',
               width: msg.width || 480,
               height: msg.height || 820
