@@ -608,6 +608,7 @@ export function installMediaMirrorHooks(ctx, opt = null) {
   let lastSpSeekTarget = -1;
   let runMirrorSyncTick = () => {};
   let activeMirrorDesiredMuted = false;
+  let activeMirrorDesiredVolume = 1.0;
 
   ensureWebAudioKeepalive(ctx.INAUDIBLE_VOLUME);
 
@@ -878,6 +879,7 @@ export function installMediaMirrorHooks(ctx, opt = null) {
               cmd: msg.cmd,
               command: msg.command,
               muted: msg.muted,
+              volume: msg.volume,
               resumeUrl: msg.resumeUrl,
               targetSec: msg.targetSec,
               markShouldResume: Boolean(msg.markShouldResume)
@@ -1213,40 +1215,40 @@ export function installMediaMirrorHooks(ctx, opt = null) {
     if (lockedEls.has(el)) return true;
     lockedEls.add(el);
 
-    let desiredVol = typeof el.volume === 'number' && el.volume > 0.001 ? el.volume : 1.0;
-    let desiredMuted = activeMirrorDesiredMuted;
+    if (typeof el.volume === 'number' && el.volume > 0.001 && activeMirrorDesiredVolume === 1.0) {
+      activeMirrorDesiredVolume = el.volume;
+    }
     try {
       el.muted = false;
       el.volume = ctx.INAUDIBLE_VOLUME;
       const rawEl = el.wrappedJSObject;
       Object.defineProperty(rawEl, 'volume', {
-        get: exportFunction(() => desiredVol, pageWin),
+        get: exportFunction(() => activeMirrorDesiredVolume, pageWin),
         set: exportFunction((v) => {
           const num = Number(v);
           if (!Number.isNaN(num) && num >= 0 && num <= 1) {
             if (num === 0 && Date.now() - lastUserGestureAt >= 1500) {
               return;
             }
-            desiredVol = num;
-            postBridge('VOLUME', { volume: desiredVol, muted: desiredMuted });
+            activeMirrorDesiredVolume = num;
+            postBridge('VOLUME', { volume: activeMirrorDesiredVolume, muted: activeMirrorDesiredMuted });
           }
         }, pageWin),
         configurable: true
       });
       Object.defineProperty(rawEl, 'muted', {
-        get: exportFunction(() => desiredMuted, pageWin),
+        get: exportFunction(() => activeMirrorDesiredMuted, pageWin),
         set: exportFunction((m) => {
           const wantMute = Boolean(m);
           if (wantMute && Date.now() - lastUserGestureAt >= 1500) {
             return;
           }
-          desiredMuted = wantMute;
           activeMirrorDesiredMuted = wantMute;
-          postBridge('VOLUME', { volume: desiredVol, muted: desiredMuted });
+          postBridge('VOLUME', { volume: activeMirrorDesiredVolume, muted: activeMirrorDesiredMuted });
         }, pageWin),
         configurable: true
       });
-      postBridge('VOLUME', { volume: desiredVol, muted: desiredMuted });
+      postBridge('VOLUME', { volume: activeMirrorDesiredVolume, muted: activeMirrorDesiredMuted });
     } catch (_) {}
 
     el.addEventListener('volumechange', () => {
@@ -1743,6 +1745,15 @@ export function installMediaMirrorHooks(ctx, opt = null) {
   define(pageWin, '__pmDisableSpBridge', function () {});
   define(pageWin, '__pmSetMirrorMute', function (muted) {
     activeMirrorDesiredMuted = Boolean(muted);
+  });
+  define(pageWin, '__pmSetMirrorVolume', function (volume, muted) {
+    const num = Number(volume);
+    if (!Number.isNaN(num) && num >= 0 && num <= 1) {
+      activeMirrorDesiredVolume = num;
+    }
+    if (typeof muted === 'boolean') {
+      activeMirrorDesiredMuted = muted;
+    }
   });
   define(pageWin, '__pmStopYtMirror', function () {
     mirrorWasPlaying = false;

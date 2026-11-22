@@ -1104,7 +1104,9 @@
 
         case 'TOGGLE_NOW_PLAYING_COMMAND': {
           const cmdRes = bg.handleNowPlayingCommand(msg.appId, msg.command, {
-            seekTime: msg.seekTime
+            seekTime: msg.seekTime,
+            volume: msg.volume,
+            muted: msg.muted
           });
           return Promise.resolve({
             ...cmdRes,

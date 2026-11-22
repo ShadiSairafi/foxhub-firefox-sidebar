@@ -290,6 +290,10 @@
         color,
         isPlaying: st.isAutoPausedByExternalTab ? false : Boolean(raw.isPlaying),
         muted: Boolean(raw.muted),
+        volume:
+          typeof raw.volume === 'number' && Number.isFinite(raw.volume)
+            ? Math.min(1, Math.max(0, raw.volume))
+            : 1.0,
         title: raw.title || appName,
         artist: raw.artist || '',
         album: raw.album || '',
@@ -372,6 +376,10 @@
       if (command === 'seek' && Number.isFinite(Number(extra?.seekTime))) {
         payload.seekTime = Math.max(0, Number(extra.seekTime));
       }
+      if (command === 'set_volume' && Number.isFinite(Number(extra?.volume))) {
+        payload.volume = Math.min(1, Math.max(0, Number(extra.volume)));
+        if (typeof extra?.muted === 'boolean') payload.muted = extra.muted;
+      }
       const res = await browser.runtime.sendMessage(payload);
       if (res) {
         if (res.nowPlaying) {
@@ -382,12 +390,21 @@
           prev ||
           typeof res.isPlaying === 'boolean' ||
           typeof res.muted === 'boolean' ||
+          typeof res.volume === 'number' ||
           typeof res.currentTime === 'number'
         ) {
           st.framePlaybackStates.set(appId, {
             ...(prev || {}),
             isPlaying: typeof res.isPlaying === 'boolean' ? res.isPlaying : Boolean(prev?.isPlaying),
             muted: typeof res.muted === 'boolean' ? res.muted : Boolean(prev?.muted),
+            volume:
+              typeof res.volume === 'number'
+                ? res.volume
+                : payload.volume !== undefined
+                  ? payload.volume
+                  : typeof prev?.volume === 'number'
+                    ? prev.volume
+                    : 1.0,
             currentTime:
               typeof res.currentTime === 'number'
                 ? res.currentTime
@@ -505,6 +522,7 @@
             cmd: msg.cmd,
             command: msg.command,
             muted: msg.muted,
+            volume: msg.volume,
             currentTime: msg.currentTime,
             forceHarmonySeek: msg.forceHarmonySeek,
             isUserScrub: msg.isUserScrub,
@@ -516,8 +534,15 @@
     }
     const mse = st.sidebarMsePlayers.get(msg.appId);
     if (mse && mse.audioEl) {
-      if (msg.command === 'mute_toggle' && typeof msg.muted === 'boolean') {
+      if (msg.command === 'set_volume' && Number.isFinite(Number(msg.volume))) {
+        const nextVol = Math.min(1, Math.max(0, Number(msg.volume)));
+        mse.audioEl.volume = nextVol;
+        mse.audioEl.muted = typeof msg.muted === 'boolean' ? msg.muted : nextVol <= 0.001;
+      } else if (msg.command === 'mute_toggle' && typeof msg.muted === 'boolean') {
         mse.audioEl.muted = msg.muted;
+        if (!msg.muted && Number.isFinite(Number(msg.volume)) && Number(msg.volume) > 0) {
+          mse.audioEl.volume = Math.min(1, Number(msg.volume));
+        }
       } else if (msg.cmd === 'SEEK_SP_MEDIA' && Number.isFinite(Number(msg.currentTime))) {
         try { mse.audioEl.currentTime = Math.max(0, Number(msg.currentTime)); } catch (_) {}
       } else if (msg.cmd === 'PAUSE_LOCAL_MEDIA') {
@@ -932,6 +957,12 @@
           canPrev: data.canPrev !== undefined ? Boolean(data.canPrev) : (prevPb?.canPrev !== false),
           canNext: data.canNext !== undefined ? Boolean(data.canNext) : (prevPb?.canNext !== false),
           muted: data.muted !== undefined ? Boolean(data.muted) : Boolean(prevPb?.muted),
+          volume:
+            typeof data.volume === 'number' && Number.isFinite(data.volume)
+              ? Math.min(1, Math.max(0, data.volume))
+              : typeof prevPb?.volume === 'number'
+                ? prevPb.volume
+                : 1.0,
           updatedAt: Date.now()
         };
         st.framePlaybackStates.set(appId, pb);

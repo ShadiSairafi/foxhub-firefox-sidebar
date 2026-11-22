@@ -698,6 +698,15 @@ export function initLifecycleRouter(ctx, opt = null) {
 
       if (ctx.isStandbyBgFrame) return;
 
+      const reportVol =
+        mediaEl && !isAudioMirrorActive(ctx) && !ctx.state.bgAudioMseBridgeStarted && typeof mediaEl.volume === 'number'
+          ? Math.min(1, Math.max(0, Number(mediaEl.volume)))
+          : undefined;
+      const reportMuted =
+        mediaEl && !isAudioMirrorActive(ctx) && !ctx.state.bgAudioMseBridgeStarted
+          ? Boolean(mediaEl.muted)
+          : undefined;
+
       ctx.notifyParent('PM_FRAME_PLAYBACK_STATE', {
         isPlaying: Boolean(stateObj.isPlaying),
         currentTime: Number(stateObj.currentTime) || 0,
@@ -709,6 +718,8 @@ export function initLifecycleRouter(ctx, opt = null) {
         artworkUrl: stateObj.artworkUrl || '',
         canPrev: stateObj.canPrev !== false,
         canNext: stateObj.canNext !== false,
+        volume: reportVol,
+        muted: reportMuted,
         initialAutoplayPolicy: ctx.initialAutoplayPolicy,
         autoplayBlocked: Boolean(ctx.state.bgAudioAutoplayBlocked)
       });
@@ -1034,8 +1045,9 @@ export function initLifecycleRouter(ctx, opt = null) {
         break;
       }
       case 'PM_MEDIA_CONTROL': {
-        if (msg.command === 'mute_toggle') {
-          const wantMuted = Boolean(msg.muted);
+        if (msg.command === 'set_volume' && Number.isFinite(Number(msg.volume))) {
+          const nextVol = Math.min(1, Math.max(0, Number(msg.volume)));
+          const wantMuted = typeof msg.muted === 'boolean' ? msg.muted : nextVol <= 0.001;
           if (opt && typeof opt.handleCommand === 'function' && opt.handleCommand(msg, ctx, {
             getActiveMediaElement: () => getActiveMediaElement(ctx)
           })) {
@@ -1044,15 +1056,52 @@ export function initLifecycleRouter(ctx, opt = null) {
           }
           if (isAudioMirrorActive(ctx)) {
             try {
-              if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmSetMirrorMute === 'function') {
+              if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmSetMirrorVolume === 'function') {
+                window.wrappedJSObject.__pmSetMirrorVolume(nextVol, wantMuted);
+              }
+            } catch (_) {}
+          } else {
+            const el = getActiveMediaElement(ctx);
+            if (el) {
+              try {
+                el.volume = nextVol;
+                el.muted = wantMuted;
+              } catch (_) {}
+            }
+            getTrackedMediaElements().forEach((m) => {
+              try {
+                m.volume = nextVol;
+                m.muted = wantMuted;
+              } catch (_) {}
+            });
+          }
+          reportLivePlaybackState();
+        } else if (msg.command === 'mute_toggle') {
+          const wantMuted = Boolean(msg.muted);
+          const nextVol = Number.isFinite(Number(msg.volume)) ? Math.min(1, Math.max(0, Number(msg.volume))) : null;
+          if (opt && typeof opt.handleCommand === 'function' && opt.handleCommand(msg, ctx, {
+            getActiveMediaElement: () => getActiveMediaElement(ctx)
+          })) {
+            reportLivePlaybackState();
+            break;
+          }
+          if (isAudioMirrorActive(ctx)) {
+            try {
+              if (nextVol !== null && window.wrappedJSObject && typeof window.wrappedJSObject.__pmSetMirrorVolume === 'function') {
+                window.wrappedJSObject.__pmSetMirrorVolume(nextVol, wantMuted);
+              } else if (window.wrappedJSObject && typeof window.wrappedJSObject.__pmSetMirrorMute === 'function') {
                 window.wrappedJSObject.__pmSetMirrorMute(wantMuted);
               }
             } catch (_) {}
           } else {
             const el = getActiveMediaElement(ctx);
-            if (el) el.muted = wantMuted;
+            if (el) {
+              if (!wantMuted && nextVol !== null && nextVol > 0) el.volume = nextVol;
+              el.muted = wantMuted;
+            }
             getTrackedMediaElements().forEach((m) => {
               try {
+                if (!wantMuted && nextVol !== null && nextVol > 0) m.volume = nextVol;
                 m.muted = wantMuted;
               } catch (_) {}
             });

@@ -155,6 +155,12 @@
     const album = strOrPrev('album');
     const artworkUrl = strOrPrev('artworkUrl');
 
+    const volRaw = hasOwn('volume') && typeof safeRaw.volume === 'number' && Number.isFinite(safeRaw.volume)
+      ? Math.min(1, Math.max(0, safeRaw.volume))
+      : typeof safePrev.volume === 'number' && Number.isFinite(safePrev.volume)
+        ? Math.min(1, Math.max(0, safePrev.volume))
+        : 1.0;
+
     return {
       appId,
       isPlaying: Boolean(safeRaw.isPlaying !== undefined ? safeRaw.isPlaying : safePrev.isPlaying),
@@ -167,6 +173,7 @@
       canPrev: boolOrPrev('canPrev', true),
       canNext: boolOrPrev('canNext', true),
       muted: boolOrPrev('muted', false),
+      volume: Math.round(volRaw * 100) / 100,
       resumeUrl,
       handedOffAt: safeRaw.handedOffAt !== undefined ? safeRaw.handedOffAt : safePrev.handedOffAt,
       updatedAt: Date.now()
@@ -244,6 +251,14 @@
       (mse && mse.audioEl && mse.audioEl.muted) ||
       st.muted
     );
+    const liveVol =
+      sp && !sp.disposed && typeof sp.desiredVolume === 'number' && Number.isFinite(sp.desiredVolume)
+        ? sp.desiredVolume
+        : mse && mse.audioEl && typeof mse.audioEl.volume === 'number' && Number.isFinite(mse.audioEl.volume)
+          ? mse.audioEl.volume
+          : typeof st.volume === 'number' && Number.isFinite(st.volume)
+            ? st.volume
+            : 1.0;
 
     return {
       appId: targetId,
@@ -251,6 +266,7 @@
       color: (appMeta && appMeta.id === targetId ? appMeta.color : '') || '#1DB954',
       isPlaying: isActuallyPlaying,
       muted: isMuted,
+      volume: Math.round(Math.min(1, Math.max(0, liveVol)) * 100) / 100,
       title: st.title || (sp && sp.trackTitle) || (bgEntry && bgEntry.title) || appName,
       artist: st.artist || '',
       album: st.album || '',
@@ -2275,11 +2291,21 @@
       ) {
         return;
       }
-      if (typeof data.volume === 'number') target.desiredVolume = data.volume;
+      if (typeof data.volume === 'number') target.desiredVolume = Math.min(1, Math.max(0, data.volume));
       if (typeof data.muted === 'boolean') target.desiredMuted = data.muted;
       if (!target.isStaging && target.videoEl) {
         target.videoEl.muted = isTabPausedEnforced() ? true : target.desiredMuted;
         target.videoEl.volume = target.desiredVolume;
+      }
+      if (!target.isStaging) {
+        const prevVolSt = bg.liveMediaPlaybackState.get(appId);
+        if (prevVolSt) {
+          bg.liveMediaPlaybackState.set(
+            appId,
+            normalizePlaybackMeta(appId, { volume: target.desiredVolume, muted: Boolean(target.desiredMuted) }, prevVolSt)
+          );
+          refreshBgAudioIndicator();
+        }
       }
       return;
     }
@@ -2827,28 +2853,80 @@
       return { ok: true, currentTime: seekSec };
     }
 
+    if (command === 'set_volume') {
+      const rawVol = Number(extra && extra.volume);
+      if (!Number.isFinite(rawVol)) {
+        return { ok: false, error: 'Invalid volume' };
+      }
+      const nextVol = Math.round(Math.min(1, Math.max(0, rawVol)) * 100) / 100;
+      const nextMuted = typeof extra?.muted === 'boolean' ? extra.muted : nextVol <= 0.001;
+      if (sp && !sp.disposed) {
+        sp.desiredVolume = nextVol;
+        sp.desiredMuted = nextMuted;
+        if (sp.videoEl) {
+          try {
+            sp.videoEl.volume = nextVol;
+            sp.videoEl.muted = isTabPausedEnforced() ? true : nextMuted;
+          } catch (_) {}
+        }
+      }
+      const curSt = bg.bgStagingSpPlayers.get(targetId);
+      if (curSt && !curSt.disposed) {
+        curSt.desiredVolume = nextVol;
+        curSt.desiredMuted = nextMuted;
+      }
+      if (mse && mse.audioEl) {
+        try {
+          mse.audioEl.volume = nextVol;
+          mse.audioEl.muted = isTabPausedEnforced() ? true : nextMuted;
+        } catch (_) {}
+      }
+      bg.liveMediaPlaybackState.set(
+        targetId,
+        normalizePlaybackMeta(targetId, { volume: nextVol, muted: nextMuted }, prevSt)
+      );
+      dispatchToTargetFrames(
+        { cmd: 'PM_MEDIA_CONTROL', command: 'set_volume', volume: nextVol, muted: nextMuted },
+        { cmd: 'PM_MEDIA_CONTROL', command: 'set_volume', volume: nextVol, muted: nextMuted }
+      );
+      refreshBgAudioIndicator(true);
+      return { ok: true, volume: nextVol, muted: nextMuted };
+    }
+
     if (command === 'mute_toggle') {
       let nextMuted = !(prevSt && prevSt.muted);
+      let nextVol = typeof prevSt?.volume === 'number' && Number.isFinite(prevSt.volume) ? prevSt.volume : 1.0;
       if (sp && !sp.disposed) {
         nextMuted = !sp.desiredMuted;
         sp.desiredMuted = nextMuted;
+        if (!nextMuted && !(sp.desiredVolume > 0.01)) {
+          sp.desiredVolume = 0.8;
+        }
+        nextVol = typeof sp.desiredVolume === 'number' ? sp.desiredVolume : nextVol;
         if (sp.videoEl) {
+          sp.videoEl.volume = nextVol;
           sp.videoEl.muted = isTabPausedEnforced() ? true : nextMuted;
         }
       } else if (mse && mse.audioEl) {
         nextMuted = !mse.audioEl.muted;
+        if (!nextMuted && !(mse.audioEl.volume > 0.01)) {
+          mse.audioEl.volume = 0.8;
+        }
+        nextVol = mse.audioEl.volume;
         mse.audioEl.muted = isTabPausedEnforced() ? true : nextMuted;
+      } else if (!nextMuted && !(nextVol > 0.01)) {
+        nextVol = 0.8;
       }
       bg.liveMediaPlaybackState.set(
         targetId,
-        normalizePlaybackMeta(targetId, { muted: nextMuted }, prevSt)
+        normalizePlaybackMeta(targetId, { muted: nextMuted, volume: nextVol }, prevSt)
       );
       dispatchToTargetFrames(
-        { cmd: 'PM_MEDIA_CONTROL', command: 'mute_toggle', muted: nextMuted },
-        { cmd: 'PM_MEDIA_CONTROL', command: 'mute_toggle', muted: nextMuted }
+        { cmd: 'PM_MEDIA_CONTROL', command: 'mute_toggle', muted: nextMuted, volume: nextVol },
+        { cmd: 'PM_MEDIA_CONTROL', command: 'mute_toggle', muted: nextMuted, volume: nextVol }
       );
       refreshBgAudioIndicator(true);
-      return { ok: true, muted: nextMuted };
+      return { ok: true, muted: nextMuted, volume: nextVol };
     }
 
     if (command === 'play_pause') {

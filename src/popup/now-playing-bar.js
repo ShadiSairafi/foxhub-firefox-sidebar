@@ -12,6 +12,12 @@
   let lastRenderedArtKey = '';
   let isScrubbing = false;
   let scrubPreviewTime = 0;
+  let isVolScrubbing = false;
+  let lastNonZeroVolume = 1.0;
+  let lastVolDispatchAt = 0;
+  let lastUserVolAt = 0;
+  let lastUserVolValue = 1.0;
+  let lastUserVolMuted = false;
   let dismissedPausedAppId = '';
   let lastUserScrubAt = 0;
   let lastUserScrubTargetSec = 0;
@@ -61,8 +67,73 @@
     } else if (type === 'close') {
       svg.appendChild(el('line', { x1: 18, y1: 6, x2: 6, y2: 18 }));
       svg.appendChild(el('line', { x1: 6, y1: 6, x2: 18, y2: 18 }));
+    } else if (type === 'vol-muted') {
+      svg.appendChild(el('polygon', { points: '11 5 6 9 2 9 2 15 6 15 11 19 11 5', fill: 'currentColor', stroke: 'none' }));
+      svg.appendChild(el('line', { x1: 22, y1: 9, x2: 16, y2: 15 }));
+      svg.appendChild(el('line', { x1: 16, y1: 9, x2: 22, y2: 15 }));
+    } else if (type === 'vol-low') {
+      svg.appendChild(el('polygon', { points: '11 5 6 9 2 9 2 15 6 15 11 19 11 5', fill: 'currentColor', stroke: 'none' }));
+      svg.appendChild(el('path', { d: 'M15.54 8.46a5 5 0 0 1 0 7.07' }));
+    } else if (type === 'vol-high') {
+      svg.appendChild(el('polygon', { points: '11 5 6 9 2 9 2 15 6 15 11 19 11 5', fill: 'currentColor', stroke: 'none' }));
+      svg.appendChild(el('path', { d: 'M15.54 8.46a5 5 0 0 1 0 7.07' }));
+      svg.appendChild(el('path', { d: 'M19.07 4.93a10 10 0 0 1 0 14.14' }));
     }
     return svg;
+  }
+
+  function setVisualVolume(vol, muted) {
+    const safeVol = Math.min(1, Math.max(0, Number.isFinite(Number(vol)) ? Number(vol) : 1.0));
+    const isMuted = Boolean(muted || safeVol <= 0.001);
+    if (!isMuted && safeVol > 0.02) {
+      lastNonZeroVolume = safeVol;
+    }
+    const displayPct = isMuted ? 0 : Math.round(safeVol * 100);
+    const volBtn = document.getElementById('pm-np-vol-btn');
+    const sliderEl = document.getElementById('pm-np-vol-slider');
+    const fillEl = document.getElementById('pm-np-vol-fill');
+    const thumbEl = document.getElementById('pm-np-vol-thumb');
+    if (fillEl) fillEl.style.width = `${displayPct}%`;
+    if (thumbEl) thumbEl.style.left = `${displayPct}%`;
+    if (sliderEl) {
+      sliderEl.setAttribute('aria-valuenow', String(displayPct));
+      sliderEl.setAttribute('aria-valuetext', isMuted ? 'Muted (0%)' : `${displayPct}%`);
+    }
+    if (volBtn) {
+      const iconKind = isMuted ? 'vol-muted' : displayPct <= 50 ? 'vol-low' : 'vol-high';
+      if (volBtn.dataset.iconState !== iconKind) {
+        volBtn.dataset.iconState = iconKind;
+        volBtn.replaceChildren(createNpSvg(iconKind, 13));
+      }
+      volBtn.classList.toggle('is-muted', isMuted);
+      volBtn.title = isMuted ? 'Unmute (0%)' : `Mute (${displayPct}%) · Scroll wheel to adjust`;
+      volBtn.setAttribute('aria-pressed', isMuted ? 'true' : 'false');
+    }
+  }
+
+  function commitVolume(vol, mutedOverride = null, forceSend = false) {
+    const np = lastNpSnapshot || P.getResolvedNowPlayingState?.();
+    if (!np || !np.appId) return;
+    const clampedVol = Math.round(Math.min(1, Math.max(0, Number(vol) || 0)) * 100) / 100;
+    const wantMuted = typeof mutedOverride === 'boolean' ? mutedOverride : clampedVol <= 0.001;
+    if (!wantMuted && clampedVol > 0.02) {
+      lastNonZeroVolume = clampedVol;
+    }
+    lastUserVolAt = Date.now();
+    lastUserVolValue = clampedVol;
+    lastUserVolMuted = wantMuted;
+    if (lastNpSnapshot) {
+      lastNpSnapshot = {
+        ...lastNpSnapshot,
+        volume: clampedVol,
+        muted: wantMuted
+      };
+    }
+    setVisualVolume(clampedVol, wantMuted);
+    const now = Date.now();
+    if (!forceSend && now - lastVolDispatchAt < 45) return;
+    lastVolDispatchAt = now;
+    P.sendNowPlayingCommand?.(np.appId, 'set_volume', { volume: clampedVol, muted: wantMuted });
   }
 
   function stopProgressTicker() {
@@ -83,13 +154,9 @@
     const trackEl = document.getElementById('pm-np-progress-track');
     const fillEl = document.getElementById('pm-np-progress-fill');
     const thumbEl = document.getElementById('pm-np-progress-thumb');
-    const curTimeEl = document.getElementById('pm-np-time-current');
-    const durTimeEl = document.getElementById('pm-np-time-duration');
     const clampedPct = Math.min(100, Math.max(0, Number(pct) || 0));
     if (fillEl) fillEl.style.width = `${clampedPct.toFixed(1)}%`;
     if (thumbEl) thumbEl.style.left = `${clampedPct.toFixed(1)}%`;
-    if (curTimeEl) curTimeEl.textContent = formatClockSec(currentSec);
-    if (durTimeEl) durTimeEl.textContent = durationSec > 0 ? formatClockSec(durationSec) : '--:--';
     if (trackEl) {
       trackEl.setAttribute('data-seekable', durationSec > 0 ? '1' : '0');
       trackEl.setAttribute('aria-valuemax', String(Math.max(0, Math.floor(durationSec))));
@@ -208,12 +275,21 @@
     barEl.style.setProperty('--np-accent', np.color || '#1DB954');
     barEl.classList.remove('hidden');
 
-    const scrubberRowEl = document.getElementById('pm-np-scrubber-row');
     const trackEl = document.getElementById('pm-np-progress-track');
     const showProgress = s.miniNowPlayingShowProgress !== false;
-    scrubberRowEl?.classList.toggle('hidden', !showProgress);
     trackEl?.classList.toggle('hidden', !showProgress);
     if (showProgress) updateProgressBarOnly();
+
+    if (!isVolScrubbing) {
+      const useOptimisticVol = lastUserVolAt > 0 && Date.now() - lastUserVolAt < 1000;
+      const effVol = useOptimisticVol
+        ? lastUserVolValue
+        : typeof np.volume === 'number' && Number.isFinite(np.volume)
+          ? np.volume
+          : 1.0;
+      const effMuted = useOptimisticVol ? lastUserVolMuted : Boolean(np.muted);
+      setVisualVolume(effVol, effMuted);
+    }
 
     const artEl = document.getElementById('pm-np-art');
     const artKey = `${np.appId}|${np.artworkUrl || ''}`;
@@ -409,6 +485,123 @@
           e.preventDefault();
           e.stopPropagation();
           commitSeekToSeconds(nextSec);
+        }
+      });
+    }
+
+    // Volume button (mute/unmute), draggable slider, keyboard & scroll-wheel controls
+    const volWrapEl = document.getElementById('pm-np-vol-wrap');
+    const volBtnEl = document.getElementById('pm-np-vol-btn');
+    const volSliderEl = document.getElementById('pm-np-vol-slider');
+    const volTooltipEl = document.getElementById('pm-np-vol-tooltip');
+
+    volBtnEl?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const np = lastNpSnapshot || P.getResolvedNowPlayingState?.();
+      if (!np || !np.appId) return;
+      const curMuted = Boolean(np.muted || (typeof np.volume === 'number' && np.volume <= 0.001));
+      if (curMuted) {
+        const restoreVol = lastNonZeroVolume > 0.05 ? lastNonZeroVolume : 0.8;
+        commitVolume(restoreVol, false, true);
+      } else {
+        const curVol = typeof np.volume === 'number' && np.volume > 0.02 ? np.volume : lastNonZeroVolume;
+        if (curVol > 0.02) lastNonZeroVolume = curVol;
+        commitVolume(0, true, true);
+      }
+    });
+
+    volWrapEl?.addEventListener(
+      'wheel',
+      (e) => {
+        const np = lastNpSnapshot || P.getResolvedNowPlayingState?.();
+        if (!np || !np.appId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const curVol = np.muted ? 0 : typeof np.volume === 'number' ? np.volume : 1.0;
+        const delta = e.deltaY < 0 ? 0.05 : -0.05;
+        const nextVol = Math.min(1, Math.max(0, Math.round((curVol + delta) * 20) / 20));
+        commitVolume(nextVol, nextVol <= 0.001, true);
+      },
+      { passive: false }
+    );
+
+    if (volSliderEl) {
+      const computeVolAtClientX = (clientX) => {
+        const rect = volSliderEl.getBoundingClientRect();
+        if (!rect || rect.width <= 0) return null;
+        return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      };
+
+      const showVolTooltip = (ratio) => {
+        if (!volTooltipEl || ratio === null) return;
+        volTooltipEl.textContent = `${Math.round(ratio * 100)}%`;
+        volTooltipEl.classList.remove('hidden');
+      };
+
+      const hideVolTooltip = () => {
+        if (!isVolScrubbing && volTooltipEl) {
+          volTooltipEl.classList.add('hidden');
+        }
+      };
+
+      volSliderEl.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 && e.pointerType === 'mouse') return;
+        const ratio = computeVolAtClientX(e.clientX);
+        if (ratio === null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        isVolScrubbing = true;
+        volSliderEl.classList.add('is-scrubbing');
+        volWrapEl?.classList.add('is-vol-open');
+        try {
+          volSliderEl.setPointerCapture(e.pointerId);
+        } catch (_) {}
+        showVolTooltip(ratio);
+        commitVolume(ratio, ratio <= 0.001, false);
+      });
+
+      volSliderEl.addEventListener('pointermove', (e) => {
+        const ratio = computeVolAtClientX(e.clientX);
+        if (ratio === null) return;
+        showVolTooltip(ratio);
+        if (isVolScrubbing) {
+          e.preventDefault();
+          commitVolume(ratio, ratio <= 0.001, false);
+        }
+      });
+
+      const finishVolScrub = (e, shouldCommit) => {
+        if (!isVolScrubbing) return;
+        const ratio = e && typeof e.clientX === 'number' ? computeVolAtClientX(e.clientX) : lastUserVolValue;
+        isVolScrubbing = false;
+        volSliderEl.classList.remove('is-scrubbing');
+        volWrapEl?.classList.remove('is-vol-open');
+        try {
+          if (e && e.pointerId !== undefined) volSliderEl.releasePointerCapture(e.pointerId);
+        } catch (_) {}
+        if (volTooltipEl) volTooltipEl.classList.add('hidden');
+        if (shouldCommit && ratio !== null) {
+          commitVolume(ratio, ratio <= 0.001, true);
+        }
+      };
+
+      volSliderEl.addEventListener('pointerup', (e) => finishVolScrub(e, true));
+      volSliderEl.addEventListener('pointercancel', (e) => finishVolScrub(e, false));
+      volSliderEl.addEventListener('pointerleave', hideVolTooltip);
+
+      volSliderEl.addEventListener('keydown', (e) => {
+        const np = lastNpSnapshot || P.getResolvedNowPlayingState?.();
+        if (!np || !np.appId) return;
+        const curVol = np.muted ? 0 : typeof np.volume === 'number' ? np.volume : 1.0;
+        let nextVol = null;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') nextVol = Math.min(1, curVol + 0.05);
+        else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') nextVol = Math.max(0, curVol - 0.05);
+        else if (e.key === 'Home') nextVol = 0;
+        else if (e.key === 'End') nextVol = 1;
+        if (nextVol !== null) {
+          e.preventDefault();
+          e.stopPropagation();
+          commitVolume(nextVol, nextVol <= 0.001, true);
         }
       });
     }

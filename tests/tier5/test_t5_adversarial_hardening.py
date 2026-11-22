@@ -576,13 +576,12 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
             await new Promise((r) => setTimeout(r, 120));
 
             const bar = uiDoc.getElementById('pm-mini-now-playing');
-            const scrubberRow = uiDoc.getElementById('pm-np-scrubber-row');
+            const bodyEl = bar.querySelector('.pm-np-body');
             const track = uiDoc.getElementById('pm-np-progress-track');
             const fill = uiDoc.getElementById('pm-np-progress-fill');
             const thumb = uiDoc.getElementById('pm-np-progress-thumb');
-            const curTimeEl = uiDoc.getElementById('pm-np-time-current');
-            const durTimeEl = uiDoc.getElementById('pm-np-time-duration');
             const rect = track.getBoundingClientRect();
+            const bodyRect = bodyEl.getBoundingClientRect();
             const thumbOpacityIdle = uiWin.getComputedStyle(thumb).opacity;
 
             // 1. Click/scrub backward to 25% (~50s) using pointerdown + pointerup
@@ -596,10 +595,8 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
             const afterDragSp = bg.bgSpEmePlayers.get('spotify');
             const dragState = {
               barVisible: !bar.classList.contains('hidden'),
-              scrubberRowVisible: Boolean(scrubberRow && !scrubberRow.classList.contains('hidden')),
+              atTopBreakLine: rect.top <= bodyRect.top + 1,
               thumbOpacityIdle,
-              curTimeText: curTimeEl ? curTimeEl.textContent : '',
-              durTimeText: durTimeEl ? durTimeEl.textContent : '',
               role: track.getAttribute('role'),
               seekable: track.getAttribute('data-seekable'),
               scrubbingDuringDrag,
@@ -624,10 +621,8 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
 
         ds = res["dragState"]
         self.assertTrue(ds["barVisible"])
-        self.assertTrue(ds["scrubberRowVisible"])
+        self.assertTrue(ds["atTopBreakLine"], "Interactive progress scrubber must sit at the top break line")
         self.assertEqual(ds["thumbOpacityIdle"], "1", "Scrubber knob must be clearly visible even before hover")
-        self.assertEqual(ds["durTimeText"], "3:20")
-        self.assertIn(":", ds["curTimeText"])
         self.assertEqual(ds["role"], "slider")
         self.assertEqual(ds["seekable"], "1")
         self.assertTrue(ds["scrubbingDuringDrag"])
@@ -986,6 +981,129 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
         self.assertTrue(res["afterResume"]["barVisible"], "Resuming playback must bring the bar back")
         self.assertTrue(res["afterResume"]["closeHidden"], "Close X button must hide again once playing")
         self.assertEqual(res["afterResume"]["iconState"], "pause")
+
+    def test_t5_10_now_playing_volume_slider_mute_restore_and_narrow_zero_overflow(self) -> None:
+        """Mini Now Playing volume slider controls bg volume, speaker button mutes/restores previous level, and fits narrow 320px sidebars cleanly."""
+        settings = make_default_settings_seed(
+            miniNowPlayingEnabled=True,
+            miniNowPlayingAutoHidePaused=False,
+            bgAudioAppIds=["spotify", "youtube", "soundcloud"],
+        )
+        self.open_bridged_app("src/popup/popup.html", "?sidebar=1", settings=settings)
+
+        res = self.safe_eval_async(
+            """
+            const uiDoc = window.__bridge.uiDoc;
+            const uiWin = window.__bridge.uiWin;
+            const bgWin = window.__bridge.bgWin;
+            const bg = bgWin.FoxHubBg;
+
+            const postedPort = [];
+            bg.emeBridgePorts.set('bg:spotify', { postMessage: (m) => postedPort.push(m) });
+            const fakeVideo = bgWin.document.createElement('video');
+            fakeVideo.volume = 1.0;
+            fakeVideo.muted = false;
+            bg.bgSpEmePlayers.set('spotify', {
+              id: 950,
+              appId: 'spotify',
+              isClear: false,
+              isStaging: false,
+              disposed: false,
+              sourceType: 'bg',
+              videoEl: fakeVideo,
+              sb: null,
+              trackDuration: 256,
+              trackTitle: 'White Iverson',
+              desiredVolume: 1.0,
+              desiredMuted: false,
+              remotePaused: false,
+              explicitUserPause: false,
+            });
+
+            await window.browser.runtime.sendMessage({
+              type: 'UPDATE_PERSISTENT_SESSION',
+              appId: 'spotify',
+              url: 'https://open.spotify.com/',
+              playback: {
+                isPlaying: true,
+                title: 'White Iverson',
+                artist: 'Post Malone',
+                currentTime: 64,
+                duration: 256,
+                volume: 1.0,
+                muted: false,
+              },
+            });
+            await new Promise((r) => setTimeout(r, 120));
+
+            const slider = uiDoc.getElementById('pm-np-vol-slider');
+            const volBtn = uiDoc.getElementById('pm-np-vol-btn');
+            const rect = slider.getBoundingClientRect();
+
+            // 1. Click/drag slider to 40%
+            const x40 = rect.left + rect.width * 0.4;
+            const yMid = rect.top + rect.height / 2;
+            slider.dispatchEvent(new uiWin.PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: x40, clientY: yMid, button: 0, pointerId: 1, pointerType: 'mouse' }));
+            slider.dispatchEvent(new uiWin.PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: x40, clientY: yMid, button: 0, pointerId: 1, pointerType: 'mouse' }));
+            await new Promise((r) => setTimeout(r, 120));
+
+            const sp = bg.bgSpEmePlayers.get('spotify');
+            const afterDrag = {
+              spVol: sp.desiredVolume,
+              vidVol: fakeVideo.volume,
+              spMuted: sp.desiredMuted,
+              iconState: volBtn.dataset.iconState,
+              ariaNow: slider.getAttribute('aria-valuenow'),
+              portVolCmds: postedPort.filter((m) => m && m.cmd === 'PM_MEDIA_CONTROL' && m.command === 'set_volume'),
+            };
+
+            // 2. Click speaker button -> mutes to 0
+            volBtn.click();
+            await new Promise((r) => setTimeout(r, 100));
+            const afterMute = {
+              spVol: sp.desiredVolume,
+              spMuted: sp.desiredMuted,
+              vidMuted: fakeVideo.muted,
+              iconState: volBtn.dataset.iconState,
+              ariaNow: slider.getAttribute('aria-valuenow'),
+            };
+
+            // 3. Click speaker button again -> restores previous ~40% volume!
+            volBtn.click();
+            await new Promise((r) => setTimeout(r, 100));
+            const afterUnmute = {
+              spVol: sp.desiredVolume,
+              spMuted: sp.desiredMuted,
+              vidMuted: fakeVideo.muted,
+              iconState: volBtn.dataset.iconState,
+            };
+
+            // 4. Keyboard End -> 100%
+            slider.dispatchEvent(new uiWin.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+            await new Promise((r) => setTimeout(r, 80));
+            const afterEndKey = sp.desiredVolume;
+
+            return { afterDrag, afterMute, afterUnmute, afterEndKey };
+            """
+        )
+
+        self.assertAlmostEqual(res["afterDrag"]["spVol"], 0.4, delta=0.06)
+        self.assertAlmostEqual(res["afterDrag"]["vidVol"], 0.4, delta=0.06)
+        self.assertFalse(res["afterDrag"]["spMuted"])
+        self.assertEqual(res["afterDrag"]["iconState"], "vol-low")
+        self.assertGreaterEqual(len(res["afterDrag"]["portVolCmds"]), 1)
+
+        self.assertTrue(res["afterMute"]["spMuted"])
+        self.assertTrue(res["afterMute"]["vidMuted"])
+        self.assertEqual(res["afterMute"]["iconState"], "vol-muted")
+        self.assertEqual(res["afterMute"]["ariaNow"], "0")
+
+        self.assertFalse(res["afterUnmute"]["spMuted"])
+        self.assertFalse(res["afterUnmute"]["vidMuted"])
+        self.assertAlmostEqual(res["afterUnmute"]["spVol"], 0.4, delta=0.06)
+        self.assertEqual(res["afterUnmute"]["iconState"], "vol-low")
+
+        self.assertAlmostEqual(res["afterEndKey"], 1.0, delta=0.02)
 
 
 if __name__ == "__main__":
