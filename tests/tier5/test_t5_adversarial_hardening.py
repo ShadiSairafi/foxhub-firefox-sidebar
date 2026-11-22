@@ -3025,6 +3025,64 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
         self.assertTrue(res["backoffRes"]["hasLicense"], "EME must recover with hasLicense === true after 300ms 503 outage")
         self.assertGreaterEqual(res["backoffRes"]["sessUpdates"], 1)
 
+    def test_t5_18_instagram_profile_reel_modal_scrubber_anchors_bottom_immediately(self) -> None:
+        """Instagram profile reel modal scrubber must anchor to the full ._aatk modal container bottom immediately, never at a pre-metadata 150px video height across the top half."""
+        fixture_html = (
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<style>"
+            "body{margin:0;background:#111;height:800px;overflow:hidden;}"
+            "div[role='dialog']{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}"
+            "article{width:340px;background:#000;}"
+            "._aatk{position:relative;width:340px;height:560px;background:#000;overflow:hidden;}"
+            "._aatk img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}"
+            "._aatk video{display:block;width:340px;height:150px;}"
+            "</style></head><body>"
+            "<div role='dialog'><article><div class='_aatk'>"
+            "<img alt='poster'/>"
+            "<video id='reel-v'></video>"
+            "</div></article></div>"
+            "<script type='module'>"
+            "import { initScrubberLoadbar } from '/src/content/core/scrubber-loadbar.js';"
+            "const ctx = { initialSyncAccent: '#ff3366', isBgAudioFrame: false, isStandbyBgFrame: false, hasHost: (h) => h === 'instagram.com' };"
+            "initScrubberLoadbar(ctx);"
+            "window.dispatchEvent(new Event('resize'));"
+            "await new Promise((r) => setTimeout(r, 460));"
+            "const bar = document.getElementById('pm-universal-reel-scrubber');"
+            "const box = document.querySelector('._aatk').getBoundingClientRect();"
+            "const vid = document.getElementById('reel-v').getBoundingClientRect();"
+            "const barRect = bar ? bar.getBoundingClientRect() : null;"
+            "window.__igModalScrubberRes = {"
+            "  visible: Boolean(bar && bar.style.display === 'flex'),"
+            "  boxBottom: Math.round(box.bottom),"
+            "  vidBottom: Math.round(vid.bottom),"
+            "  barTop: barRect ? Math.round(barRect.top) : -1,"
+            "  barBottom: barRect ? Math.round(barRect.bottom) : -1"
+            "};"
+            "</script></body></html>"
+        )
+        url = self.server.register_fixture("t5_18_ig_modal_scrubber.html", fixture_html)
+        self.fx.reset_to_blank()
+        self.fx.set_viewport(420, 800)
+        self.fx.navigate(url)
+        res = self.fx.eval_async_js(
+            """
+            const deadline = Date.now() + 4000;
+            while (Date.now() < deadline && !window.__igModalScrubberRes) {
+              await new Promise((r) => setTimeout(r, 25));
+            }
+            return window.__igModalScrubberRes;
+            """
+        )
+        self.assertIsNotNone(res)
+        self.assertTrue(res["visible"], "Scrubber must render immediately for Instagram profile reel dialog")
+        self.assertLess(res["vidBottom"], res["boxBottom"] - 300, "Pre-metadata video height should be < half the modal box")
+        self.assertAlmostEqual(
+            res["barBottom"],
+            res["boxBottom"],
+            delta=3,
+            msg=f"Scrubber must anchor to modal box bottom ({res['boxBottom']}), NOT pre-metadata video bottom ({res['vidBottom']})"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

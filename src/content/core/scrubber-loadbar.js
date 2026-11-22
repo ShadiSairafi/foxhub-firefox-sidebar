@@ -113,6 +113,46 @@ export function initScrubberLoadbar(ctx) {
     return `${m}:${r < 10 ? '0' : ''}${r}`;
   };
 
+  const resolveInstagramModalRect = (v, rawRect) => {
+    if (!isIg || !v) return rawRect;
+    const dialog = v.closest('div[role="dialog"]');
+    if (!dialog) return rawRect;
+    const modalBox =
+      v.closest('div[role="dialog"] article ._aatk, div[role="dialog"] ._aatk') ||
+      v.closest('div[role="dialog"] div[data-instancekey]');
+    if (modalBox) {
+      const boxRect = modalBox.getBoundingClientRect();
+      if (boxRect.width >= 60 && boxRect.height >= 140) {
+        return {
+          left: boxRect.left,
+          right: boxRect.right,
+          width: boxRect.width,
+          top: boxRect.top,
+          bottom: Math.max(rawRect.bottom, boxRect.bottom),
+          height: Math.max(rawRect.height, boxRect.height)
+        };
+      }
+    }
+    if (!v.videoHeight || v.readyState < 1) {
+      const holder = v.parentElement && v.parentElement.parentElement ? v.parentElement.parentElement : v.parentElement;
+      const posterImg = holder ? holder.querySelector('img') : null;
+      if (posterImg) {
+        const imgRect = posterImg.getBoundingClientRect();
+        if (imgRect.width >= 60 && imgRect.height > rawRect.height + 40) {
+          return {
+            left: imgRect.left,
+            right: imgRect.right,
+            width: imgRect.width,
+            top: imgRect.top,
+            bottom: Math.max(rawRect.bottom, imgRect.bottom),
+            height: Math.max(rawRect.height, imgRect.height)
+          };
+        }
+      }
+    }
+    return rawRect;
+  };
+
   const findActiveReelVideo = () => {
     if (!isScrollingVideoRoute()) return null;
     const dialogVids = isIg ? Array.from(document.querySelectorAll('div[role="dialog"] video')) : [];
@@ -126,6 +166,9 @@ export function initScrubberLoadbar(ctx) {
       let rect = v.getBoundingClientRect();
       if ((rect.width < 60 || rect.height < 60) && v.parentElement) {
         rect = v.parentElement.getBoundingClientRect();
+      }
+      if (isIg) {
+        rect = resolveInstagramModalRect(v, rect);
       }
       if (rect.width < 80 || rect.height < 140) continue;
       if (rect.bottom < 48 || rect.top > vh - 56) continue;
@@ -609,6 +652,10 @@ export function initScrubberLoadbar(ctx) {
           }
           videoResizeObs.observe(v);
           if (v.parentElement) videoResizeObs.observe(v.parentElement);
+          if (isIg) {
+            const igBox = v.closest('div[role="dialog"] article ._aatk, div[role="dialog"] ._aatk');
+            if (igBox) videoResizeObs.observe(igBox);
+          }
         } catch (_) {}
       }
     }
@@ -617,7 +664,9 @@ export function initScrubberLoadbar(ctx) {
     if ((rect.width < 60 || rect.height < 60) && v.parentElement) {
       rect = v.parentElement.getBoundingClientRect();
     }
-    if (isYt) {
+    if (isIg) {
+      rect = resolveInstagramModalRect(v, rect);
+    } else if (isYt) {
       const ytCard = v.closest('#player-container, #shorts-player, ytd-reel-video-renderer[is-active], .html5-video-player');
       if (ytCard) {
         const cardRect = ytCard.getBoundingClientRect();

@@ -194,6 +194,10 @@ div[role="dialog"] article ._aatk img {
   object-fit: contain !important;
   max-height: calc(100vh - 215px) !important;
 }
+div[role="dialog"] article ._aatk video {
+  width: 100% !important;
+  height: 100% !important;
+}
 /* Comments-Open Mode (toggled when user clicks the Comment icon) */
 div[role="dialog"] article[data-pm-comments-open="true"] ._aatk,
 div[role="dialog"] article[data-pm-comments-open="true"] ._aatk > div,
