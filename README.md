@@ -5,12 +5,12 @@
 </p>
 
 <p align="center">
-  <a href="https://addons.mozilla.org/firefox/addon/foxhub-firefox-sidebar/"><strong>Install on Firefox Add-ons (AMO)</strong></a> · <strong>v2.7.9</strong> · <strong>100% Local &amp; Open Source (MPL-2.0)</strong>
+  <a href="https://addons.mozilla.org/firefox/addon/foxhub-firefox-sidebar/"><strong>Install on Firefox Add-ons (AMO)</strong></a> · <strong>v2.8.0</strong> · <strong>100% Local &amp; Open Source (MPL-2.0)</strong>
 </p>
 
-**FoxHub** is a local multi-account Gmail inbox and Opera GX-style social & media sidebar web panel built for Firefox.
+**FoxHub** is a local multi-account Gmail inbox and Opera GX-style social, AI & media sidebar web panel built for Firefox.
 
-Instead of keeping ten pinned tabs open just to grab login verification codes, reply to messages, change a song, or scroll Reels while working, FoxHub keeps your inbox and web apps tucked cleanly in the Firefox sidebar, toolbar popup, or a standalone popout window right next to your active tab.
+Instead of keeping ten pinned tabs open just to grab login verification codes, reply to messages, change a song, ask an AI assistant, or scroll Reels while working, FoxHub keeps your inbox and web apps tucked cleanly in the Firefox sidebar, toolbar popup, or a standalone popout window right next to your active tab.
 
 ![FoxHub Demo](demo/foxhub-demo.gif)
 
@@ -19,36 +19,44 @@ Instead of keeping ten pinned tabs open just to grab login verification codes, r
 ## Why I Built This
 
 1. **Copying email verification codes in the same window:** Whenever a site asks for a 6-digit login code, FoxHub detects the code inside incoming emails and gives you a one-click **Copy** button right in the sidebar. You grab the code and paste it into the page next to it without switching tabs.
-2. **Social & media apps that actually fit a sidebar:** Most desktop websites break or overflow horizontally when squeezed into a 380px sidebar. FoxHub automatically adapts the layouts for **Instagram** (Feed, Reels, DMs), **WhatsApp**, **Discord**, **Telegram**, **Spotify**, **YouTube**, **TikTok**, **X**, **Messenger**, and **Reddit**, and adds a clean bottom navigation bar for jumping between sections.
-3. **Opera GX-style smart music control & instant switching:** Active apps stay alive in the background while you switch between them or close the sidebar, and FoxHub automatically pauses Spotify or YouTube when a video plays in another Firefox tab—then resumes your music right where it left off.
+2. **Social, AI & media apps that actually fit a sidebar:** Most desktop websites break or overflow horizontally when squeezed into a 380px sidebar. FoxHub automatically adapts layouts for **21 built-in web apps** (**Instagram**, **WhatsApp**, **Discord**, **Telegram**, **Spotify**, **YouTube**, **TikTok**, **X**, **Messenger**, **Reddit**, **Twitch**, **ChatGPT**, **Google Gemini**, **Claude**, **Perplexity**, **SoundCloud**, **Apple Music**, **Bluesky**, **Notion**, **Google Calendar**, and **Google Keep**) plus unlimited custom apps with per-app Mobile/Desktop User-Agent overrides and a clean bottom navigation bar.
+3. **Opera GX-style Mini Now Playing Bar, smart audio priority & instant switching:** Control background **Spotify**, **YouTube**, **SoundCloud**, and **Apple Music** from anywhere with a compact Mini Now Playing bar (movable seek scrubber, interactive volume slider & mute/restore, prev/play/next, and paused close button). Foreground apps (like Instagram Reels) automatically take priority over background music, and external Firefox tabs auto-pause & auto-resume music right where it left off.
 4. **Security & privacy first (100% local, zero telemetry):** There are no external developer servers, no analytics scripts, and no data collection. Everything runs locally on your machine between Firefox and the sites you already use.
 
 ## Main Features
 
 * **Multi-Account Gmail Inbox & 1-Click 2FA Code Copier:** Automatically picks up all signed-in Firefox Google accounts (`u/0`, `u/1`, `u/2`, etc.) in a unified inbox or per-account tabs. Extracts 4–8 digit codes, alphanumeric codes, `G-XXXXXX` codes, and hyphenated activation/Steam keys (`XXXXX-XXXXX-XXXXX`) from the newest thread message, and supports quick reply, archive, delete, star, snooze, and Text-to-Speech.
-* **Opera GX-Style Sidebar Web Panels:** 10 built-in sidebar-adapted web apps (**Instagram**, **WhatsApp**, **Discord**, **Telegram**, **Spotify**, **YouTube**, **TikTok**, **X**, **Messenger**, **Reddit**) plus unlimited custom URLs, available in Firefox's left sidebar, toolbar popup, or standalone popout window.
-* **Smart External Tab Audio Auto-Pause & Auto-Resume:** Automatically pauses FoxHub music (**Spotify** / **YouTube**) when a video or audio plays in another Firefox tab and resumes when that tab pauses or closes—configurable per preference (*Pause & Resume*, *Pause Only*, or *Play Together*) while ignoring muted autoplay feed videos.
-* **Seamless Background Audio Keep-Alive:** Keeps **Spotify** (with gapless playlist transitions and queue panel support) and **YouTube** playing seamlessly in the background even when FoxHub is closed or Firefox is minimized, working independently even when Persistent Memory is turned off.
-* **Customizable Keyboard Shortcuts:** Configure global shortcuts (`Alt+Shift+F` Popup, `Alt+Shift+M` Sidebar, `Alt+Shift+W` Popout) plus per-app shortcuts for any built-in or custom sidebar app straight from FoxHub Settings.
-* **Quick Mute & Timed Mute Popover:** Mute **All**, **Email-only**, or **Sites-only** notifications indefinitely or on a preset timer (`15m`, `1h`, `8h`, `24h`) with live countdown badge.
-* **True Night OLED (`#000`), Zero-Flash Social Dark Mode & 8 Warm Themes:** Choose from 8 warm palettes (*Warm Linen, Botanical Sage, Sakura Morning, Coastal Breeze, Golden Hour, Lavender Cloud, Gallery Paper, Cozy Espresso*), **True Night OLED** (`#000000`) with instant `0ms` dark-mode sync for social apps, illustrated wallpapers, or custom background uploads, plus a customizable Reels/TikTok/Shorts video scrubber bar.
+* **21 Built-In Sidebar Web Apps + Custom Pro Apps:** Core social & media panels plus **AI & Productivity** presets (**ChatGPT**, **Google Gemini**, **Claude**, **Perplexity**, **SoundCloud**, **Apple Music**, **Bluesky**, **Notion**, **Google Calendar**, **Google Keep**, **Twitch**), custom app creation/editing (custom icon upload, accent color, Mobile/Desktop User-Agent mode), and right-click **"Open in FoxHub Sidebar"** context menus for pages and links.
+* **Mini "Now Playing" Bar & Persistent Volume Control:** Compact Opera GX/Arc-style bottom player bar with an interactive top-edge seek scrubber knob, inline volume slider & mute/restore button (synced and persisted per app across reopen/refresh/track changes), skip/play controls, and a paused-only close (`×`) button.
+* **Quick Switcher (`Ctrl+K` / `Cmd+K`):** Spotlight-style command palette to jump instantly to any pinned or unpinned app, open an ad-hoc URL in the sidebar, or toggle Night Mode and Quick Mute from the keyboard.
+* **Smart Audio Priority & External Tab Auto-Pause:** Automatically prioritizes your selected foreground sidebar app (e.g., Instagram Reels pauses background Spotify, never vice versa) and auto-pauses/auto-resumes sidebar music when an external Firefox tab plays audio (*Pause & Resume*, *Pause Only*, or *Play Together*).
+* **Seamless Background Audio Keep-Alive:** Keeps **Spotify** (with gapless playlist transitions, forward-only timestamp continuity, and multi-minute anti-throttling), **YouTube**, and **SoundCloud** playing smoothly even when FoxHub is closed or Firefox is minimized.
+* **Redesigned Searchable Settings, Backup/Restore & `userChrome.css` Helper:** Live-searchable categorized Settings (unified between sidebar drawer and full Options page), JSON export/import backup & restore, optional Firefox `userChrome.css` presets, customizable global & per-app keyboard shortcuts, Quick Mute timers (`15m`, `1h`, `8h`, `24h`), and **True Night OLED (`#000`)** + 8 warm themes & custom wallpapers.
 
-## What's New in v2.7.9
+## What's New in v2.8.0
 
-* **Rock-Solid Spotify Background Audio & Track Transitions (`v2.7.6`–`v2.7.9`):**
-  * Eliminated the brief pause-then-resume cycle (~5s after pausing a video in an external browser tab on Windows) via extended WASAPI/Cubeb audio drain verification and dual-stage Harmony resume checks.
-  * Fixed intermittent first-minute spurious pauses, Connect self-transfer glitches, and ~2-minute stalls across gapless song boundaries (`MSE` / Widevine `bgNextSpPlayers` continuity).
-  * Added Web Audio keepalive & 1-minute alarm wake pulse so playback stays smooth when Firefox is minimized or backgrounded, plus full decoupling so **Background Audio** keeps playing even if **Persistent Memory** is disabled.
-* **Smarter External Tab Auto-Pause & Auto-Resume (`v2.6.6`–`v2.7.9`):**
-  * Automatically pauses FoxHub music on external browser tab audio with 3 selectable modes (**Pause & Resume**, **Pause Only**, **Play Together**) while ignoring silent muted `<video>` autoplay elements on social feeds.
-* **Quick Mute & Timed Mute Controls (`v2.7.5`–`v2.7.6`):**
-  * 3-option Quick Mute popover (**All**, **Email**, **Sites**) with preset timed mute durations (`15m`, `1h`, `8h`, `24h`) and instant clear.
-* **Customizable Global & Per-App Keyboard Shortcuts (`v2.7.5`–`v2.7.6`):**
-  * Bind custom shortcuts for Popup, Sidebar, Popout, and individual built-in or custom sidebar apps directly from FoxHub Settings, with shortcut priority over Persistent Memory.
-* **True Night OLED (`#000`), Zero-Flash Social Dark Mode & Custom Video Loadbar (`v2.6.8`–`v2.7.4`):**
-  * Instant `0ms` `document_start` dark theme sync for social panels (zero white flash), compact SVG context menus, Reddit full-width post layout, customizable video progress scrubber styling, and a **Live Audio Diagnostics Log** viewer (`View Live Log`, `Clear`, & JSON export) inside **Settings → Media & Sidebar**.
-* **v2.6.5 Highlights Included:**
-  * Sidebar right-click context menu to unpin/remove apps in 1 click, multi-message Gmail 2FA thread code extractor (always picks the newest code and skips `#` gamer tags), interactive Reels/TikTok/Shorts video scrubber, Instagram lightbox comment/audio toggles, and Discord compact rail support.
+* **Mini "Now Playing" Bar with Movable Scrubber & Volume Control:**
+  * Added an interactive bottom Mini Now Playing bar with a movable top-edge seek scrubber knob, inline volume slider + mute/unmute (restoring your previous volume level), previous/play/next buttons, and a paused-only close (`×`) button so the bar stays handy when paused.
+  * Per-app volume and mute settings are persisted across sidebar close/reopen, iframe refresh, and song transitions—never resetting to 100%.
+* **Major Spotify & Background Audio Stability Overhaul:**
+  * Eliminated silence/muting across sidebar close/reopen handoffs, fast reopens, and song boundaries while keeping Spotify playing continuously even in Connect remote-control mode.
+  * Enforced forward-only timestamp alignment on reopen/refresh (no more 1–2s backward rewinds) and switched inactive media frames to off-screen anti-throttling with exponential-backoff EME license retries to prevent ~2-minute background stalls.
+  * Added strict **selected-app audio priority** so watching an Instagram Reel or foreground video pauses background Spotify cleanly without ever pausing the active Reel.
+* **21 Built-In Apps, Quick Switcher (`Ctrl+K`) & Context Menu Launcher:**
+  * Added **Google Gemini**, **ChatGPT**, **Claude**, **Perplexity**, **SoundCloud**, **Apple Music**, **Bluesky**, **Notion**, **Google Calendar**, **Google Keep**, and **Twitch** presets, plus pro custom-app editing with per-app Mobile/Desktop User-Agent mode.
+  * Added `Ctrl+K` Quick Switcher (works even inside embedded frames) and right-click **"Open in FoxHub Sidebar"** for links and pages.
+* **Instagram & Spotify UI Polish:**
+  * Fixed Instagram profile reel modal scrubber positioning so it anchors cleanly to the bottom of the reel immediately (zero top-half flash), hid false `"Video Has No Sound"` pills on audible reels, and contained Spotify's carousel navigation arrows cleanly inside narrow sidebars.
+* **Modular Architecture, Settings Overhaul & Backup/Restore:**
+  * Split background, popup, and content scripts into clean, fast modular ES modules (`tab-media-watcher.js` under 8 KB on regular tabs), unified Settings with live search, added JSON Backup/Restore & `userChrome.css` presets, and verified against **261 automated E2E tests** and strict AMO MV2 linting.
+
+<details>
+<summary>Previous Releases (v2.7.9 &amp; earlier)</summary>
+
+* **v2.7.6–v2.7.9:** Extended WASAPI/Cubeb audio drain verification, gapless Spotify `bgNextSpPlayers` transitions, Web Audio keepalive + 1-minute alarm wake pulse, Quick Mute timed popover, customizable global & per-app keyboard shortcuts, True Night OLED (`#000`) zero-flash dark mode, and Live Audio Diagnostics Log viewer.
+* **v2.6.5:** Sidebar right-click context menu, multi-message Gmail 2FA thread code extractor, interactive Reels/TikTok/Shorts video scrubber, Instagram lightbox comment/audio toggles, and Discord compact rail support.
+
+</details>
 
 ## Privacy & Security
 
@@ -75,12 +83,14 @@ Install or inspect [`foxhub-firefox.xpi`](foxhub-firefox.xpi) / [`foxhub-firefox
 ```text
 ├── icons/                  # Transparent warm FoxHub icons (16px to 128px + SVG)
 ├── src/
-│   ├── background/         # Local Gmail polling, MSE/Widevine audio engine, tab-audio & shortcut handlers
-│   ├── popup/              # Sidebar, toolbar popup & popout UI, multi-frame deck & live diagnostics log
-│   ├── options/            # Settings, shortcuts manager & Theme Studio
-│   └── shared/             # Themes, sound synthesizer, Gmail client, sidebar layout & media bridge optimizer
+│   ├── background/         # Modular Gmail sync, MSE/Widevine audio engine, tab-audio watcher, shortcuts & framing
+│   ├── content/            # Lightweight <8 KB tab watcher + lazy-loaded per-app optimizers, CSS & media mirror
+│   ├── popup/              # Sidebar, popup & popout UI, Mini Now Playing bar, Quick Switcher & Theme Studio
+│   ├── options/            # Full-page Settings synchronized with the sidebar drawer
+│   └── shared/             # Schema, shared Settings UI, themes, Gmail client & 21-app catalog
+├── tests/                  # 5-tier automated Firefox E2E, adversarial hardening & AMO lint suite
 ├── demo/                   # Demo video (.mp4) and preview (.gif)
-├── manifest.json           # Firefox WebExtension manifest
+├── manifest.json           # Firefox WebExtension manifest (v2.8.0)
 ├── PRIVACY.md              # Local-first privacy policy
 └── LICENSE                 # Mozilla Public License 2.0 (MPL-2.0)
 ```
