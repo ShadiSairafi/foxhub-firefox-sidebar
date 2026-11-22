@@ -1105,6 +1105,374 @@ class TestTier5AdversarialHardening(FoxHubE2EBase):
 
         self.assertAlmostEqual(res["afterEndKey"], 1.0, delta=0.02)
 
+    def test_t5_11_spotify_close_reopen_never_mutes_or_drops_next_track(self):
+        """
+        Regression test for close -> reopen silence ("muted itself" while Spotify
+        shows "Playing on Web Player (Firefox)" on next track / mid-handoff):
+          1. While sidebar takeover is pending (handoffSource='sidebar') and sidebar
+             is still in Connect remote-control mode, bg's next-track MSE_INIT,
+             GEN_REQ, and MSE_CHUNK MUST NOT be dropped; bg transitions cleanly
+             from Track 1 to Track 2 unmuted at full volume.
+          2. Spurious VOLUME { muted: true, volume: 0 } from hidden bg iframe MUST
+             NOT mute an audible player.
+          3. Closing the sidebar while bgAudioPool still holds a connected bg iframe
+             MUST clear stale sidebar handoff state (abortSidebarSpTakeover) and keep
+             bg playing unmuted.
+          4. Fast close -> reopen MUST dispose a mismatched-sourceType staging player
+             and MUST NOT drop bg chunks whose msId is lower than the old sidebar msId.
+          5. Natural track advance when activeSp has ended MUST NOT be blocked by
+             block-mismatched-staging-promote.
+          6. __pmEnsureSpotifyLocalTakeover(true) falls back to PUT /v1/me/player
+             when connect-state/v1/connect/transfer fails.
+        """
+        settings = make_default_settings_seed(
+            keepAudioPlayingWhenClosed=True,
+            bgAudioAppIds=["spotify", "youtube", "soundcloud"],
+        )
+        self.open_bridged_app("src/popup/popup.html", "?sidebar=1", settings=settings)
+        res = self.safe_eval_async(
+            """
+            const bgWin = window.__bridge.bgWin;
+            const bg = bgWin.FoxHubBg;
+            const makeFakeVideo = (ct = 250, ended = false) => ({
+              paused: false,
+              ended,
+              muted: false,
+              volume: 1.0,
+              playbackRate: 1.0,
+              readyState: 4,
+              currentTime: ct,
+              play() { this.paused = false; return Promise.resolve(); },
+              pause() { this.paused = true; },
+              removeAttribute() {},
+              load() {},
+              remove() {},
+              addEventListener() {},
+              removeEventListener() {}
+            });
+
+            // === Part 1: Track transition on bg during pending sidebar takeover ===
+            const bgFrame = bgWin.document.createElement('iframe');
+            bgFrame.name = 'pm-bg-audio-spotify';
+            bgWin.document.body.appendChild(bgFrame);
+            bg.bgAudioPool.set('spotify', { frame: bgFrame, url: 'https://open.spotify.com/', title: 'White Iverson' });
+
+            const vid1 = makeFakeVideo(254, false);
+            bg.bgSpEmePlayers.set('spotify', {
+              id: 501,
+              appId: 'spotify',
+              msId: 100,
+              originSource: 'bg',
+              sourceType: 'bg',
+              disposed: false,
+              isStaging: false,
+              isNextPreload: false,
+              hasLicense: true,
+              trackTitle: 'White Iverson',
+              trackDuration: 256,
+              desiredVolume: 1.0,
+              desiredMuted: false,
+              remotePaused: false,
+              explicitUserPause: false,
+              awaitingBgFrameHandoff: false,
+              handoffSource: 'bg',
+              handoffStartedAt: 0,
+              videoEl: vid1,
+              sb: { buffered: { length: 1, start: () => 0, end: () => 256 } },
+              queue: [],
+              pendingGenReqs: [],
+              processedInitDataKeys: new Set()
+            });
+
+            // Reopen sidebar -> SIDEBAR_SP_TAKEOVER_BEGIN sets handoffSource='sidebar'
+            const takeoverRes = await window.browser.runtime.sendMessage({
+              type: 'SIDEBAR_SP_TAKEOVER_BEGIN',
+              appId: 'spotify'
+            });
+
+            // While sidebar stays silent in Connect remote-control mode, Track 1 advances
+            // to Track 2 ("Till I Collapse", msId=101) on bg!
+            bgWin.__pmHandleSpEmeBridge('spotify', {
+              bridgeType: 'MSE_INIT',
+              mime: 'audio/mp4; codecs="mp4a.40.2"',
+              msId: 101
+            }, 'bg');
+            const initData = new bgWin.Uint8Array([1, 2, 3, 4]).buffer;
+            bgWin.__pmHandleSpEmeBridge('spotify', {
+              bridgeType: 'GEN_REQ',
+              initDataType: 'cenc',
+              initData
+            }, 'bg');
+            const initChunk = new bgWin.Uint8Array([9, 8, 7, 6]).buffer;
+            bgWin.__pmHandleSpEmeBridge('spotify', {
+              bridgeType: 'MSE_CHUNK',
+              mime: 'audio/mp4; codecs="mp4a.40.2"',
+              msId: 101,
+              chunk: initChunk,
+              timestampOffset: 0
+            }, 'bg');
+
+            const nxBeforePromote = bg.bgNextSpPlayers.get('spotify');
+            const nxCaptured = {
+              exists: Boolean(nxBeforePromote && !nxBeforePromote.disposed),
+              msId: nxBeforePromote ? nxBeforePromote.msId : 0,
+              queueLen: nxBeforePromote ? nxBeforePromote.queue.length : 0,
+              genReqsLen: nxBeforePromote ? nxBeforePromote.pendingGenReqs.length : 0
+            };
+
+            // Track 2 begins playing on bg (SYNC_TIME msId=101)
+            if (nxBeforePromote) {
+              nxBeforePromote.hasLicense = true;
+              nxBeforePromote.videoEl = makeFakeVideo(0, false);
+              nxBeforePromote.videoEl.muted = true;
+              nxBeforePromote.videoEl.volume = 0;
+              nxBeforePromote.sb = { buffered: { length: 1, start: () => 0, end: () => 30 } };
+            }
+            bgWin.__pmHandleSpEmeBridge('spotify', {
+              bridgeType: 'SYNC_TIME',
+              msId: 101,
+              paused: false,
+              currentTime: 7,
+              duration: 297,
+              trackTitle: 'Till I Collapse',
+              artist: 'Eminem, Nate Dogg'
+            }, 'bg');
+
+            const spAfterNext = bg.bgSpEmePlayers.get('spotify');
+            const part1 = {
+              takeoverResume: Boolean(takeoverRes && takeoverRes.resume),
+              nxCaptured,
+              activeMsId: spAfterNext ? spAfterNext.msId : 0,
+              activeTitle: spAfterNext ? spAfterNext.trackTitle : '',
+              muted: spAfterNext && spAfterNext.videoEl ? spAfterNext.videoEl.muted : true,
+              volume: spAfterNext && spAfterNext.videoEl ? spAfterNext.videoEl.volume : 0,
+              desiredMuted: spAfterNext ? spAfterNext.desiredMuted : true,
+              desiredVolume: spAfterNext ? spAfterNext.desiredVolume : 0,
+              stillAwaitingSidebar: Boolean(spAfterNext && spAfterNext.awaitingBgFrameHandoff && spAfterNext.handoffSource === 'sidebar')
+            };
+
+            // === Part 2: Spurious hidden-bg VOLUME { muted: true, volume: 0 } must be ignored ===
+            bgWin.__pmHandleSpEmeBridge('spotify', {
+              bridgeType: 'VOLUME',
+              volume: 0,
+              muted: true
+            }, 'bg');
+            const part2 = {
+              muted: spAfterNext.videoEl.muted,
+              volume: spAfterNext.videoEl.volume,
+              desiredMuted: spAfterNext.desiredMuted,
+              desiredVolume: spAfterNext.desiredVolume
+            };
+
+            // === Part 3: Re-closing sidebar while bg frame is still connected clears stale sidebar handoff ===
+            bg.startBackgroundAudioKeepAlive('spotify', 'https://open.spotify.com/', 'Till I Collapse');
+            const spAfterReclose = bg.bgSpEmePlayers.get('spotify');
+            const part3 = {
+              hasStaging: bg.bgStagingSpPlayers.has('spotify'),
+              awaiting: Boolean(spAfterReclose && spAfterReclose.awaitingBgFrameHandoff),
+              handoffSource: spAfterReclose ? spAfterReclose.handoffSource : '',
+              muted: spAfterReclose && spAfterReclose.videoEl ? spAfterReclose.videoEl.muted : true,
+              volume: spAfterReclose && spAfterReclose.videoEl ? spAfterReclose.videoEl.volume : 0
+            };
+
+            // === Part 4: Fast close -> reopen: mismatched staging sourceType disposed + lower bg msId accepted ===
+            const warmVid = makeFakeVideo(90, false);
+            bg.bgSpEmePlayers.set('spotify', {
+              id: 502,
+              appId: 'spotify',
+              msId: 500,
+              originSource: 'sidebar',
+              sourceType: 'bg',
+              disposed: false,
+              isStaging: false,
+              isNextPreload: false,
+              hasLicense: true,
+              trackTitle: 'White Iverson',
+              trackDuration: 256,
+              desiredVolume: 0.85,
+              desiredMuted: false,
+              remotePaused: false,
+              explicitUserPause: false,
+              awaitingBgFrameHandoff: true,
+              handoffSource: 'sidebar',
+              handoffStartedAt: Date.now(),
+              videoEl: warmVid,
+              sb: { buffered: { length: 1, start: () => 80, end: () => 110 } },
+              queue: [],
+              pendingGenReqs: [],
+              processedInitDataKeys: new Set()
+            });
+            bg.ensureStagingSpEmePlayer('spotify', 'audio/mp4; codecs="mp4a.40.2"', 0, 'bg');
+            const oldBgSt = bg.bgStagingSpPlayers.get('spotify');
+            bg.ensureStagingSpEmePlayer('spotify', 'audio/mp4; codecs="mp4a.40.2"', 0, 'sidebar');
+            const newSbSt = bg.bgStagingSpPlayers.get('spotify');
+
+            // Fresh bg iframe boots with msId=1 (< old sidebar msId=500)
+            bgWin.__pmHandleSpEmeBridge('spotify', {
+              bridgeType: 'MSE_CHUNK',
+              mime: 'audio/mp4; codecs="mp4a.40.2"',
+              msId: 1,
+              chunk: new bgWin.Uint8Array([4, 5, 6, 7]).buffer,
+              timestampOffset: 0
+            }, 'bg');
+            const bgFreshNx = bg.bgNextSpPlayers.get('spotify');
+            const part4 = {
+              oldBgStDisposed: Boolean(oldBgSt && oldBgSt.disposed),
+              newSbStOrigin: newSbSt ? newSbSt.originSource : '',
+              bgLowerMsIdAccepted: Boolean(bgFreshNx && !bgFreshNx.disposed && bgFreshNx.msId === 1 && bgFreshNx.queue.length >= 1)
+            };
+
+            // === Part 5: Ended activeSp MUST allow ready next-track stagingSp promotion ===
+            const endedVid = makeFakeVideo(256, true);
+            endedVid.paused = true;
+            bg.bgNextSpPlayers.delete('spotify');
+            bg.bgSpEmePlayers.set('spotify', {
+              id: 503,
+              appId: 'spotify',
+              msId: 200,
+              originSource: 'bg',
+              sourceType: 'bg',
+              disposed: false,
+              isStaging: false,
+              isNextPreload: false,
+              hasLicense: true,
+              trackTitle: 'White Iverson',
+              trackDuration: 256,
+              desiredVolume: 0.9,
+              desiredMuted: false,
+              remotePaused: false,
+              explicitUserPause: false,
+              awaitingBgFrameHandoff: true,
+              handoffSource: 'sidebar',
+              handoffStartedAt: Date.now(),
+              videoEl: endedVid,
+              sb: { buffered: { length: 1, start: () => 230, end: () => 256 } },
+              queue: [],
+              pendingGenReqs: [],
+              processedInitDataKeys: new Set()
+            });
+            bg.bgStagingSpPlayers.set('spotify', {
+              id: 504,
+              appId: 'spotify',
+              msId: 201,
+              originSource: 'sidebar',
+              sourceType: 'sidebar',
+              disposed: false,
+              isStaging: true,
+              isNextPreload: false,
+              hasLicense: true,
+              licensedAt: Date.now(),
+              trackTitle: 'Till I Collapse',
+              trackDuration: 297,
+              desiredVolume: 1.0,
+              desiredMuted: false,
+              explicitSidebarPlayIntent: false,
+              videoEl: makeFakeVideo(0, false),
+              sb: { buffered: { length: 1, start: () => 0, end: () => 18 } },
+              queue: [],
+              pendingGenReqs: [],
+              processedInitDataKeys: new Set()
+            });
+            bg.checkAndPromoteStagingSpPlayer('spotify');
+            const spAfterEndedPromote = bg.bgSpEmePlayers.get('spotify');
+            const part5 = {
+              promotedTitle: spAfterEndedPromote ? spAfterEndedPromote.trackTitle : '',
+              promotedSource: spAfterEndedPromote ? spAfterEndedPromote.sourceType : '',
+              muted: spAfterEndedPromote && spAfterEndedPromote.videoEl ? spAfterEndedPromote.videoEl.muted : true,
+              volume: spAfterEndedPromote && spAfterEndedPromote.videoEl ? spAfterEndedPromote.videoEl.volume : 0
+            };
+
+            return { part1, part2, part3, part4, part5 };
+            """
+        )
+
+        self.assertTrue(res["part1"]["takeoverResume"])
+        self.assertTrue(res["part1"]["nxCaptured"]["exists"], "bg next-track MSE_INIT must NOT be dropped during pending sidebar takeover")
+        self.assertEqual(res["part1"]["nxCaptured"]["msId"], 101)
+        self.assertGreaterEqual(res["part1"]["nxCaptured"]["queueLen"], 1, "bg next-track MSE_CHUNK init segment must NOT be dropped")
+        self.assertGreaterEqual(res["part1"]["nxCaptured"]["genReqsLen"], 1, "bg next-track GEN_REQ must NOT be dropped")
+        self.assertEqual(res["part1"]["activeMsId"], 101)
+        self.assertEqual(res["part1"]["activeTitle"], "Till I Collapse")
+        self.assertFalse(res["part1"]["muted"], "Promoted bg next track must be unmuted")
+        self.assertAlmostEqual(res["part1"]["volume"], 1.0, delta=0.01)
+        self.assertTrue(res["part1"]["stillAwaitingSidebar"], "Pending sidebar handoff must remain ready to promote")
+
+        self.assertFalse(res["part2"]["muted"], "Spurious hidden-bg mute must be ignored")
+        self.assertAlmostEqual(res["part2"]["volume"], 1.0, delta=0.01)
+
+        self.assertFalse(res["part3"]["hasStaging"], "Re-closing sidebar must dispose stale sidebar staging player")
+        self.assertFalse(res["part3"]["awaiting"], "Re-closing sidebar must clear stale awaitingBgFrameHandoff")
+        self.assertEqual(res["part3"]["handoffSource"], "bg")
+        self.assertFalse(res["part3"]["muted"])
+        self.assertAlmostEqual(res["part3"]["volume"], 1.0, delta=0.01)
+
+        self.assertTrue(res["part4"]["oldBgStDisposed"], "Switching staging sourceType must dispose old staging instance")
+        self.assertEqual(res["part4"]["newSbStOrigin"], "sidebar")
+        self.assertTrue(res["part4"]["bgLowerMsIdAccepted"], "Fresh bg iframe with lower msId must NOT be dropped by old sidebar msId")
+
+        self.assertEqual(res["part5"]["promotedTitle"], "Till I Collapse")
+        self.assertEqual(res["part5"]["promotedSource"], "sidebar")
+        self.assertFalse(res["part5"]["muted"])
+        self.assertAlmostEqual(res["part5"]["volume"], 0.9, delta=0.01)
+
+        # === Part 6: Verify media-mirror Connect Web API fallback (PUT /v1/me/player) ===
+        fallback_html = (
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<script src='/__test__/mock_seed.js'></script>"
+            "<script src='/__test__/webext_mock.js'></script>"
+            "<script>"
+            "window.__fetchCalls = [];"
+            "window.fetch = function(url, opts) {"
+            "  window.__fetchCalls.push({ url: String(url), method: (opts && opts.method) || 'GET', body: opts && opts.body });"
+            "  if (String(url).includes('/connect-state/v1/connect/transfer/')) {"
+            "    return Promise.resolve({ ok: false, status: 404, clone: () => ({ json: () => Promise.resolve({}) }) });"
+            "  }"
+            "  return Promise.resolve({ ok: true, status: 204, clone: () => ({ json: () => Promise.resolve({ active_device_id: 'bg_dev_999' }) }) });"
+            "};"
+            "window.wrappedJSObject = window;"
+            "window.exportFunction = function(fn, target, opts) {"
+            "  if (opts && opts.defineAs && target) target[opts.defineAs] = fn;"
+            "  return fn;"
+            "};"
+            "window.cloneInto = function(obj) { return obj; };"
+            "</script></head><body>"
+            "<script type='module'>"
+            "import { initFrameContext } from '/src/content/core/frame-context.js';"
+            "import { installMediaMirrorHooks } from '/src/content/core/media-mirror.js';"
+            "window.localStorage.setItem('_spharmony_device_id', 'sidebar_dev_777');"
+            "const ctx = initFrameContext({ cleanWindowName: 'pm-media-frame-spotify', isFoxHubMediaFrame: true, isFoxHubContext: true, isBgAudioFrame: false, isStandbyBgFrame: false });"
+            "ctx.host = 'open.spotify.com';"
+            "ctx.hasHost = (s) => s === 'spotify.com';"
+            "ctx.isMirrorAudioHost = true;"
+            "installMediaMirrorHooks(ctx, null);"
+            "await window.fetch('https://spclient.wg.spotify.com/connect-state/v1/devices/hobs_sidebar_dev_777', { headers: { authorization: 'Bearer tok_test_123' } });"
+            "await new Promise((r) => setTimeout(r, 30));"
+            "window.__takeoverResult = window.__pmEnsureSpotifyLocalTakeover(true);"
+            "await new Promise((r) => setTimeout(r, 60));"
+            "window.__fallbackDone = true;"
+            "</script></body></html>"
+        )
+        fb_url = self.server.register_fixture("t5_11_sp_connect_fallback.html", fallback_html)
+        self.fx.reset_to_blank()
+        self.fx.navigate(fb_url)
+        fb_res = self.fx.eval_async_js(
+            """
+            const deadline = Date.now() + 4000;
+            while (Date.now() < deadline && !window.__fallbackDone) {
+              await new Promise((r) => setTimeout(r, 25));
+            }
+            return { result: window.__takeoverResult, calls: window.__fetchCalls };
+            """
+        )
+        self.assertEqual(fb_res["result"], "transferred")
+        transfer_calls = [c for c in fb_res["calls"] if "/connect-state/v1/connect/transfer/" in c["url"]]
+        web_api_calls = [c for c in fb_res["calls"] if "api.spotify.com/v1/me/player" in c["url"]]
+        self.assertGreaterEqual(len(transfer_calls), 1, "Must try spclient.wg.spotify.com connect-state transfer first")
+        self.assertTrue(transfer_calls[0]["url"].startswith("https://spclient.wg.spotify.com/"))
+        self.assertGreaterEqual(len(web_api_calls), 1, "Must fall back to PUT https://api.spotify.com/v1/me/player on 404")
+        self.assertEqual(web_api_calls[0]["method"], "PUT")
+        self.assertIn("sidebar_dev_777", str(web_api_calls[0]["body"]))
+
 
 if __name__ == "__main__":
     unittest.main()

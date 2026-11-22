@@ -1225,6 +1225,7 @@ export function installMediaMirrorHooks(ctx, opt = null) {
       Object.defineProperty(rawEl, 'volume', {
         get: exportFunction(() => activeMirrorDesiredVolume, pageWin),
         set: exportFunction((v) => {
+          if (isFrameUnloading) return;
           const num = Number(v);
           if (!Number.isNaN(num) && num >= 0 && num <= 1) {
             if (num === 0 && Date.now() - lastUserGestureAt >= 1500) {
@@ -1239,6 +1240,7 @@ export function installMediaMirrorHooks(ctx, opt = null) {
       Object.defineProperty(rawEl, 'muted', {
         get: exportFunction(() => activeMirrorDesiredMuted, pageWin),
         set: exportFunction((m) => {
+          if (isFrameUnloading) return;
           const wantMute = Boolean(m);
           if (wantMute && Date.now() - lastUserGestureAt >= 1500) {
             return;
@@ -1521,15 +1523,21 @@ export function installMediaMirrorHooks(ctx, opt = null) {
             }
           }
           postBridge('LIC_AUTH', { url, headers: hdrs });
-        } else if (url.includes('spclient.spotify.com') || url.includes('api-partner.spotify.com')) {
+        } else if (
+          /spclient[^/]*\.spotify\.com/i.test(url) ||
+          url.includes('api-partner.spotify.com') ||
+          url.includes('api.spotify.com')
+        ) {
           const lowerHdrs = extractFetchHeaders(input, init);
           if (lowerHdrs.authorization) spConnectState.headers.authorization = lowerHdrs.authorization;
           if (lowerHdrs['client-token']) spConnectState.headers['client-token'] = lowerHdrs['client-token'];
-          const originMatch = url.match(/^(https:\/\/[^/]*spclient\.spotify\.com)\//i);
+          const originMatch = url.match(/^(https:\/\/[^/]*spclient[^/]*\.spotify\.com)\//i);
           if (originMatch) spConnectState.origin = originMatch[1];
           const trackDevMatch = url.match(/\/track-playback\/v1\/devices\/([^/?#]+)/i);
           if (trackDevMatch && trackDevMatch[1]) spConnectState.deviceId = decodeURIComponent(trackDevMatch[1]);
-          const devMatch = url.match(/^(https:\/\/[^/]*spclient\.spotify\.com)\/connect-state\/v1\/devices\/hobs_([^/?#]+)/i);
+          const devMatch = url.match(
+            /^(https:\/\/[^/]*spclient[^/]*\.spotify\.com)\/connect-state\/v1\/devices\/(?:hobs_)?([^/?#]+)/i
+          );
           if (devMatch) {
             spConnectState.origin = devMatch[1];
             hobsPrefix = devMatch[2];
@@ -1539,13 +1547,17 @@ export function installMediaMirrorHooks(ctx, opt = null) {
         }
       } catch (_) {}
       const fetchPromise = origFetch.call(pageWin, input, init);
-      if (url && url.includes('/connect-state/v1/devices/hobs_')) {
+      if (url && (url.includes('/connect-state/v1/') || url.includes('api.spotify.com/v1/me/player'))) {
         try {
           Promise.resolve(fetchPromise)
             .then((resp) => (resp && resp.ok && typeof resp.clone === 'function' ? resp.clone().json() : null))
             .then((json) => {
               if (!json || typeof json !== 'object') return;
-              if (typeof json.active_device_id === 'string') spConnectState.activeDeviceId = json.active_device_id;
+              if (typeof json.active_device_id === 'string' && json.active_device_id) {
+                spConnectState.activeDeviceId = json.active_device_id;
+              } else if (json.device && typeof json.device.id === 'string' && json.device.id) {
+                spConnectState.activeDeviceId = json.device.id;
+              }
               if (hobsPrefix && json.devices && typeof json.devices === 'object') {
                 const matchedFullId = Object.keys(json.devices).find(
                   (k) => k === hobsPrefix || k.startsWith(hobsPrefix)
@@ -1901,19 +1913,46 @@ export function installMediaMirrorHooks(ctx, opt = null) {
         } else {
           spConnectState.lastSelfTransferAt = now;
         }
-        const transferUrl = `${spConnectState.origin}/connect-state/v1/connect/transfer/from/${encodeURIComponent(
-          fromDev
-        )}/to/${encodeURIComponent(localDevId)}`;
         const reqHeaders = Object.assign({}, spConnectState.headers, {
           'content-type': 'application/json'
         });
-        const postBody = JSON.stringify({
-          transfer_options: { restore_paused: 'resume' }
-        });
-        const fetchOpts = { method: 'POST', headers: reqHeaders, body: postBody };
-        const safeOpts = typeof cloneInto === 'function' ? cloneInto(fetchOpts, pageWin) : fetchOpts;
         const fetchFn = pageWin.fetch || window.fetch;
-        fetchFn.call(pageWin, transferUrl, safeOpts).catch(() => {});
+        const sendWebApiTransferFallback = () => {
+          try {
+            const webApiHeaders = {
+              authorization: spConnectState.headers.authorization,
+              'content-type': 'application/json'
+            };
+            const webApiOpts = {
+              method: 'PUT',
+              headers: webApiHeaders,
+              body: JSON.stringify({ device_ids: [localDevId], play: true })
+            };
+            const safeWebApiOpts = typeof cloneInto === 'function' ? cloneInto(webApiOpts, pageWin) : webApiOpts;
+            fetchFn.call(pageWin, 'https://api.spotify.com/v1/me/player', safeWebApiOpts).catch(() => {});
+          } catch (_) {}
+        };
+        if (spConnectState.origin) {
+          const transferUrl = `${spConnectState.origin}/connect-state/v1/connect/transfer/from/${encodeURIComponent(
+            fromDev
+          )}/to/${encodeURIComponent(localDevId)}`;
+          const postBody = JSON.stringify({
+            transfer_options: { restore_paused: 'resume' }
+          });
+          const fetchOpts = { method: 'POST', headers: reqHeaders, body: postBody };
+          const safeOpts = typeof cloneInto === 'function' ? cloneInto(fetchOpts, pageWin) : fetchOpts;
+          Promise.resolve(fetchFn.call(pageWin, transferUrl, safeOpts))
+            .then((resp) => {
+              if (!resp || !resp.ok) {
+                sendWebApiTransferFallback();
+              }
+            })
+            .catch(() => {
+              sendWebApiTransferFallback();
+            });
+        } else {
+          sendWebApiTransferFallback();
+        }
         return 'transferred';
       }
       const expectedTitle = String(ctx.state.expectedTrackTitle || '').trim().toLowerCase();

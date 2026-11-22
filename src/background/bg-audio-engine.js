@@ -690,12 +690,31 @@
     const activeSp = bg.bgSpEmePlayers.get(appId);
     bg.bgNextSpPlayers.delete(appId);
 
+    const preserveSidebarHandoff = Boolean(
+      activeSp &&
+        !activeSp.disposed &&
+        activeSp.awaitingBgFrameHandoff &&
+        activeSp.handoffSource === 'sidebar' &&
+        nextSp.sourceType === 'bg' &&
+        bg.bgStagingSpPlayers.get(appId)?.sourceType === 'sidebar'
+    );
     nextSp.isStaging = false;
     nextSp.isNextPreload = false;
-    nextSp.awaitingBgFrameHandoff = false;
+    nextSp.awaitingBgFrameHandoff = preserveSidebarHandoff;
+    if (preserveSidebarHandoff) {
+      nextSp.handoffSource = 'sidebar';
+      nextSp.handoffStartedAt = activeSp.handoffStartedAt || Date.now();
+    } else {
+      nextSp.handoffStartedAt = 0;
+    }
     nextSp.lastTimeAdvanceAt = Date.now();
-    nextSp.desiredVolume = activeSp && activeSp.desiredVolume > 0 ? activeSp.desiredVolume : 1.0;
     nextSp.desiredMuted = Boolean(activeSp && activeSp.desiredMuted);
+    nextSp.desiredVolume =
+      activeSp && activeSp.desiredVolume > 0
+        ? activeSp.desiredVolume
+        : nextSp.desiredMuted
+          ? 0
+          : 1.0;
     if (initialTargetTime > 0) {
       nextSp.targetTime = initialTargetTime;
       nextSp.pendingSeekTarget = initialTargetTime;
@@ -902,8 +921,13 @@
         ensureBgWebAudioKeepalive();
         sp.lastPlayedAt = Date.now();
         sp.videoEl.muted = Boolean(sp.desiredMuted);
+        if (!sp.desiredMuted && !(sp.desiredVolume > 0)) {
+          sp.desiredVolume = 1.0;
+        }
         if (sp.desiredVolume > 0) {
           sp.videoEl.volume = sp.desiredVolume;
+        } else if (sp.desiredMuted) {
+          sp.videoEl.volume = 0;
         }
         if (sp.videoEl.playbackRate !== 1.0 && !sp.isClear) {
           sp.videoEl.playbackRate = 1.0;
@@ -1070,8 +1094,23 @@
     const activeSp = bg.bgSpEmePlayers.get(appId);
     const isDifferentTrack = Boolean(activeSp && isDifferentSpTrackTitle(stagingSp.trackTitle, activeSp.trackTitle));
     const activeIsAlive = Boolean(activeSp && activeSp.videoEl && !activeSp.disposed);
-    const liveCt =
+    const rawLiveCt =
       syncFromActive && !isDifferentTrack && activeIsAlive ? Number(activeSp.videoEl.currentTime) || 0 : 0;
+    const activeEndedOrAtEnd = Boolean(
+      activeIsAlive &&
+        (activeSp.videoEl.ended || (activeSp.trackDuration > 15 && rawLiveCt >= activeSp.trackDuration - 2.0))
+    );
+    const stagingStartsFreshTrack = Boolean(
+      activeEndedOrAtEnd &&
+        rawLiveCt > 15 &&
+        stagingSp.sb &&
+        stagingSp.sb.buffered &&
+        stagingSp.sb.buffered.length > 0 &&
+        !isTimeInSpBuffered(stagingSp, rawLiveCt) &&
+        stagingSp.sb.buffered.start(0) < 2.0 &&
+        getSpBufferedEnd(stagingSp) < Math.max(25, rawLiveCt - 15)
+    );
+    const liveCt = stagingStartsFreshTrack ? 0 : rawLiveCt;
 
     let shouldForceSeek = false;
     if (liveCt > 0 && isTimeInSpBuffered(stagingSp, liveCt)) {
@@ -1232,10 +1271,18 @@
     const isDifferentTrack = Boolean(activeSp && isDifferentSpTrackTitle(stagingSp.trackTitle, activeSp.trackTitle));
 
     if (isDifferentTrack) {
+      const liveMetaTitle = bg.liveMediaPlaybackState.get(appId)?.title || '';
+      const matchesCurrentLiveTrack = Boolean(
+        stagingSp.trackTitle &&
+          liveMetaTitle &&
+          !isDifferentSpTrackTitle(stagingSp.trackTitle, liveMetaTitle)
+      );
       const hasExplicitIntent = Boolean(
         stagingSp.sourceType !== 'sidebar' ||
           stagingSp.explicitSidebarPlayIntent ||
-          (activeSp && activeSp.explicitSidebarPlayIntent)
+          (activeSp && activeSp.explicitSidebarPlayIntent) ||
+          matchesCurrentLiveTrack ||
+          activeDeadOrNearEnd
       );
       if (!hasExplicitIntent) {
         logAudioDiag('block-mismatched-staging-promote', {
@@ -1700,11 +1747,23 @@
         return ensureNextSpEmePlayer(appId, effectiveMime, newMsId, sourceType);
       }
       const prevVol = sp.desiredVolume;
-      const prevMuted = sp.desiredMuted;
+      const prevMuted = Boolean(sp.desiredMuted);
+      const preserveSidebarHandoff = Boolean(
+        sourceType === 'bg' &&
+          sp.awaitingBgFrameHandoff &&
+          sp.handoffSource === 'sidebar' &&
+          bg.bgStagingSpPlayers.get(appId)?.sourceType === 'sidebar'
+      );
+      const prevHandoffStartedAt = sp.handoffStartedAt || 0;
       disposeSpPlayerInstance(sp);
       sp = createSpPlayerInstance(appId, effectiveMime, newMsId, false, sourceType);
-      sp.desiredVolume = prevVol;
       sp.desiredMuted = prevMuted;
+      sp.desiredVolume = prevVol > 0 ? prevVol : prevMuted ? 0 : 1.0;
+      if (preserveSidebarHandoff) {
+        sp.awaitingBgFrameHandoff = true;
+        sp.handoffSource = 'sidebar';
+        sp.handoffStartedAt = prevHandoffStartedAt || Date.now();
+      }
       bg.bgSpEmePlayers.set(appId, sp);
       return initSpPlayerInstance(sp);
     }
@@ -1719,6 +1778,11 @@
         bg.state.lastSidebarPlayIntentAt &&
         Date.now() - bg.state.lastSidebarPlayIntentAt < 10000
     );
+    if (st && !st.disposed && st.sourceType && st.sourceType !== sourceType) {
+      disposeSpPlayerInstance(st);
+      bg.bgStagingSpPlayers.delete(appId);
+      st = null;
+    }
     if (!st || st.disposed) {
       st = createSpPlayerInstance(appId, effectiveMime, newMsId, true, sourceType);
       if (hasRecentPlayIntent) {
@@ -2055,8 +2119,11 @@
     if (shouldTransitionBgToSidebar) {
       const activeSp = bg.bgSpEmePlayers.get(appId);
       if (activeSp && !activeSp.disposed) {
+        const isEnteringSidebarHandoff = !activeSp.awaitingBgFrameHandoff || activeSp.handoffSource !== 'sidebar';
         activeSp.awaitingBgFrameHandoff = true;
-        activeSp.handoffStartedAt = Date.now();
+        if (isEnteringSidebarHandoff || !activeSp.handoffStartedAt) {
+          activeSp.handoffStartedAt = Date.now();
+        }
         activeSp.handoffSource = 'sidebar';
         if (!isTabPausedEnforced()) {
           activeSp.remotePaused = false;
@@ -2132,8 +2199,14 @@
       routeActiveSp.handoffSource &&
       sourceType !== routeActiveSp.handoffSource
     ) {
-      if (bt === 'MSE_INIT' || bt === 'GEN_REQ') return;
-      if (data.msId && routeActiveSp.msId && data.msId !== routeActiveSp.msId) return;
+      // Only suppress non-handoff-source streams when the closing sidebar is handing off to bg ('bg').
+      // When waiting for a sidebar takeover ('sidebar'), the live bg iframe MUST keep streaming
+      // MSE_INIT, GEN_REQ, and next-track MSE_CHUNK so playback never goes silent across track
+      // transitions or while Spotify Connect is still in remote-control mode.
+      if (routeActiveSp.handoffSource !== 'sidebar') {
+        if (bt === 'MSE_INIT' || bt === 'GEN_REQ') return;
+        if (data.msId && routeActiveSp.msId && data.msId !== routeActiveSp.msId) return;
+      }
     }
     const handoffSrc =
       (routeActiveSp && !routeActiveSp.disposed && routeActiveSp.awaitingBgFrameHandoff && routeActiveSp.handoffSource) ||
@@ -2232,7 +2305,8 @@
           data.msId !== curSp.msId &&
           isSpActivelyPlayingCurrentTrack(curSp)
         ) {
-          if (data.msId < curSp.msId) return;
+          const sameOrigin = (curSp.originSource || curSp.sourceType) === sourceType;
+          if (sameOrigin && data.msId < curSp.msId) return;
           ensureNextSpEmePlayer(appId, data.mime, data.msId, sourceType);
           const nx = bg.bgNextSpPlayers.get(appId);
           if (nx) {
@@ -2241,7 +2315,8 @@
           }
           return;
         }
-        if (curSp && curSp.sourceType === sourceType && data.msId && curSp.msId && data.msId < curSp.msId) return;
+        const sameCurOrigin = curSp && (curSp.originSource || curSp.sourceType) === sourceType;
+        if (sameCurOrigin && data.msId && curSp.msId && data.msId < curSp.msId) return;
         ensureBgSpEmePlayer(appId, data.mime, data.msId, sourceType);
         const sp = bg.bgSpEmePlayers.get(appId);
         if (sp) {
@@ -2259,7 +2334,8 @@
         : curNx && curNx.msId === data.msId
           ? curNx
           : bg.bgSpEmePlayers.get(appId);
-      if (!target || (data.msId && target.msId && data.msId < target.msId)) return;
+      const sameRemOrigin = target && (target.originSource || target.sourceType) === sourceType;
+      if (!target || (sameRemOrigin && data.msId && target.msId && data.msId < target.msId)) return;
       target.queue.push({ type: 'remove', start: data.start, end: data.end });
       drainSpInstanceQueue(target);
       return;
@@ -2272,7 +2348,8 @@
         : curNx && curNx.msId === data.msId
           ? curNx
           : bg.bgSpEmePlayers.get(appId);
-      if (!target || (data.msId && target.msId && data.msId < target.msId)) return;
+      const sameAbortOrigin = target && (target.originSource || target.sourceType) === sourceType;
+      if (!target || (sameAbortOrigin && data.msId && target.msId && data.msId < target.msId)) return;
       target.queue.push({ type: 'abort' });
       drainSpInstanceQueue(target);
       return;
@@ -2281,12 +2358,11 @@
     if (bt === 'VOLUME') {
       const target = useStaging ? bg.bgStagingSpPlayers.get(appId) : bg.bgSpEmePlayers.get(appId);
       if (!target) return;
-      // Never let a newly-booting sidebar iframe mute an audible background player mid-handoff
+      // Never let a hidden bg iframe (no user clicks possible) or newly-booting sidebar iframe
+      // spuriously mute or zero-out an audible background player.
       if (
-        sourceType === 'sidebar' &&
-        !useStaging &&
-        target.sourceType === 'bg' &&
-        bg.bgAudioPool.has(appId) &&
+        (sourceType === 'bg' ||
+          (sourceType === 'sidebar' && !useStaging && target.sourceType === 'bg' && bg.bgAudioPool.has(appId))) &&
         (data.muted === true || data.volume === 0)
       ) {
         return;
@@ -2373,12 +2449,24 @@
       }
 
       const readyNextSp = bg.bgNextSpPlayers.get(appId);
+      const curSpForNext = bg.bgSpEmePlayers.get(appId);
+      const nextMatchesByMsId = Boolean(data.msId && readyNextSp && readyNextSp.msId === data.msId);
+      const nextMatchesByTrackAdvance = Boolean(
+        readyNextSp &&
+          readyNextSp.sourceType === sourceType &&
+          curSpForNext &&
+          !curSpForNext.disposed &&
+          isDifferentSpTrackTitle(data.trackTitle, curSpForNext.trackTitle) &&
+          Number(data.currentTime) < 15 &&
+          (!curSpForNext.videoEl ||
+            curSpForNext.videoEl.ended ||
+            getSpBufferedEnd(curSpForNext) - (Number(curSpForNext.videoEl.currentTime) || 0) < 1.5)
+      );
       if (
         !data.paused &&
         readyNextSp &&
         !readyNextSp.disposed &&
-        data.msId &&
-        readyNextSp.msId === data.msId
+        (nextMatchesByMsId || nextMatchesByTrackAdvance)
       ) {
         if (Number(data.duration) > 0) readyNextSp.trackDuration = Number(data.duration);
         if (data.trackTitle) readyNextSp.trackTitle = String(data.trackTitle);
@@ -2875,6 +2963,11 @@
         curSt.desiredVolume = nextVol;
         curSt.desiredMuted = nextMuted;
       }
+      const curNx = bg.bgNextSpPlayers.get(targetId);
+      if (curNx && !curNx.disposed) {
+        curNx.desiredVolume = nextVol;
+        curNx.desiredMuted = nextMuted;
+      }
       if (mse && mse.audioEl) {
         try {
           mse.audioEl.volume = nextVol;
@@ -3191,11 +3284,7 @@
     const existing = bg.bgAudioPool.get(appId);
     if (existing) {
       if (existing.frame && existing.frame.isConnected) {
-        const st = bg.bgStagingSpPlayers.get(appId);
-        if (st && st.sourceType === 'sidebar') {
-          disposeSpPlayerInstance(st);
-          bg.bgStagingSpPlayers.delete(appId);
-        }
+        abortSidebarSpTakeover(appId);
         return;
       }
       try {
@@ -3241,8 +3330,9 @@
         activeSp.handoffStartedAt = Date.now();
         activeSp.handoffSource = 'bg';
         activeSp.sourceType = 'bg';
-        activeSp.videoEl.muted = isTabPausedEnforced() ? true : false;
-        activeSp.videoEl.volume = activeSp.desiredVolume > 0 ? activeSp.desiredVolume : 1.0;
+        activeSp.videoEl.muted = isTabPausedEnforced() ? true : Boolean(activeSp.desiredMuted);
+        activeSp.videoEl.volume =
+          activeSp.desiredVolume > 0 ? activeSp.desiredVolume : activeSp.desiredMuted ? 0 : 1.0;
         activeSp.videoEl.playbackRate = 1.0;
         if (isTabPausedEnforced()) {
           activeSp.remotePaused = true;

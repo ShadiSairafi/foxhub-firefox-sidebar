@@ -887,6 +887,9 @@
             activeSp.handoffSource = 'sidebar';
             activeSp.remotePaused = false;
             if (activeSp.videoEl) {
+              activeSp.videoEl.muted = Boolean(activeSp.desiredMuted);
+              activeSp.videoEl.volume =
+                activeSp.desiredVolume > 0 ? activeSp.desiredVolume : activeSp.desiredMuted ? 0 : 1.0;
               activeSp.videoEl.playbackRate = 1.0;
             }
             if (appId === 'spotify') {
